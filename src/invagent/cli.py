@@ -57,7 +57,7 @@ def fetch_messages_cmd(days, fetch_links):
         config = Config.from_env()
         click.echo(f"📨 Fetching messages from last {days} day(s)...")
 
-        client_manager = TelegramClientManager(config)
+        client_manager = TelegramClientManager()
         fetcher = MessageFetcher(config, client_manager)
 
         messages = asyncio.run(fetcher.fetch_saved_messages(days, fetch_links=fetch_links))
@@ -101,7 +101,7 @@ def download_pdfs_cmd(days, channels):
         click.echo(f"📥 Downloading PDFs from {len(channels_to_use)} channel(s)...")
         click.echo(f"   Period: last {days} day(s)")
 
-        client_manager = TelegramClientManager(config)
+        client_manager = TelegramClientManager()
         pdf_namer = PDFNamer()
         downloader = PDFDownloader(config, client_manager, pdf_namer)
 
