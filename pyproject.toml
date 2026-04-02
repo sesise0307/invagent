@@ -1,0 +1,14 @@
+[project]
+name = "invagent"
+version = "0.1.0"
+description = "My personal investment agent."
+readme = "README.md"
+authors = [
+    { name = "Sin-seok Seo", email = "sesise@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
