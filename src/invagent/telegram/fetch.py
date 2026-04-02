@@ -118,3 +118,42 @@ class MessageFetcher:
             lines.append("")  # 메시지 사이의 빈 줄
 
         return "\n".join(lines)
+
+    def format_messages_markdown(self, messages: list[dict]) -> str:
+        """
+        메시지 리스트를 마크다운 형식으로 변환합니다.
+
+        포워드 여부에 따라 "내 메시지" 또는 "포워드"로 구분합니다.
+        메시지는 오래된 순으로 출력됩니다.
+
+        Args:
+            messages: fetch_saved_messages에서 반환된 메시지 리스트 (is_forwarded 필드 필수)
+
+        Returns:
+            마크다운 포맷팅된 메시지 문자열
+        """
+        # 오래된 순으로 정렬 (역순)
+        sorted_messages = sorted(messages, key=lambda m: m["id"])
+
+        lines = []
+        for msg in sorted_messages:
+            # 레이블 결정
+            label = "포워드" if msg.get("is_forwarded", False) else "내 메시지"
+
+            # 헤더: **[레이블]** 날짜
+            lines.append(f"**[{label}]** {msg['date']}")
+
+            # 메시지 본문
+            lines.append(msg["text"])
+
+            # 링크 내용 (있으면)
+            if msg.get("links_content"):
+                lines.append("")  # 빈 줄
+                lines.append("링크:")
+                # 링크 내용을 blockquote로 감싸기
+                for link_line in msg["links_content"].split("\n"):
+                    lines.append(f"> {link_line}")
+
+            lines.append("")  # 메시지 사이의 빈 줄
+
+        return "\n".join(lines)

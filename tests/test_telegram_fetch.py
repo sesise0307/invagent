@@ -143,3 +143,91 @@ def test_message_fetcher_format_messages():
     assert "2026-04-01" in formatted
     assert "첫 번째 메시지" in formatted
     assert "두 번째 메시지" in formatted
+
+
+def test_message_fetcher_format_messages_markdown_own():
+    """내 메시지 마크다운 포맷팅"""
+    config = Config(
+        api_id=123,
+        api_hash="test_hash",
+        session_path="/tmp/test",
+        output_dir="/tmp/outputs",
+    )
+
+    manager = TelegramClientManager()
+    fetcher = MessageFetcher(config, manager)
+
+    messages = [
+        {
+            "id": 1,
+            "date": "2026-04-01 10:00",
+            "text": "직접 작성한 메시지",
+            "links_content": "",
+            "is_forwarded": False,
+        }
+    ]
+
+    formatted = fetcher.format_messages_markdown(messages)
+
+    assert "**[내 메시지]**" in formatted
+    assert "2026-04-01 10:00" in formatted
+    assert "직접 작성한 메시지" in formatted
+
+
+def test_message_fetcher_format_messages_markdown_forwarded():
+    """포워드된 메시지 마크다운 포맷팅"""
+    config = Config(
+        api_id=123,
+        api_hash="test_hash",
+        session_path="/tmp/test",
+        output_dir="/tmp/outputs",
+    )
+
+    manager = TelegramClientManager()
+    fetcher = MessageFetcher(config, manager)
+
+    messages = [
+        {
+            "id": 1,
+            "date": "2026-04-01 10:00",
+            "text": "포워드된 메시지",
+            "links_content": "",
+            "is_forwarded": True,
+        }
+    ]
+
+    formatted = fetcher.format_messages_markdown(messages)
+
+    assert "**[포워드]**" in formatted
+    assert "2026-04-01 10:00" in formatted
+    assert "포워드된 메시지" in formatted
+
+
+def test_message_fetcher_format_messages_markdown_with_links():
+    """링크 내용 포함 마크다운 포맷팅"""
+    config = Config(
+        api_id=123,
+        api_hash="test_hash",
+        session_path="/tmp/test",
+        output_dir="/tmp/outputs",
+    )
+
+    manager = TelegramClientManager()
+    fetcher = MessageFetcher(config, manager)
+
+    messages = [
+        {
+            "id": 1,
+            "date": "2026-04-01 10:00",
+            "text": "메시지 with links",
+            "links_content": "URL: https://example.com\nExample content",
+            "is_forwarded": False,
+        }
+    ]
+
+    formatted = fetcher.format_messages_markdown(messages)
+
+    assert "**[내 메시지]**" in formatted
+    assert "메시지 with links" in formatted
+    assert "URL: https://example.com" in formatted
+    assert "Example content" in formatted
