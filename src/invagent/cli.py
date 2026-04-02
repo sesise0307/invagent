@@ -52,6 +52,7 @@ def fetch_messages_cmd(days, fetch_links):
     """Fetch saved messages from Telegram.
 
     Retrieves messages from Telegram 'Saved Messages' channel.
+    Saves formatted output to output/telegram-daily/<YYYY-MM-DD>_raw.txt
     """
     try:
         config = Config.from_env()
@@ -62,14 +63,20 @@ def fetch_messages_cmd(days, fetch_links):
 
         messages = asyncio.run(fetcher.fetch_saved_messages(days, fetch_links=fetch_links))
 
-        # Print messages
-        for msg in messages:
-            click.echo(f"\n📝 {msg['date']}")
-            click.echo(f"   {msg['text']}")
-            if "links_content" in msg and msg["links_content"]:
-                click.echo(f"   📎 Links:")
-                for link in msg["links_content"]:
-                    click.echo(f"      {link}")
+        # Format as markdown
+        formatted_content = fetcher.format_messages_markdown(messages)
+
+        # Create output directory
+        output_dir = Path("output/telegram-daily")
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save to file
+        today = datetime.now().strftime("%Y-%m-%d")
+        output_file = output_dir / f"{today}_raw.txt"
+        output_file.write_text(formatted_content, encoding="utf-8")
+
+        # Print saved file path
+        click.echo(f"✅ Saved: {output_file}")
 
     except ValueError as e:
         click.echo(f"❌ Configuration Error: {e}", err=True)
