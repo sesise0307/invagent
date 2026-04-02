@@ -72,7 +72,7 @@ def fetch_messages_cmd(days, fetch_links):
 
         # Save to file
         today = datetime.now().strftime("%Y-%m-%d")
-        output_file = output_dir / f"{today}_raw.txt"
+        output_file = output_dir / f"{today}_raw.md"
         output_file.write_text(formatted_content, encoding="utf-8")
 
         # Print saved file path
