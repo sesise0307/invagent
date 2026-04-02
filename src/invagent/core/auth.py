@@ -20,4 +20,6 @@ async def authenticate(config: Config) -> TelegramClient:
         return client
     except Exception as e:
         print(f"❌ 인증 실패: {e}")
+        # sys.exit() 전에 disconnect 호출
+        await client.disconnect()
         sys.exit(1)
