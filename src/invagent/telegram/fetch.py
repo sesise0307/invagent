@@ -47,7 +47,8 @@ class MessageFetcher:
                 "id": 메시지 ID,
                 "date": "YYYY-MM-DD HH:MM" 형식의 날짜,
                 "text": 메시지 본문,
-                "links_content": 링크 내용 (fetch_links=True일 때만)
+                "links_content": 링크 내용 (fetch_links=True일 때만),
+                "is_forwarded": 포워드된 메시지 여부
             }
         """
         client = await self.client_manager.get_client(self.config)
@@ -73,6 +74,7 @@ class MessageFetcher:
                 "date": message.date.strftime("%Y-%m-%d %H:%M"),
                 "text": message.text,
                 "links_content": "",
+                "is_forwarded": message.forward_from is not None,
             }
 
             # 링크 내용 추출
