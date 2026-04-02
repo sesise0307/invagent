@@ -74,7 +74,7 @@ class MessageFetcher:
                 "date": message.date.strftime("%Y-%m-%d %H:%M"),
                 "text": message.text,
                 "links_content": "",
-                "is_forwarded": message.forward_from is not None,
+                "is_forwarded": message.forward is not None,
             }
 
             # 링크 내용 추출
