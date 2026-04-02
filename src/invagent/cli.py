@@ -7,8 +7,9 @@ from pathlib import Path
 
 from invagent.core.config import Config
 from invagent.core.auth import authenticate
-from invagent.fetch_telegram import fetch_saved_messages, print_messages
-from invagent.download_telegram_pdfs import download_pdfs_from_channels, print_summary
+from invagent.core.client import TelegramClientManager
+from invagent.telegram import MessageFetcher, PDFDownloader, LinkExtractor
+from invagent.parsers import PDFNamer
 from invagent.tracking.stock_tracker import StockTracker
 
 # Default channels for PDF download
@@ -56,8 +57,19 @@ def fetch_messages_cmd(days, fetch_links):
         config = Config.from_env()
         click.echo(f"📨 Fetching messages from last {days} day(s)...")
 
-        messages = asyncio.run(fetch_saved_messages(days, fetch_links=fetch_links))
-        print_messages(messages)
+        client_manager = TelegramClientManager(config)
+        fetcher = MessageFetcher(config, client_manager)
+
+        messages = asyncio.run(fetcher.fetch_saved_messages(days, fetch_links=fetch_links))
+
+        # Print messages
+        for msg in messages:
+            click.echo(f"\n📝 {msg['date']}")
+            click.echo(f"   {msg['text']}")
+            if "links_content" in msg and msg["links_content"]:
+                click.echo(f"   📎 Links:")
+                for link in msg["links_content"]:
+                    click.echo(f"      {link}")
 
     except ValueError as e:
         click.echo(f"❌ Configuration Error: {e}", err=True)
@@ -89,8 +101,20 @@ def download_pdfs_cmd(days, channels):
         click.echo(f"📥 Downloading PDFs from {len(channels_to_use)} channel(s)...")
         click.echo(f"   Period: last {days} day(s)")
 
-        results = asyncio.run(download_pdfs_from_channels(channels_to_use, days))
-        print_summary(results)
+        client_manager = TelegramClientManager(config)
+        pdf_namer = PDFNamer()
+        downloader = PDFDownloader(config, client_manager, pdf_namer)
+
+        results = asyncio.run(downloader.download_pdfs(channels_to_use, days))
+
+        # Print summary
+        total_pdfs = sum(len(files) for files in results.values())
+        click.echo(f"\n✅ Downloaded {total_pdfs} PDF(s)")
+        for channel, files in results.items():
+            if files:
+                click.echo(f"\n   {channel}:")
+                for file_info in files:
+                    click.echo(f"      ✓ {file_info}")
 
     except ValueError as e:
         click.echo(f"❌ Configuration Error: {e}", err=True)
