@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 from invagent.telegram.link_extractor import LinkExtractor
 
 
@@ -75,3 +75,57 @@ async def test_fetch_content_timeout():
         content = await extractor.fetch_content("https://example.com")
 
         assert "타임아웃" in content or "timeout" in content.lower()
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_uses_trafilatura():
+    """trafilatura로 본문 추출 성공"""
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url") as mock_fetch, \
+         patch("invagent.telegram.link_extractor.trafilatura.extract") as mock_extract:
+        mock_fetch.return_value = "<html><body><article>본문 내용입니다.</article></body></html>"
+        mock_extract.return_value = "본문 내용입니다."
+
+        content = await extractor.fetch_content("https://example.com")
+
+        assert "본문 내용입니다." in content
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_falls_back_to_bs4_when_trafilatura_returns_none():
+    """trafilatura가 None 반환 시 BeautifulSoup fallback"""
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url") as mock_fetch, \
+         patch("invagent.telegram.link_extractor.trafilatura.extract") as mock_extract, \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        mock_fetch.return_value = "<html></html>"
+        mock_extract.return_value = None
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "<html><head><title>Fallback Page</title></head><body><p>fallback content</p></body></html>"
+        mock_response.encoding = "utf-8"
+        mock_get.return_value = mock_response
+
+        content = await extractor.fetch_content("https://example.com")
+
+        assert content != ""
+        assert "[링크 읽기 실패]" not in content
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_long_content_not_truncated_at_300():
+    """1500자까지 내용 반환"""
+    extractor = LinkExtractor()
+    long_text = "가" * 1000
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url") as mock_fetch, \
+         patch("invagent.telegram.link_extractor.trafilatura.extract") as mock_extract:
+        mock_fetch.return_value = "<html></html>"
+        mock_extract.return_value = long_text
+
+        content = await extractor.fetch_content("https://example.com")
+
+        assert len(content) >= 500  # 300자 제한이 없어졌는지 확인

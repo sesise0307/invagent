@@ -6,12 +6,12 @@ URL 추출 및 내용 fetch 기능을 담당하는 LinkExtractor 클래스.
 
 import asyncio
 import re
-import sys
 from typing import Optional
 
 try:
     import requests
     from bs4 import BeautifulSoup
+    import trafilatura
 except ImportError:
     HAS_REQUESTS = False
 else:
@@ -27,11 +27,17 @@ URL_PATTERN = re.compile(
     re.IGNORECASE
 )
 
+TELEGRAM_URL_PATTERN = re.compile(
+    r'https?://t\.me/[^\s\)]*|'  # https://t.me/ 링크
+    r'(?<!\S)t\.me/[^\s\)]*',    # t.me/ 링크 (단어 경계)
+    re.IGNORECASE
+)
+
 
 class LinkExtractor:
     """URL 추출 및 내용 fetch 기능을 제공하는 클래스."""
 
-    def __init__(self, timeout: int = 5) -> None:
+    def __init__(self, timeout: int = 10) -> None:
         """
         LinkExtractor를 초기화합니다.
 
@@ -40,14 +46,18 @@ class LinkExtractor:
         """
         self.timeout = timeout
 
+    @staticmethod
+    def is_telegram_url(url: str) -> bool:
+        """URL이 텔레그램 링크인지 확인합니다."""
+        return bool(TELEGRAM_URL_PATTERN.match(url))
+
     def extract_urls(self, text: str) -> list[str]:
         """
-        텍스트에서 URL을 추출합니다.
+        텍스트에서 URL을 추출합니다. 텔레그램 링크는 제외됩니다.
 
         지원하는 URL 형식:
-        - http:// 또는 https://로 시작하는 URL
+        - http:// 또는 https://로 시작하는 URL (t.me 제외)
         - www.로 시작하는 URL
-        - t.me/로 시작하는 Telegram 링크
         - '링크: '로 시작하는 형태의 URL
 
         중복은 자동으로 제거됩니다.
@@ -56,7 +66,7 @@ class LinkExtractor:
             text: URL을 추출할 텍스트
 
         Returns:
-            추출된 URL의 리스트 (중복 제거됨)
+            추출된 URL의 리스트 (중복 제거됨, 텔레그램 링크 제외)
         """
         if not text:
             return []
@@ -66,22 +76,20 @@ class LinkExtractor:
             url = match.group(0)
             if url.startswith("링크:"):
                 url = url.replace("링크:", "").strip()
-            if url:
+            if url and not self.is_telegram_url(url):
                 urls.append(url)
 
         return list(set(urls))  # 중복 제거
+
+    def remove_telegram_urls(self, text: str) -> str:
+        """텍스트에서 텔레그램 링크를 제거합니다."""
+        return TELEGRAM_URL_PATTERN.sub("", text).strip()
 
     async def fetch_content(self, url: str) -> str:
         """
         URL의 내용을 가져옵니다.
 
-        BeautifulSoup을 사용하여 HTML을 파싱하고 핵심 텍스트를 추출합니다.
-        추출 순서:
-        1. 제목 (title 또는 h1)
-        2. Open Graph description 또는 meta description
-        3. 첫 번째 paragraph
-        4. article 요소
-        5. 전체 텍스트
+        trafilatura로 1차 추출하고, 실패 시 BeautifulSoup으로 fallback합니다.
 
         Args:
             url: 내용을 가져올 URL
@@ -93,82 +101,84 @@ class LinkExtractor:
             return ""
 
         try:
-            # 비동기 루프에서 동기 함수를 실행
+            # 1차: trafilatura로 본문 추출
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                self._fetch_sync,
-                url
-            )
+            downloaded = await loop.run_in_executor(None, trafilatura.fetch_url, url)
+            if downloaded:
+                text = trafilatura.extract(
+                    downloaded,
+                    include_tables=False,
+                    no_fallback=False,
+                    include_comments=False,
+                )
+                if text and text.strip():
+                    return text.strip()[:1500] + ("..." if len(text.strip()) > 1500 else "")
+
+            # 2차 fallback: BeautifulSoup
+            response = await loop.run_in_executor(None, self._fetch_sync, url)
 
             if response is None:
                 return "[링크 읽기 실패]"
 
-            response.encoding = 'utf-8'
+            response.encoding = "utf-8"
 
             if response.status_code != 200:
                 return f"[링크 읽기 실패: HTTP {response.status_code}]"
 
-            soup = BeautifulSoup(response.text, 'html.parser')
+            soup = BeautifulSoup(response.text, "html.parser")
 
-            # 스크립트, 스타일, 메타 제거
-            for script in soup(["script", "style", "meta", "noscript"]):
-                script.decompose()
-
-            # 제목 추출
+            # 제목 추출 (meta 제거 전에)
             title = ""
-            if soup.find('title'):
-                title = soup.find('title').get_text(strip=True)
-            elif soup.find('h1'):
-                title = soup.find('h1').get_text(strip=True)
+            title_tag = soup.find("title")
+            if title_tag:
+                title = title_tag.get_text(strip=True)
+            elif soup.find("h1"):
+                title = soup.find("h1").get_text(strip=True)
 
-            # 본문 추출
+            # og:description / meta description 추출 (meta 제거 전에)
             content = ""
+            og_desc = soup.find("meta", property="og:description")
+            if og_desc and og_desc.get("content"):
+                content = og_desc["content"].strip()
 
-            # Open Graph description
-            og_desc = soup.find('meta', property='og:description')
-            if og_desc and og_desc.get('content'):
-                content = og_desc['content'].strip()
-
-            # Meta description
             if not content:
-                meta_desc = soup.find('meta', attrs={'name': 'description'})
-                if meta_desc and meta_desc.get('content'):
-                    content = meta_desc['content'].strip()
+                meta_desc = soup.find("meta", attrs={"name": "description"})
+                if meta_desc and meta_desc.get("content"):
+                    content = meta_desc["content"].strip()
 
-            # 첫 번째 paragraph
+            # 이제 불필요한 태그 제거
+            for tag in soup(["script", "style", "meta", "noscript"]):
+                tag.decompose()
+
+            # paragraph 추출
             if not content:
-                paragraphs = soup.find_all('p', limit=2)
+                paragraphs = soup.find_all("p", limit=5)
                 if paragraphs:
-                    content = '\n'.join([p.get_text(strip=True) for p in paragraphs])
+                    content = "\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
 
-            # 기사 본문 (news sites)
+            # article 본문
             if not content:
-                article = soup.find('article')
+                article = soup.find("article")
                 if article:
-                    content = article.get_text(separator='\n', strip=True)[:500]
+                    content = article.get_text(separator="\n", strip=True)
 
-            # 최종 텍스트 추출
+            # 전체 텍스트
             if not content:
-                text = soup.get_text(separator='\n', strip=True)
-                content = '\n'.join(
-                    line.strip() for line in text.split('\n') if line.strip()
-                )[:500]
+                raw = soup.get_text(separator="\n", strip=True)
+                content = "\n".join(line for line in raw.split("\n") if line.strip())
 
-            # 결과 포맷팅
             result = ""
             if title:
-                result = f"📄 **{title}**"
-
+                result = f"**{title}**"
             if content:
                 if result:
                     result += "\n"
-                result += content[:300] + ("..." if len(content) > 300 else "")
+                result += content[:1500] + ("..." if len(content) > 1500 else "")
 
             return result if result else "[내용을 읽을 수 없습니다]"
 
         except requests.exceptions.Timeout:
-            return "[링크 읽기 타임아웃 (5초)]"
+            return "[링크 읽기 타임아웃]"
         except requests.exceptions.ConnectionError:
             return "[연결 실패]"
         except Exception as e:
