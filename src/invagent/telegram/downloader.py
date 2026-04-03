@@ -68,6 +68,11 @@ class PDFDownloader:
         now = datetime.now(timezone.utc)
         cutoff_date = now - timedelta(days=days)
 
+        # 오늘 날짜 기준으로 출력 디렉토리 한 번만 생성
+        today_str = now.strftime("%Y-%m-%d")
+        output_dir = self.config.output_dir / "reports" / today_str
+        output_dir.mkdir(parents=True, exist_ok=True)
+
         results = {}
 
         for channel in channels:
@@ -99,12 +104,7 @@ class PDFDownloader:
                     filename = self.pdf_namer.get_filename(original_filename)
 
                     # 출력 경로 생성
-                    output_path = self._get_output_path(
-                        channel, filename, message.date
-                    )
-
-                    # 디렉토리 생성
-                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    output_path = output_dir / filename
 
                     # PDF 다운로드
                     await client.download_media(message.media, file=output_path)
@@ -179,23 +179,3 @@ class PDFDownloader:
 
         return None
 
-    def _get_output_path(self, channel: str, filename: str, date: datetime) -> Path:
-        """
-        다운로드한 PDF를 저장할 경로를 생성합니다.
-
-        경로 형식: {output_dir}/reports/{date_str}/{filename}
-
-        Args:
-            channel: 채널명
-            filename: 파일명
-            date: 메시지 날짜
-
-        Returns:
-            저장할 파일 경로
-        """
-        date_str = date.strftime("%Y-%m-%d")
-        output_path = (
-            self.config.output_dir / "reports" / date_str / filename
-        )
-
-        return output_path
