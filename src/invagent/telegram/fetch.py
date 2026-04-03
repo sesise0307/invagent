@@ -143,7 +143,7 @@ class MessageFetcher:
             label = "포워드" if msg.get("is_forwarded", False) else "내 메시지"
 
             # 헤더: **[레이블]** 날짜
-            lines.append(f"**[{label}]**")
+            lines.append(f"**[{label}]** {msg['date']}")
 
             # 메시지 본문
             lines.append(msg["text"])

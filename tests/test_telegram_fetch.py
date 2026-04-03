@@ -63,7 +63,7 @@ async def test_message_fetcher_is_forwarded_false():
         mock_msg.id = 1
         mock_msg.date = datetime.now(timezone.utc)
         mock_msg.text = "직접 작성한 메시지"
-        mock_msg.forward_from = None  # 포워드 아님
+        mock_msg.forward = None  # 포워드 아님
 
         async def async_gen(*args, **kwargs):
             yield mock_msg
