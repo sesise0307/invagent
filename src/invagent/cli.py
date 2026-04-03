@@ -18,6 +18,7 @@ DEFAULT_CHANNELS = [
     "선진짱 주식공부방",
     "리포트 갤러리",
     "영리한타이거의 주식공부방",
+    "AI Report Digest",
 ]
 
 

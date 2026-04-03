@@ -28,7 +28,7 @@ class Config:
             raise ValueError(f"TELEGRAM_API_ID는 정수여야 합니다: {api_id_str}")
 
         session_path = Path.home() / ".telegram_session"
-        output_dir = Path("outputs")
+        output_dir = Path("output")
 
         return cls(
             api_id=api_id,
