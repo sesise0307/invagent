@@ -129,3 +129,27 @@ async def test_fetch_content_long_content_not_truncated_at_300():
         content = await extractor.fetch_content("https://example.com")
 
         assert len(content) >= 500  # 300자 제한이 없어졌는지 확인
+
+
+@pytest.mark.asyncio
+async def test_extract_and_fetch_parallel():
+    """여러 URL을 병렬로 fetch"""
+    extractor = LinkExtractor()
+    text = "https://example.com https://google.com"
+
+    call_times = []
+
+    async def fake_fetch(url: str) -> str:
+        import asyncio
+        call_times.append(asyncio.get_event_loop().time())
+        await asyncio.sleep(0.05)
+        return f"content of {url}"
+
+    with patch.object(extractor, "fetch_content", side_effect=fake_fetch):
+        result = await extractor.extract_and_fetch(text)
+
+    assert len(result["urls"]) == 2
+    assert len(result["contents"]) == 2
+    # 두 fetch가 거의 동시에 시작됐는지 확인 (0.1초 이내 차이)
+    if len(call_times) == 2:
+        assert abs(call_times[1] - call_times[0]) < 0.1

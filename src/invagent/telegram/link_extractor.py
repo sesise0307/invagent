@@ -211,7 +211,7 @@ class LinkExtractor:
 
     async def extract_and_fetch(self, text: str) -> dict[str, list[str] | str]:
         """
-        텍스트에서 URL을 추출하고 각 URL의 내용을 가져옵니다.
+        텍스트에서 URL을 추출하고 각 URL의 내용을 병렬로 가져옵니다.
 
         Args:
             text: 처리할 텍스트
@@ -224,13 +224,17 @@ class LinkExtractor:
             }
         """
         urls = self.extract_urls(text)
+
+        results = await asyncio.gather(
+            *[self.fetch_content(url) for url in urls],
+            return_exceptions=True,
+        )
+
         contents = {}
+        for url, result in zip(urls, results):
+            if isinstance(result, Exception):
+                contents[url] = f"[링크 읽기 오류: {str(result)[:50]}]"
+            else:
+                contents[url] = result
 
-        for url in urls:
-            content = await self.fetch_content(url)
-            contents[url] = content
-
-        return {
-            "urls": urls,
-            "contents": contents
-        }
+        return {"urls": urls, "contents": contents}
