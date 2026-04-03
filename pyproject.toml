@@ -12,6 +12,7 @@ dependencies = [
     "click>=8.1.0",
     "requests>=2.33.1",
     "telethon>=1.42.0",
+    "trafilatura>=2.0.0",
 ]
 
 [build-system]
