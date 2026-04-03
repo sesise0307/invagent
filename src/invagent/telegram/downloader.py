@@ -71,6 +71,7 @@ class PDFDownloader:
         results = {}
 
         for channel in channels:
+            print(f"==== Downloading from {channel} ====")
             channel_results = []
 
             try:
@@ -91,6 +92,8 @@ class PDFDownloader:
                     original_filename = self._get_original_filename(message)
                     if not original_filename:
                         original_filename = f"document_{message.id}.pdf"
+
+                    print(f"Downloading {original_filename}")
 
                     # 통일된 파일명 생성
                     filename = self.pdf_namer.get_filename(original_filename)
