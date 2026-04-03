@@ -14,3 +14,6 @@ docs/superpowers/
 
 # Output
 output/
+
+# Etc
+.DS_Store
