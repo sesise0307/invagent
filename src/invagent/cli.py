@@ -14,11 +14,11 @@ from invagent.tracking.stock_tracker import StockTracker
 
 # Default channels for PDF download
 DEFAULT_CHANNELS = [
-    "소중한추억.",
-    "선진짱 주식공부방",
-    "리포트 갤러리",
-    "영리한타이거의 주식공부방",
-    "AI Report Digest",
+    "DOC_POOL",
+    "sunstudy1004",
+    "report_figure_by_offset",
+    "YoungTiger_stock",
+    "quick_report",
 ]
 
 
@@ -118,11 +118,6 @@ def download_pdfs_cmd(days, channels):
         # Print summary
         total_pdfs = sum(len(files) for files in results.values())
         click.echo(f"\n✅ Downloaded {total_pdfs} PDF(s)")
-        for channel, files in results.items():
-            if files:
-                click.echo(f"\n   {channel}:")
-                for file_info in files:
-                    click.echo(f"      ✓ {file_info}")
 
     except ValueError as e:
         click.echo(f"❌ Configuration Error: {e}", err=True)
