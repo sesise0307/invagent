@@ -15,6 +15,9 @@ dependencies = [
     "trafilatura>=2.0.0",
 ]
 
+[project.scripts]
+invagent = "invagent.cli:cli"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

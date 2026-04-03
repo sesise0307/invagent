@@ -3,7 +3,7 @@
 이 프로젝트는 나의 투자 의사 결정을 돕는 도구들로 구성되어 있다.
 작성된 코드 및 스크립트는 `invagent` 파이썬 패키지(v0.2.0)안에 포함된다.
 
-**최근 업데이트 (2026-04-02):** 패키지를 모듈 기반 아키텍처로 현대화했습니다. 자세한 내용은 [설계 문서](docs/superpowers/specs/2026-04-02-invagent-modernization-design.md)를 참고하세요.
+**최근 업데이트 (2026-04-03):** CLI entry point 추가 — `uv run invagent <command>` 형태로 사용 가능.
 
 ## Features
 
@@ -92,19 +92,19 @@ export TELEGRAM_API_HASH="your_api_hash"
 
 **1. 텔레그램 인증 (1회만):**
 ```bash
-uv run python -m invagent.cli authenticate
+uv run invagent authenticate
 ```
 
 **2. 저장된 메시지 조회:**
 ```bash
-uv run python -m invagent.cli fetch-messages --days 1 --fetch-links
+uv run invagent fetch-messages --days 1 --fetch-links
 ```
 - `--days N`: 최근 N일치 메시지 (기본: 1)
 - `--fetch-links`: 링크 내용 자동 추출 (선택사항)
 
 **3. PDF 다운로드:**
 ```bash
-uv run python -m invagent.cli download-pdfs --days 7
+uv run invagent download-pdfs --days 7
 ```
 - `--days N`: 최근 N일치 PDF (기본: 1)
 - `--channels ch1 ch2`: 특정 채널만 다운로드 (기본: 4개 채널)
@@ -112,18 +112,18 @@ uv run python -m invagent.cli download-pdfs --days 7
 **4. 종목 관리:**
 ```bash
 # 종목 추가
-uv run python -m invagent.cli add-stock AAPL --name "Apple" --sector "기술"
+uv run invagent add-stock AAPL --name "Apple" --sector "기술"
 
 # 목표 주가 설정
-uv run python -m invagent.cli set-target AAPL --price 180.0
+uv run invagent set-target AAPL --price 180.0
 
 # 종목 정보 조회
-uv run python -m invagent.cli show-stock AAPL
+uv run invagent show-stock AAPL
 ```
 
 **모든 커맨드 보기:**
 ```bash
-uv run python -m invagent.cli --help
+uv run invagent --help
 ```
 
 다운로드 결과는 `outputs/reports/{date}/` 디렉토리에 저장됩니다.
@@ -233,13 +233,21 @@ pytest tests/ --cov=src/invagent
 # 기존 (v0.1.0)
 uv run python -m invagent.fetch_telegram --days 1 --fetch-links
 
-# 새로운 (v0.2.0)
+# v0.2.0
 uv run python -m invagent.cli fetch-messages --days 1 --fetch-links
+
+# v0.2.1+ (현재)
+uv run invagent fetch-messages --days 1 --fetch-links
 ```
 
 **설계 문서:**
 - [설계 스펙](docs/superpowers/specs/2026-04-02-invagent-modernization-design.md)
 - [구현 계획](docs/superpowers/plans/2026-04-02-invagent-modernization-implementation.md)
+
+### v0.2.1 (2026-04-03) - CLI entry point 추가
+
+- `pyproject.toml`에 `[project.scripts]` 추가: `invagent = "invagent.cli:cli"`
+- `uv run invagent <command>` 형태로 직접 실행 가능
 
 ### v0.1.0 (초기)
 
