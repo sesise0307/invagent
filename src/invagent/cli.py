@@ -47,7 +47,7 @@ def authenticate_cmd():
 
 @cli.command()
 @click.option("--days", type=int, default=1, help="Fetch messages from last N days (default: 1)")
-@click.option("--fetch-links", is_flag=True, help="Extract and include link content")
+@click.option("--fetch-links", is_flag=True, default=True, help="Extract and include link content (default: enabled)")
 def fetch_messages_cmd(days, fetch_links):
     """Fetch saved messages from Telegram.
 
