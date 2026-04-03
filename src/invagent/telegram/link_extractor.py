@@ -42,7 +42,7 @@ class LinkExtractor:
         LinkExtractor를 초기화합니다.
 
         Args:
-            timeout: URL 요청의 타임아웃 시간 (초). 기본값: 5초
+            timeout: URL 요청의 타임아웃 시간 (초). 기본값: 10초
         """
         self.timeout = timeout
 
@@ -102,7 +102,7 @@ class LinkExtractor:
 
         try:
             # 1차: trafilatura로 본문 추출
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             downloaded = await loop.run_in_executor(None, trafilatura.fetch_url, url)
             if downloaded:
                 text = trafilatura.extract(
@@ -111,8 +111,10 @@ class LinkExtractor:
                     no_fallback=False,
                     include_comments=False,
                 )
-                if text and text.strip():
-                    return text.strip()[:1500] + ("..." if len(text.strip()) > 1500 else "")
+                if text:
+                    stripped = text.strip()
+                    if stripped:
+                        return stripped[:1500] + ("..." if len(stripped) > 1500 else "")
 
             # 2차 fallback: BeautifulSoup
             response = await loop.run_in_executor(None, self._fetch_sync, url)
