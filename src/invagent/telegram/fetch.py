@@ -69,17 +69,19 @@ class MessageFetcher:
             if not message.text:
                 continue
 
+            text = self.link_extractor.remove_telegram_urls(message.text)
+
             msg_dict = {
                 "id": message.id,
                 "date": message.date.strftime("%Y-%m-%d %H:%M"),
-                "text": message.text,
+                "text": text,
                 "links_content": "",
                 "is_forwarded": message.forward is not None,
             }
 
             # 링크 내용 추출
             if fetch_links:
-                result = await self.link_extractor.extract_and_fetch(message.text)
+                result = await self.link_extractor.extract_and_fetch(text)
                 links_contents = []
                 for url, content in result.get("contents", {}).items():
                     if content:
