@@ -98,13 +98,25 @@ class PDFDownloader:
                     if not original_filename:
                         original_filename = f"document_{message.id}.pdf"
 
-                    print(f"Downloading {original_filename}")
-
                     # 통일된 파일명 생성
                     filename = self.pdf_namer.get_filename(original_filename)
 
                     # 출력 경로 생성
                     output_path = output_dir / filename
+
+                    # 이미 존재하는 파일이면 다운로드 건너뜀
+                    if output_path.exists():
+                        print(f"Skipping (already exists): {filename}")
+                        continue
+
+                    print(f"Downloading {original_filename} → {filename}")
+
+                    # 원본 파일명과 변환 파일명이 다른 경우, 원본 경로도 확인
+                    original_path = output_dir / original_filename
+                    if original_filename != filename and original_path.exists():
+                        # 원본이 이미 있으면 삭제 후 변환명으로 간주
+                        original_path.unlink()
+                        print(f"Deleted duplicate: {original_filename}")
 
                     # PDF 다운로드
                     await client.download_media(message.media, file=output_path)

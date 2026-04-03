@@ -88,6 +88,39 @@ class TestPatternC:
         assert result == "기업_테스트종목_UNKNOWN_2026-04-03.pdf"
 
 
+class TestPatternE:
+    """작성자_기업_리포트제목_증권사_날짜 패턴 테스트."""
+
+    def test_simple_author_with_company(self, namer):
+        result = namer.get_filename(
+            "김선우_삼성전자_강력한_아웃퍼폼_예상_메리츠증권_260403.pdf"
+        )
+        assert result == "기업_삼성전자_메리츠증권_2026-04-03.pdf"
+
+    def test_author_with_korean_company(self, namer):
+        result = namer.get_filename(
+            "남성현_GS피앤엘_1분기_실적_개선은_추정이_아닌_확정_IBK투자증권_260403.pdf"
+        )
+        assert result == "기업_GS피앤엘_IBK투자증권_2026-04-03.pdf"
+
+    def test_author_with_english_report_type(self, namer):
+        """2번째 토큰이 영문(Initiation)이면 3번째 토큰을 기업으로 사용."""
+        result = namer.get_filename(
+            "김진형_Initiation_넥스틴_바닥은_다졌고_위를_바라볼_때_대신증권_260403.pdf"
+        )
+        assert result == "기업_넥스틴_대신증권_2026-04-03.pdf"
+
+    def test_non_korean_name_first_token_falls_through(self, namer):
+        """첫 토큰이 한국인 이름이 아니면 Pattern E 미적용 → 기타."""
+        filename = "SK_증권_박형우_삼성전기_600,000원_MLCC_임베디드_PCB의_미래_SK증권_260403.pdf"
+        assert namer.get_filename(filename) == filename
+
+    def test_brokerage_prefix_author_falls_through(self, namer):
+        """교보증권_권우정 형태 (첫 토큰이 증권사명) → 기타."""
+        filename = "교보증권_권우정_화장품_미국_아마존_빅스프링_세일_약진_및_수출_데이터_호조_교보증권_260403.pdf"
+        assert namer.get_filename(filename) == filename
+
+
 class TestPatternD:
     """기타 파일 — 원래 파일명 유지 테스트."""
 
