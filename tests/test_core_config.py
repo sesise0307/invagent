@@ -14,7 +14,20 @@ def test_config_from_env_with_valid_env_vars(monkeypatch):
     assert config.api_id == 12345
     assert config.api_hash == "abc123def456"
     assert config.session_path == Path.home() / ".telegram_session"
-    assert config.output_dir == Path("outputs")
+    assert config.output_dir == Path("output")
+
+
+def test_config_from_env_with_optional_path_overrides(monkeypatch):
+    """선택 환경변수로 세션/출력 경로를 덮어쓸 수 있다."""
+    monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+    monkeypatch.setenv("TELEGRAM_API_HASH", "abc123def456")
+    monkeypatch.setenv("TELEGRAM_SESSION_PATH", "~/custom.session")
+    monkeypatch.setenv("INVAGENT_OUTPUT_DIR", "~/invagent-output")
+
+    config = Config.from_env()
+
+    assert config.session_path == Path("~/custom.session").expanduser()
+    assert config.output_dir == Path("~/invagent-output").expanduser()
 
 
 def test_config_from_env_missing_api_id(monkeypatch):

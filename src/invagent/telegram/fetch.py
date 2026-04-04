@@ -70,6 +70,8 @@ class MessageFetcher:
                 continue
 
             text = self.link_extractor.remove_telegram_urls(message.text)
+            if not text.strip():
+                continue
 
             msg_dict = {
                 "id": message.id,

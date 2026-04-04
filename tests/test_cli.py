@@ -1,5 +1,7 @@
 import pytest
 from click.testing import CliRunner
+from unittest.mock import AsyncMock, patch
+
 from invagent.cli import cli
 
 
@@ -58,3 +60,23 @@ def test_cli_show_stock_help():
     result = runner.invoke(cli, ['show-stock', '--help'])
 
     assert result.exit_code == 0
+
+
+def test_cli_authenticate_reports_success(monkeypatch):
+    """authenticate 명령이 성공 메시지와 세션 경로를 출력"""
+    monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+    monkeypatch.setenv("TELEGRAM_API_HASH", "abc123def456")
+
+    runner = CliRunner()
+
+    with patch("invagent.cli.authenticate") as mock_authenticate:
+        mock_client = AsyncMock()
+        mock_client.get_me = AsyncMock(return_value=AsyncMock(first_name="Test", username="tester"))
+        mock_client.disconnect = AsyncMock()
+        mock_authenticate.return_value = mock_client
+
+        result = runner.invoke(cli, ["authenticate"])
+
+    assert result.exit_code == 0
+    assert "인증 성공" in result.output
+    assert ".telegram_session" in result.output

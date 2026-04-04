@@ -1,19 +1,44 @@
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
-from dataclasses import dataclass
+
+
+DEFAULT_CHANNELS: tuple[str, ...] = (
+    "DOC_POOL",
+    "sunstudy1004",
+    "report_figure_by_offset",
+    "YoungTiger_stock",
+    "quick_report",
+)
+
+
+def _parse_default_channels(raw_value: str) -> tuple[str, ...]:
+    """Parse a comma-separated channel list from the environment."""
+    channels = tuple(channel.strip() for channel in raw_value.split(",") if channel.strip())
+    return channels or DEFAULT_CHANNELS
 
 
 @dataclass
 class Config:
-    """Telegram API 설정 및 기타 설정"""
+    """Telegram API settings and local output conventions."""
+
     api_id: int
     api_hash: str
     session_path: Path
     output_dir: Path
+    default_channels: tuple[str, ...] = field(default_factory=lambda: DEFAULT_CHANNELS)
+
+    def telegram_daily_dir(self) -> Path:
+        """Return the directory used for daily Telegram exports."""
+        return self.output_dir / "telegram-daily"
+
+    def reports_dir(self, date: str) -> Path:
+        """Return the directory used for downloaded PDF reports on a given date."""
+        return self.output_dir / "reports" / date
 
     @classmethod
     def from_env(cls) -> "Config":
-        """환경변수에서 설정 로드"""
+        """Load configuration from environment variables."""
         api_id_str = os.environ.get("TELEGRAM_API_ID", "").strip()
         api_hash = os.environ.get("TELEGRAM_API_HASH", "").strip()
 
@@ -27,12 +52,18 @@ class Config:
         except ValueError:
             raise ValueError(f"TELEGRAM_API_ID는 정수여야 합니다: {api_id_str}")
 
-        session_path = Path.home() / ".telegram_session"
-        output_dir = Path("output")
+        session_path = Path(
+            os.environ.get("TELEGRAM_SESSION_PATH", str(Path.home() / ".telegram_session"))
+        ).expanduser()
+        output_dir = Path(os.environ.get("INVAGENT_OUTPUT_DIR", "output")).expanduser()
+        default_channels = _parse_default_channels(
+            os.environ.get("INVAGENT_DEFAULT_CHANNELS", ",".join(DEFAULT_CHANNELS))
+        )
 
         return cls(
             api_id=api_id,
             api_hash=api_hash,
             session_path=session_path,
             output_dir=output_dir,
+            default_channels=default_channels,
         )

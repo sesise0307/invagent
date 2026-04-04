@@ -98,7 +98,7 @@ async def test_message_fetcher_is_forwarded_true():
         mock_msg.id = 1
         mock_msg.date = datetime.now(timezone.utc)
         mock_msg.text = "포워드된 메시지"
-        mock_msg.forward_from = "SomeUser"  # 포워드됨
+        mock_msg.forward = object()  # 포워드됨
 
         async def async_gen(*args, **kwargs):
             yield mock_msg
@@ -109,6 +109,39 @@ async def test_message_fetcher_is_forwarded_true():
 
         assert len(messages) > 0
         assert messages[0]["is_forwarded"] is True
+
+
+@pytest.mark.asyncio
+async def test_message_fetcher_skips_empty_text_after_removing_telegram_links():
+    """텔레그램 링크만 남은 메시지는 제외"""
+    config = Config(
+        api_id=123,
+        api_hash="test_hash",
+        session_path="/tmp/test",
+        output_dir="/tmp/outputs",
+    )
+
+    manager = TelegramClientManager()
+    fetcher = MessageFetcher(config, manager)
+
+    with patch.object(manager, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_get_client.return_value = mock_client
+
+        mock_msg = AsyncMock()
+        mock_msg.id = 1
+        mock_msg.date = datetime.now(timezone.utc)
+        mock_msg.text = "https://t.me/example"
+        mock_msg.forward = None
+
+        async def async_gen(*args, **kwargs):
+            yield mock_msg
+
+        mock_client.iter_messages = async_gen
+
+        messages = await fetcher.fetch_saved_messages(days=1, fetch_links=False)
+
+        assert messages == []
 
 
 def test_message_fetcher_format_messages():

@@ -1,25 +1,16 @@
 """CLI commands for invagent."""
 
 import asyncio
-import click
 from datetime import datetime
-from pathlib import Path
+
+import click
 
 from invagent.core.config import Config
 from invagent.core.auth import authenticate
 from invagent.core.client import TelegramClientManager
-from invagent.telegram import MessageFetcher, PDFDownloader, LinkExtractor
+from invagent.telegram import MessageFetcher, PDFDownloader
 from invagent.parsers import PDFNamer
 from invagent.tracking.stock_tracker import StockTracker
-
-# Default channels for PDF download
-DEFAULT_CHANNELS = [
-    "DOC_POOL",
-    "sunstudy1004",
-    "report_figure_by_offset",
-    "YoungTiger_stock",
-    "quick_report",
-]
 
 
 @click.group()
@@ -37,13 +28,27 @@ def authenticate_cmd():
     try:
         config = Config.from_env()
         click.echo("🔐 Starting Telegram authentication...")
-        asyncio.run(authenticate(config))
+        asyncio.run(_authenticate_and_report(config))
     except ValueError as e:
         click.echo(f"❌ Configuration Error: {e}", err=True)
+        raise SystemExit(1)
+    except RuntimeError as e:
+        click.echo(f"❌ {e}", err=True)
         raise SystemExit(1)
     except Exception as e:
         click.echo(f"❌ Authentication failed: {e}", err=True)
         raise SystemExit(1)
+
+
+async def _authenticate_and_report(config: Config) -> None:
+    """Authenticate once and report the logged-in Telegram account."""
+    client = await authenticate(config)
+    try:
+        me = await client.get_me()
+        click.echo(f"✅ 인증 성공: {me.first_name} (@{me.username})")
+        click.echo(f"세션 파일: {config.session_path}")
+    finally:
+        await client.disconnect()
 
 
 @cli.command()
@@ -62,13 +67,16 @@ def fetch_messages_cmd(days, fetch_links):
         client_manager = TelegramClientManager()
         fetcher = MessageFetcher(config, client_manager)
 
-        messages = asyncio.run(fetcher.fetch_saved_messages(days, fetch_links=fetch_links))
+        try:
+            messages = asyncio.run(fetcher.fetch_saved_messages(days, fetch_links=fetch_links))
+        finally:
+            asyncio.run(client_manager.disconnect())
 
         # Format as markdown
         formatted_content = fetcher.format_messages_markdown(messages)
 
         # Create output directory
-        output_dir = Path("output/telegram-daily")
+        output_dir = config.telegram_daily_dir()
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Save to file
@@ -76,8 +84,9 @@ def fetch_messages_cmd(days, fetch_links):
         output_file = output_dir / f"{today}_raw.md"
         output_file.write_text(formatted_content, encoding="utf-8")
 
-        # Print saved file path
         click.echo(f"✅ Saved: {output_file}")
+        click.echo(f"   Messages: {len(messages)}")
+        click.echo(f"   Links fetched: {'yes' if fetch_links else 'no'}")
 
     except ValueError as e:
         click.echo(f"❌ Configuration Error: {e}", err=True)
@@ -92,8 +101,8 @@ def fetch_messages_cmd(days, fetch_links):
 @click.option(
     "--channels",
     multiple=True,
-    default=DEFAULT_CHANNELS,
-    help=f"Channel names to download from (default: {', '.join(DEFAULT_CHANNELS)})"
+    default=(),
+    help="Channel names to download from (default: configured channel list)"
 )
 def download_pdfs_cmd(days, channels):
     """Download PDF reports from Telegram channels.
@@ -104,7 +113,7 @@ def download_pdfs_cmd(days, channels):
         config = Config.from_env()
 
         # Use provided channels or defaults
-        channels_to_use = list(channels) if channels else DEFAULT_CHANNELS
+        channels_to_use = list(channels) if channels else list(config.default_channels)
 
         click.echo(f"📥 Downloading PDFs from {len(channels_to_use)} channel(s)...")
         click.echo(f"   Period: last {days} day(s)")
@@ -113,11 +122,32 @@ def download_pdfs_cmd(days, channels):
         pdf_namer = PDFNamer()
         downloader = PDFDownloader(config, client_manager, pdf_namer)
 
-        results = asyncio.run(downloader.download_pdfs(channels_to_use, days))
+        try:
+            results = asyncio.run(downloader.download_pdfs(channels_to_use, days))
+        finally:
+            asyncio.run(client_manager.disconnect())
 
         # Print summary
-        total_pdfs = sum(len(files) for files in results.values())
-        click.echo(f"\n✅ Downloaded {total_pdfs} PDF(s)")
+        downloaded = sum(
+            1
+            for files in results.values()
+            for item in files
+            if item.get("status") == "downloaded"
+        )
+        skipped = sum(
+            1
+            for files in results.values()
+            for item in files
+            if item.get("status") == "skipped"
+        )
+        failed_channels = [
+            channel for channel, files in results.items() if any(item.get("status") == "error" for item in files)
+        ]
+
+        click.echo(f"\n✅ Downloaded {downloaded} PDF(s)")
+        click.echo(f"   Skipped: {skipped}")
+        if failed_channels:
+            click.echo(f"   Failed channels: {', '.join(failed_channels)}")
 
     except ValueError as e:
         click.echo(f"❌ Configuration Error: {e}", err=True)

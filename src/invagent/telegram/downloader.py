@@ -68,11 +68,6 @@ class PDFDownloader:
         now = datetime.now(timezone.utc)
         cutoff_date = now - timedelta(days=days)
 
-        # 오늘 날짜 기준으로 출력 디렉토리 한 번만 생성
-        today_str = now.strftime("%Y-%m-%d")
-        output_dir = self.config.output_dir / "reports" / today_str
-        output_dir.mkdir(parents=True, exist_ok=True)
-
         results = {}
 
         for channel in channels:
@@ -102,17 +97,25 @@ class PDFDownloader:
                     filename = self.pdf_namer.get_filename(original_filename)
 
                     # 출력 경로 생성
-                    output_path = output_dir / filename
+                    output_path = self._get_output_path(channel, filename, message.date)
 
                     # 이미 존재하는 파일이면 다운로드 건너뜀
                     if output_path.exists():
                         print(f"Skipping (already exists): {filename}")
+                        channel_results.append(
+                            {
+                                "filename": filename,
+                                "path": str(output_path),
+                                "date": message.date.strftime("%Y-%m-%d %H:%M"),
+                                "status": "skipped",
+                            }
+                        )
                         continue
 
                     print(f"Downloading {original_filename} → {filename}")
 
                     # 원본 파일명과 변환 파일명이 다른 경우, 원본 경로도 확인
-                    original_path = output_dir / original_filename
+                    original_path = output_path.parent / original_filename
                     if original_filename != filename and original_path.exists():
                         # 원본이 이미 있으면 삭제 후 변환명으로 간주
                         original_path.unlink()
@@ -127,17 +130,34 @@ class PDFDownloader:
                             "filename": filename,
                             "path": str(output_path),
                             "date": message.date.strftime("%Y-%m-%d %H:%M"),
+                            "status": "downloaded",
                         }
                     )
 
             except Exception as e:
                 # 채널 오류 처리 (채널 없음, 네트워크 오류 등)
                 print(f"채널 '{channel}' 처리 중 오류: {e}")
-                channel_results = []
+                channel_results = [
+                    {
+                        "filename": "",
+                        "path": "",
+                        "date": "",
+                        "status": "error",
+                        "error": str(e),
+                    }
+                ]
 
             results[channel] = channel_results
 
         return results
+
+    def _get_output_path(self, channel: str, filename: str, date: datetime) -> Path:
+        """Build the output path for a downloaded PDF."""
+        del channel
+        date_str = date.strftime("%Y-%m-%d")
+        output_dir = self.config.reports_dir(date_str)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir / filename
 
     def _is_pdf_message(self, message) -> bool:
         """
@@ -190,4 +210,3 @@ class PDFDownloader:
             return first_attr.file_name
 
         return None
-
