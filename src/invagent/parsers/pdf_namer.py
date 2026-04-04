@@ -15,12 +15,14 @@ _KOREAN_SURNAMES: frozenset[str] = frozenset(
     "길연위표명반왕옥육인맹제모사탁봉"
 )
 
-# 기업명 자리에 올 수 없는 비기업 토큰 — Pattern E 오분류 방지
-_NON_COMPANY_TOKENS: frozenset[str] = frozenset({
-    # 섹터
+# 섹터 키워드 — Pattern E 오분류 방지 및 산업 분류용
+_SECTOR_KEYWORDS: frozenset[str] = frozenset({
+    # 산업 섹터
     "음식료", "조선", "인터넷", "반도체", "화장품", "건설", "자동차",
     "바이오", "금융", "통신", "에너지", "방산", "철강", "화학", "게임",
     "부동산", "유틸리티", "미디어", "보험", "은행", "증권", "의류", "유통",
+    "제약", "전기전자", "디스플레이", "엔터", "헬스케어", "카지노",
+    "피부미용", "소비재", "지주", "원전", "호텔", "레저", "IT",
     # 국가/지역
     "미국", "중국", "일본", "유럽", "글로벌", "아시아", "한국",
     # 영문 리포트 시리즈 (2nd 토큰이 영문일 때 3rd 토큰에도 적용)
@@ -29,32 +31,58 @@ _NON_COMPANY_TOKENS: frozenset[str] = frozenset({
     "1분기", "2분기", "3분기", "4분기",
     # 기타 비기업
     "호르무즈", "이란", "트럼프",
-    # 정신승리도, Quant의 등 전략/철학 제목 토큰
+    # 전략/철학 제목 토큰
     "정신승리도",
 })
 
-# 텔레그램 채널별 증권사 코드 → 한국어 이름 매핑 (Pattern C용)
+# 시황 리포트 키워드
+_MARKET_KEYWORDS: frozenset[str] = frozenset({
+    "Daily", "Weekly", "시황", "QWER", "Market", "Monitor",
+    "Today", "Chart", "스냅샷", "주간", "Watch",
+})
+
+# 텔레그램 채널별 증권사 코드 → 이름 매핑 (Pattern C용, "증권" 미포함)
 _BROKERAGE_MAP: dict[str, str] = {
-    "KB": "KB증권",
-    "Samsung": "삼성증권",
-    "MERITZ": "메리츠증권",
-    "Daishin": "대신증권",
-    "Kiwoom": "키움증권",
-    "IBK": "IBK투자증권",
-    "NH": "NH투자증권",
-    "BNK": "BNK투자증권",
-    "Hanwha": "한화투자증권",
-    "DAOL": "다올투자증권",
-    "DS": "DS투자증권",
-    "Yuanta": "유안타증권",
-    "Hana": "하나증권",
-    "LS": "LS증권",
+    "KB": "KB",
+    "Samsung": "삼성",
+    "MERITZ": "메리츠",
+    "Daishin": "대신",
+    "Kiwoom": "키움",
+    "IBK": "IBK투자",
+    "NH": "NH투자",
+    "BNK": "BNK투자",
+    "Hanwha": "한화투자",
+    "DAOL": "다올투자",
+    "DS": "DS투자",
+    "Yuanta": "유안타",
+    "Hana": "하나",
+    "LS": "LS",
 }
 
 # Pattern C: <종목명>［6자리종목코드］_<yyyymmdd>_<증권사코드>_<id>.pdf
 _TICKER_PATTERN = re.compile(
     r"^(.+)［\d{6}］_(\d{8})_([^_]+)_\d+\.pdf$"
 )
+
+# Pattern F: <yyyymmdd>_<종목명>_<증권사>.pdf (토큰 정확히 3개)
+_DATE_LEADING_PATTERN = re.compile(
+    r"^(\d{8})_([^_]+)_([^_]+)\.pdf$"
+)
+
+
+def _preprocess_filename(filename: str) -> str:
+    """공백과 콤마를 언더스코어로 치환합니다 (확장자 제외).
+
+    Args:
+        filename: 원본 파일명
+
+    Returns:
+        전처리된 파일명
+    """
+    if filename.endswith(".pdf"):
+        stem = filename[:-4].replace(" ", "_").replace(",", "_")
+        return stem + ".pdf"
+    return filename
 
 
 def _normalize_date(date_str: str) -> str:
@@ -75,6 +103,33 @@ def _normalize_date(date_str: str) -> str:
     return ""
 
 
+def _strip_brokerage_suffix(brokerage: str) -> str:
+    """증권사 이름에서 '증권' 접미사를 제거합니다.
+
+    Args:
+        brokerage: 증권사 이름 (예: 한화투자증권, 메리츠증권)
+
+    Returns:
+        '증권' 접미사가 제거된 이름 (예: 한화투자, 메리츠)
+    """
+    if brokerage.endswith("증권"):
+        return brokerage[:-2]
+    return brokerage
+
+
+def _is_market_report(stem: str) -> bool:
+    """파일명 스템에 시황 키워드가 포함되어 있는지 확인합니다.
+
+    Args:
+        stem: .pdf 제거된 파일명
+
+    Returns:
+        시황 리포트이면 True
+    """
+    tokens = re.split(r"[_\s\[\]（）()]+", stem)
+    return any(token in _MARKET_KEYWORDS for token in tokens)
+
+
 class PDFNamer:
     """PDF 파일명 규칙을 관리하는 클래스."""
 
@@ -87,9 +142,10 @@ class PDFNamer:
         원본 파일명을 기반으로 통일된 파일명을 생성합니다.
 
         카테고리별 변환 규칙:
-        - 종목리포트: 기업_<종목명>_<증권사>_<yyyy-mm-dd>.pdf
-        - 산업리포트: 산업_<섹터>_<증권사>_<제목>_<yyyy-mm-dd>.pdf
-        - 기타: 원래 파일명 유지
+        - 기업: 기업_<종목명>_<증권사>_<yyyy-mm-dd>.pdf
+        - 산업: 산업_<섹터>_<증권사>_<제목>_<yyyy-mm-dd>.pdf
+        - 시황: 시황_<전처리된_파일명>.pdf
+        - 기타: 기타_<전처리된_파일명>.pdf
 
         Args:
             original_filename: 원본 파일명 (.pdf 포함 또는 미포함)
@@ -100,7 +156,9 @@ class PDFNamer:
         if not original_filename.endswith(".pdf"):
             return original_filename
 
-        stem = original_filename[:-4]  # .pdf 제거
+        # 전처리: 공백/콤마 → 언더스코어
+        filename = _preprocess_filename(original_filename)
+        stem = filename[:-4]  # .pdf 제거
 
         # Pattern A: 기업_ 시작
         if stem.startswith("기업_"):
@@ -111,17 +169,30 @@ class PDFNamer:
             return self._rename_sector_report(stem)
 
         # Pattern C: 종목코드 대괄호 형식
-        match = _TICKER_PATTERN.match(original_filename)
+        match = _TICKER_PATTERN.match(filename)
         if match:
             return self._rename_ticker_format(match)
+
+        # 시황 키워드 검사
+        if _is_market_report(stem):
+            return f"시황_{filename}"
 
         # Pattern E: <작성자>_<기업>_<리포트제목>_<증권사>_<날짜> 형식
         result = self._try_rename_author_format(stem)
         if result:
             return result
 
-        # Pattern D: 기타 — 원래 파일명 유지
-        return original_filename
+        # Pattern F: <yyyymmdd>_<종목명>_<증권사> 형식 (토큰 정확히 3개)
+        match_f = _DATE_LEADING_PATTERN.match(filename)
+        if match_f:
+            date = _normalize_date(match_f.group(1))
+            if date:
+                stock_name = match_f.group(2)
+                brokerage = _strip_brokerage_suffix(match_f.group(3))
+                return f"기업_{stock_name}_{brokerage}_{date}.pdf"
+
+        # 기타: 기타_ 접두사 추가
+        return f"기타_{filename}"
 
     def _rename_stock_report(self, stem: str) -> str:
         """Pattern A: `기업_<종목명>_<제목>_<증권사>_<yymmdd>` → `기업_<종목명>_<증권사>_<yyyy-mm-dd>.pdf`"""
@@ -134,7 +205,7 @@ class PDFNamer:
         if not date:
             return stem + ".pdf"
 
-        brokerage = parts[-2]
+        brokerage = _strip_brokerage_suffix(parts[-2])
         stock_name = parts[1]  # 첫 번째 토큰만 종목명으로 사용
         return f"기업_{stock_name}_{brokerage}_{date}.pdf"
 
@@ -149,7 +220,7 @@ class PDFNamer:
         if not date:
             return stem + ".pdf"
 
-        brokerage = parts[-2]
+        brokerage = _strip_brokerage_suffix(parts[-2])
         sector = parts[1]
         title_parts = parts[2:-2]  # 섹터와 증권사_날짜 사이
         title = "_".join(title_parts) if title_parts else ""
@@ -189,7 +260,7 @@ class PDFNamer:
         if not date:
             return None
 
-        brokerage = parts[-2]
+        brokerage = _strip_brokerage_suffix(parts[-2])
         second_token = parts[1]
 
         # 2번째 토큰이 영문(리포트 타입)이면 3번째 토큰을 기업으로 사용
@@ -201,7 +272,7 @@ class PDFNamer:
             stock_name = second_token
 
         # 비기업 토큰이 기업 자리에 오면 기타 처리
-        if stock_name in _NON_COMPANY_TOKENS:
+        if stock_name in _SECTOR_KEYWORDS:
             return None
 
         # 영문+한글조사 형태(예: Quant의, Market의)는 기업명 아님
