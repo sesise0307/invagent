@@ -1,282 +1,415 @@
-"""
-PDF 파일명 규칙을 관리하는 PDFNamer 클래스.
+"""PDF filename categorization and normalization."""
 
-이 모듈은 다운로드된 PDF 파일에 일관된 이름을 지정하기 위한
-규칙을 정의합니다.
-"""
+from __future__ import annotations
 
 import re
+import unicodedata
+from dataclasses import dataclass
 
 
-# 한국인 성씨 목록 — Pattern E 작성자 탐지용
-_KOREAN_SURNAMES: frozenset[str] = frozenset(
-    "김이박최정강조윤장임한오서신권황안송류홍전고문손양배백허유남"
-    "심노하곽성차주우구민나지엄원천방공현함변염여추도소석선설마"
-    "길연위표명반왕옥육인맹제모사탁봉"
+_SECTOR_KEYWORDS: tuple[str, ...] = (
+    "2차전지", "ESS", "LNG", "건설", "건설부동산", "게임", "금융", "기계",
+    "반도체", "바이오", "방산", "보험", "부동산", "소비재", "원전", "음식료",
+    "유통", "인바운드", "자동차", "전력기기", "제약", "제약바이오", "조선",
+    "지주", "철강", "카지노", "통신", "피부미용", "항공", "호텔", "화장품",
+    "화학", "헬스케어", "엔터", "레저", "미디어", "인터넷",
 )
 
-# 섹터 키워드 — Pattern E 오분류 방지 및 산업 분류용
-_SECTOR_KEYWORDS: frozenset[str] = frozenset({
-    # 산업 섹터
-    "음식료", "조선", "인터넷", "반도체", "화장품", "건설", "자동차",
-    "바이오", "금융", "통신", "에너지", "방산", "철강", "화학", "게임",
-    "부동산", "유틸리티", "미디어", "보험", "은행", "증권", "의류", "유통",
-    "제약", "전기전자", "디스플레이", "엔터", "헬스케어", "카지노",
-    "피부미용", "소비재", "지주", "원전", "호텔", "레저", "IT",
-    # 국가/지역
-    "미국", "중국", "일본", "유럽", "글로벌", "아시아", "한국",
-    # 영문 리포트 시리즈 (2nd 토큰이 영문일 때 3rd 토큰에도 적용)
-    "Weekly", "Monthly", "Daily", "Talk", "Check", "View", "Update",
-    # 시간/분기
-    "1분기", "2분기", "3분기", "4분기",
-    # 기타 비기업
-    "호르무즈", "이란", "트럼프",
-    # 전략/철학 제목 토큰
-    "정신승리도",
-})
+_MARKET_KEYWORDS: tuple[str, ...] = (
+    "daily", "weekly", "monthly", "biweekly", "monitor", "market", "today",
+    "chart", "watch", "snapshot", "morning brief", "issue", "view", "qwer",
+    "시황", "스냅샷", "주간", "데일리", "위클리", "마감시황",
+)
 
-# 시황 리포트 키워드
-_MARKET_KEYWORDS: frozenset[str] = frozenset({
-    "Daily", "Weekly", "시황", "QWER", "Market", "Monitor",
-    "Today", "Chart", "스냅샷", "주간", "Watch",
-})
-
-# 텔레그램 채널별 증권사 코드 → 이름 매핑 (Pattern C용, "증권" 미포함)
-_BROKERAGE_MAP: dict[str, str] = {
-    "KB": "KB",
-    "Samsung": "삼성",
-    "MERITZ": "메리츠",
-    "Daishin": "대신",
-    "Kiwoom": "키움",
-    "IBK": "IBK투자",
-    "NH": "NH투자",
-    "BNK": "BNK투자",
-    "Hanwha": "한화투자",
-    "DAOL": "다올투자",
-    "DS": "DS투자",
-    "Yuanta": "유안타",
-    "Hana": "하나",
-    "LS": "LS",
+_BROKERAGE_ALIASES: dict[str, str] = {
+    "bnk": "BNK",
+    "bnk투자": "BNK투자",
+    "bnk투자증권": "BNK투자",
+    "daishin": "대신",
+    "daol": "다올투자",
+    "daol투자": "다올투자",
+    "daol투자증권": "다올투자",
+    "ds": "DS",
+    "ds투자": "DS",
+    "ds투자증권": "DS",
+    "hana": "하나",
+    "hana증권": "하나",
+    "ibk": "IBK투자",
+    "ibk투자": "IBK투자",
+    "ibk투자증권": "IBK투자",
+    "kb": "KB",
+    "kb증권": "KB",
+    "kiwoom": "키움",
+    "lg": "LG",
+    "ls": "LS",
+    "ls증권": "LS",
+    "meritz": "메리츠",
+    "nh": "NH투자",
+    "nh투자": "NH투자",
+    "nh투자증권": "NH투자",
+    "samsung": "삼성",
+    "samsung증권": "삼성",
+    "shinhan": "신한",
+    "shinhan증권": "신한",
+    "sk": "SK",
+    "sk증권": "SK",
+    "교보": "교보",
+    "교보증권": "교보",
+    "대신": "대신",
+    "대신증권": "대신",
+    "다올투자": "다올투자",
+    "다올투자증권": "다올투자",
+    "리딩": "리딩",
+    "리딩투자": "리딩투자",
+    "리딩투자증권": "리딩투자",
+    "메리츠": "메리츠",
+    "메리츠증권": "메리츠",
+    "미래에셋": "미래에셋",
+    "미래에셋증권": "미래에셋",
+    "삼성": "삼성",
+    "삼성증권": "삼성",
+    "상상인": "상상인",
+    "상상인증권": "상상인",
+    "신한": "신한",
+    "신한증권": "신한",
+    "신한투자": "신한투자",
+    "신한투자증권": "신한투자",
+    "유안타": "유안타",
+    "유안타증권": "유안타",
+    "유진": "유진",
+    "유진투자": "유진투자",
+    "유진투자증권": "유진투자",
+    "키움": "키움",
+    "키움증권": "키움",
+    "하나": "하나",
+    "하나증권": "하나",
+    "한국투자": "한국투자",
+    "한국투자증권": "한국투자",
+    "한화": "한화",
+    "한화투자": "한화투자",
+    "한화투자증권": "한화투자",
+    "현대차": "현대차",
+    "현대차증권": "현대차",
 }
 
-# Pattern C: <종목명>［6자리종목코드］_<yyyymmdd>_<증권사코드>_<id>.pdf
-_TICKER_PATTERN = re.compile(
-    r"^(.+)［\d{6}］_(\d{8})_([^_]+)_\d+\.pdf$"
-)
+_DATE_TOKEN_RE = re.compile(r"^(?:\d{6}|\d{8}|\d{4}-\d{2}-\d{2})$")
+_TICKER_BRACKET_RE = re.compile(r"^(?P<name>.+?)[\[\(［](?P<code>\d{6})[\]\)］]$")
+_LEADING_BRACKET_RE = re.compile(r"^\[(?P<name>[^\[\]]+)\](?:_(?P<rest>.*))?$")
 
-# Pattern F: <yyyymmdd>_<종목명>_<증권사>.pdf (토큰 정확히 3개)
-_DATE_LEADING_PATTERN = re.compile(
-    r"^(\d{8})_([^_]+)_([^_]+)\.pdf$"
-)
+
+@dataclass(frozen=True)
+class _ParsedReport:
+    category: str
+    name: str
+    brokerage: str | None = None
+    title: str | None = None
+    date: str | None = None
 
 
 def _preprocess_filename(filename: str) -> str:
-    """공백과 콤마를 언더스코어로 치환합니다 (확장자 제외).
+    """Normalize unicode and replace spaces/commas with underscores."""
+    normalized = unicodedata.normalize("NFKC", filename)
+    if not normalized.lower().endswith(".pdf"):
+        return normalized
 
-    Args:
-        filename: 원본 파일명
-
-    Returns:
-        전처리된 파일명
-    """
-    if filename.endswith(".pdf"):
-        stem = filename[:-4].replace(" ", "_").replace(",", "_")
-        return stem + ".pdf"
-    return filename
+    stem = normalized[:-4]
+    stem = re.sub(r"[\s,]+", "_", stem)
+    stem = re.sub(r"_+", "_", stem).strip("_")
+    return f"{stem}.pdf"
 
 
-def _normalize_date(date_str: str) -> str:
-    """날짜 문자열을 yyyy-mm-dd 형식으로 정규화합니다.
-
-    Args:
-        date_str: 날짜 문자열 (yymmdd 또는 yyyymmdd)
-
-    Returns:
-        yyyy-mm-dd 형식의 날짜 문자열. 파싱 실패 시 빈 문자열 반환.
-    """
-    if len(date_str) == 6 and date_str.isdigit():
-        # yymmdd → 20yy-mm-dd
-        return f"20{date_str[:2]}-{date_str[2:4]}-{date_str[4:6]}"
-    if len(date_str) == 8 and date_str.isdigit():
-        # yyyymmdd → yyyy-mm-dd
-        return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
-    return ""
+def _normalize_date(token: str) -> str | None:
+    """Convert supported date tokens into yyyy-mm-dd."""
+    cleaned = token.strip()
+    if re.fullmatch(r"\d{6}", cleaned):
+        return f"20{cleaned[:2]}-{cleaned[2:4]}-{cleaned[4:6]}"
+    if re.fullmatch(r"\d{8}", cleaned):
+        return f"{cleaned[:4]}-{cleaned[4:6]}-{cleaned[6:8]}"
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", cleaned):
+        return cleaned
+    return None
 
 
-def _strip_brokerage_suffix(brokerage: str) -> str:
-    """증권사 이름에서 '증권' 접미사를 제거합니다.
+def _normalize_brokerage(token: str) -> str | None:
+    """Map brokerage aliases and remove the trailing '증권'."""
+    cleaned = token.strip("[]()")
+    if not cleaned:
+        return None
 
-    Args:
-        brokerage: 증권사 이름 (예: 한화투자증권, 메리츠증권)
+    normalized_key = cleaned.lower()
+    if normalized_key in _BROKERAGE_ALIASES:
+        return _BROKERAGE_ALIASES[normalized_key]
 
-    Returns:
-        '증권' 접미사가 제거된 이름 (예: 한화투자, 메리츠)
-    """
-    if brokerage.endswith("증권"):
-        return brokerage[:-2]
-    return brokerage
+    if cleaned.endswith("증권"):
+        stripped = cleaned[:-2]
+        alias = _BROKERAGE_ALIASES.get(stripped.lower())
+        return alias if alias else stripped
+
+    return None
 
 
-def _is_market_report(stem: str) -> bool:
-    """파일명 스템에 시황 키워드가 포함되어 있는지 확인합니다.
+def _tokenize(stem: str) -> list[str]:
+    return [token for token in stem.split("_") if token]
 
-    Args:
-        stem: .pdf 제거된 파일명
 
-    Returns:
-        시황 리포트이면 True
-    """
-    tokens = re.split(r"[_\s\[\]（）()]+", stem)
-    return any(token in _MARKET_KEYWORDS for token in tokens)
+def _find_date(tokens: list[str]) -> tuple[str | None, int | None]:
+    for index in range(len(tokens) - 1, -1, -1):
+        date = _normalize_date(tokens[index])
+        if date:
+            return date, index
+    return None, None
+
+
+def _find_brokerage(tokens: list[str]) -> tuple[str | None, int | None]:
+    for index in range(len(tokens) - 1, -1, -1):
+        brokerage = _normalize_brokerage(tokens[index])
+        if brokerage:
+            return brokerage, index
+    return None, None
+
+
+def _looks_like_market(stem: str) -> bool:
+    lowered = stem.lower().replace("_", " ")
+    return any(keyword in lowered for keyword in _MARKET_KEYWORDS)
+
+
+def _find_sector(tokens: list[str]) -> tuple[str | None, int | None]:
+    for index, token in enumerate(tokens):
+        exact_matches = []
+        partial_matches = []
+        for sector in _SECTOR_KEYWORDS:
+            compact = sector.replace(" ", "")
+            if compact == token:
+                exact_matches.append(sector)
+            elif compact in token:
+                partial_matches.append(sector)
+        if exact_matches:
+            return max(exact_matches, key=len), index
+        if partial_matches:
+            return max(partial_matches, key=len), index
+    return None, None
+
+
+def _strip_known_parts(tokens: list[str], indices_to_drop: set[int]) -> list[str]:
+    return [token for index, token in enumerate(tokens) if index not in indices_to_drop]
+
+
+def _is_author_token(token: str) -> bool:
+    return len(token) == 3 and all("\uAC00" <= char <= "\uD7A3" for char in token)
 
 
 class PDFNamer:
-    """PDF 파일명 규칙을 관리하는 클래스."""
-
-    def __init__(self) -> None:
-        """PDFNamer를 초기화합니다."""
-        pass
+    """Classify report filenames and convert them into a normalized format."""
 
     def get_filename(self, original_filename: str) -> str:
-        """
-        원본 파일명을 기반으로 통일된 파일명을 생성합니다.
-
-        카테고리별 변환 규칙:
-        - 기업: 기업_<종목명>_<증권사>_<yyyy-mm-dd>.pdf
-        - 산업: 산업_<섹터>_<증권사>_<제목>_<yyyy-mm-dd>.pdf
-        - 시황: 시황_<전처리된_파일명>.pdf
-        - 기타: 기타_<전처리된_파일명>.pdf
-
-        Args:
-            original_filename: 원본 파일명 (.pdf 포함 또는 미포함)
-
-        Returns:
-            통일된 파일명
-        """
-        if not original_filename.endswith(".pdf"):
+        """Return a normalized filename for PDF reports."""
+        if not original_filename.lower().endswith(".pdf"):
             return original_filename
 
-        # 전처리: 공백/콤마 → 언더스코어
         filename = _preprocess_filename(original_filename)
-        stem = filename[:-4]  # .pdf 제거
+        stem = filename[:-4]
 
-        # Pattern A: 기업_ 시작
-        if stem.startswith("기업_"):
-            return self._rename_stock_report(stem)
-
-        # Pattern B: 산업_ 시작
         if stem.startswith("산업_"):
-            return self._rename_sector_report(stem)
+            industry_report = self._parse_industry_report(stem)
+            if industry_report:
+                return self._render_industry_filename(industry_report)
 
-        # Pattern C: 종목코드 대괄호 형식
-        match = _TICKER_PATTERN.match(filename)
-        if match:
-            return self._rename_ticker_format(match)
+        company_report = self._parse_company_report(stem)
+        if company_report:
+            return self._render_company_filename(company_report)
 
-        # 시황 키워드 검사
-        if _is_market_report(stem):
+        industry_report = self._parse_industry_report(stem)
+        if industry_report:
+            return self._render_industry_filename(industry_report)
+
+        if _looks_like_market(stem):
             return f"시황_{filename}"
 
-        # Pattern E: <작성자>_<기업>_<리포트제목>_<증권사>_<날짜> 형식
-        result = self._try_rename_author_format(stem)
-        if result:
-            return result
-
-        # Pattern F: <yyyymmdd>_<종목명>_<증권사> 형식 (토큰 정확히 3개)
-        match_f = _DATE_LEADING_PATTERN.match(filename)
-        if match_f:
-            date = _normalize_date(match_f.group(1))
-            if date:
-                stock_name = match_f.group(2)
-                brokerage = _strip_brokerage_suffix(match_f.group(3))
-                return f"기업_{stock_name}_{brokerage}_{date}.pdf"
-
-        # 기타: 기타_ 접두사 추가
         return f"기타_{filename}"
 
-    def _rename_stock_report(self, stem: str) -> str:
-        """Pattern A: `기업_<종목명>_<제목>_<증권사>_<yymmdd>` → `기업_<종목명>_<증권사>_<yyyy-mm-dd>.pdf`"""
-        parts = stem.split("_")
-        # 최소 4개 토큰 필요: 기업, 종목명, 증권사, 날짜
-        if len(parts) < 4:
-            return stem + ".pdf"
-
-        date = _normalize_date(parts[-1])
-        if not date:
-            return stem + ".pdf"
-
-        brokerage = _strip_brokerage_suffix(parts[-2])
-        stock_name = parts[1]  # 첫 번째 토큰만 종목명으로 사용
-        return f"기업_{stock_name}_{brokerage}_{date}.pdf"
-
-    def _rename_sector_report(self, stem: str) -> str:
-        """Pattern B: `산업_<섹터>_<제목>_<증권사>_<yymmdd>` → `산업_<섹터>_<증권사>_<제목>_<yyyy-mm-dd>.pdf`"""
-        parts = stem.split("_")
-        # 최소 4개 토큰 필요: 산업, 섹터, 증권사, 날짜
-        if len(parts) < 4:
-            return stem + ".pdf"
-
-        date = _normalize_date(parts[-1])
-        if not date:
-            return stem + ".pdf"
-
-        brokerage = _strip_brokerage_suffix(parts[-2])
-        sector = parts[1]
-        title_parts = parts[2:-2]  # 섹터와 증권사_날짜 사이
-        title = "_".join(title_parts) if title_parts else ""
-
-        if title:
-            return f"산업_{sector}_{brokerage}_{title}_{date}.pdf"
-        return f"산업_{sector}_{brokerage}_{date}.pdf"
-
-    def _rename_ticker_format(self, match: re.Match) -> str:
-        """Pattern C: `<종목명>［ticker］_<yyyymmdd>_<증권사코드>_<id>.pdf` → `기업_<종목명>_<증권사>_<yyyy-mm-dd>.pdf`"""
-        stock_name = match.group(1)
-        date = _normalize_date(match.group(2))
-        brokerage_code = match.group(3)
-        brokerage = _BROKERAGE_MAP.get(brokerage_code, brokerage_code)
-        return f"기업_{stock_name}_{brokerage}_{date}.pdf"
-
-    def _try_rename_author_format(self, stem: str) -> str | None:
-        """Pattern E: `<작성자>_<기업>_<리포트제목>_<증권사>_<yymmdd>` → `기업_<기업>_<증권사>_<yyyy-mm-dd>.pdf`
-
-        작성자는 항상 한국인 이름 1토큰 (성씨로 시작하는 3자 한글).
-        2번째 토큰이 영문이면 리포트 타입(Initiation 등)으로 보고 3번째 토큰을 기업으로 사용.
-        """
-        parts = stem.split("_")
-        # 최소 5개 토큰 필요: 작성자, 기업, 제목, 증권사, 날짜
-        if len(parts) < 5:
+    def _parse_industry_report(self, stem: str) -> _ParsedReport | None:
+        tokens = _tokenize(stem)
+        if not tokens:
             return None
 
-        # 첫 토큰이 한국인 이름인지 확인: 정확히 3자 한글 + 첫 글자가 성씨
-        author = parts[0]
-        if not (len(author) == 3 and author.isalpha() and all('\uAC00' <= c <= '\uD7A3' for c in author)):
-            return None
-        if author[0] not in _KOREAN_SURNAMES:
-            return None
+        explicit_industry = tokens[0] == "산업"
+        sector, sector_index = _find_sector(tokens[1:] if explicit_industry else tokens)
+        if sector_index is not None and not explicit_industry:
+            sector_index += 0
 
-        # 날짜 확인
-        date = _normalize_date(parts[-1])
-        if not date:
-            return None
-
-        brokerage = _strip_brokerage_suffix(parts[-2])
-        second_token = parts[1]
-
-        # 2번째 토큰이 영문(리포트 타입)이면 3번째 토큰을 기업으로 사용
-        if second_token.isascii() and second_token.isalpha():
-            if len(parts) < 6:
+        if explicit_industry:
+            if len(tokens) < 2:
                 return None
-            stock_name = parts[2]
-        else:
-            stock_name = second_token
+            sector = tokens[1]
+            sector_index = 1
+        elif sector is None or sector_index is None:
+            bracket_sector = self._extract_bracket_sector(tokens[0])
+            if bracket_sector:
+                sector = bracket_sector
+                sector_index = 0
+            else:
+                return None
 
-        # 비기업 토큰이 기업 자리에 오면 기타 처리
-        if stock_name in _SECTOR_KEYWORDS:
+        date, date_index = _find_date(tokens)
+        if not date:
             return None
 
-        # 영문+한글조사 형태(예: Quant의, Market의)는 기업명 아님
-        if len(stock_name) > 1 and stock_name[-1] == '의' and stock_name[:-1].isascii():
+        brokerage, brokerage_index = _find_brokerage(tokens)
+
+        drop_indices = {date_index}
+        if brokerage_index is not None:
+            drop_indices.add(brokerage_index)
+
+        if explicit_industry:
+            drop_indices.add(0)
+            drop_indices.add(1)
+        elif sector_index is not None:
+            drop_indices.add(sector_index)
+
+        if tokens and _is_author_token(tokens[0]) and 0 not in drop_indices:
+            drop_indices.add(0)
+
+        title_tokens = _strip_known_parts(tokens, drop_indices)
+        title = "_".join(token for token in title_tokens if token != sector).strip("_")
+        if not title:
+            title = "리포트"
+
+        return _ParsedReport(
+            category="산업",
+            name=sector,
+            brokerage=brokerage or "미상",
+            title=title,
+            date=date,
+        )
+
+    def _parse_company_report(self, stem: str) -> _ParsedReport | None:
+        tokens = _tokenize(stem)
+        if not tokens:
             return None
 
-        return f"기업_{stock_name}_{brokerage}_{date}.pdf"
+        if tokens[0] == "기업":
+            return self._parse_explicit_company(tokens)
+
+        bracket_match = _LEADING_BRACKET_RE.match(stem)
+        if bracket_match:
+            name = bracket_match.group("name")
+            rest = bracket_match.group("rest") or ""
+            date, _ = _find_date(_tokenize(rest))
+            brokerage, _ = _find_brokerage(_tokenize(rest))
+            return _ParsedReport(
+                category="기업",
+                name=name,
+                brokerage=brokerage or "미상",
+                date=date or "",
+            )
+
+        ticker_company = self._extract_ticker_company(tokens)
+        if ticker_company:
+            date, _ = _find_date(tokens)
+            brokerage, _ = _find_brokerage(tokens)
+            if not date:
+                return None
+            return _ParsedReport(
+                category="기업",
+                name=ticker_company,
+                brokerage=brokerage or "미상",
+                date=date,
+            )
+
+        if len(tokens) >= 3 and _normalize_date(tokens[0]):
+            date = _normalize_date(tokens[0])
+            brokerage = _normalize_brokerage(tokens[-1])
+            if date and brokerage:
+                return _ParsedReport(
+                    category="기업",
+                    name=tokens[1],
+                    brokerage=brokerage,
+                    date=date,
+                )
+
+        date, date_index = _find_date(tokens)
+        if not date or date_index is None:
+            return None
+
+        brokerage, brokerage_index = _find_brokerage(tokens)
+        if brokerage_index is not None and brokerage_index > date_index:
+            brokerage_index = None
+            brokerage = None
+
+        if tokens[0] in {"산업", "시황", "기타"}:
+            return None
+
+        company_index = 0
+        if _is_author_token(tokens[0]) and len(tokens) > 1:
+            company_index = 2 if len(tokens) > 2 and re.fullmatch(r"[A-Za-z]+", tokens[1]) else 1
+
+        company_token = tokens[company_index]
+        ticker_match = _TICKER_BRACKET_RE.match(company_token)
+        if ticker_match:
+            company_token = ticker_match.group("name")
+
+        if company_token in _SECTOR_KEYWORDS:
+            return None
+        if _looks_like_market(company_token):
+            return None
+
+        if brokerage_index is None:
+            brokerage = "미상"
+
+        return _ParsedReport(
+            category="기업",
+            name=company_token,
+            brokerage=brokerage,
+            date=date,
+        )
+
+    def _parse_explicit_company(self, tokens: list[str]) -> _ParsedReport | None:
+        if len(tokens) < 3:
+            return None
+
+        date, _ = _find_date(tokens)
+        if not date:
+            return None
+
+        brokerage, _ = _find_brokerage(tokens)
+        company = tokens[1]
+
+        if company in _SECTOR_KEYWORDS:
+            return None
+
+        return _ParsedReport(
+            category="기업",
+            name=company,
+            brokerage=brokerage or "미상",
+            date=date,
+        )
+
+    def _extract_ticker_company(self, tokens: list[str]) -> str | None:
+        for index, token in enumerate(tokens):
+            ticker_match = _TICKER_BRACKET_RE.match(token)
+            if not ticker_match:
+                continue
+
+            leading_name = ticker_match.group("name")
+            prefix_tokens = tokens[:index]
+            if prefix_tokens:
+                return "_".join([*prefix_tokens, leading_name]).strip("_")
+            return leading_name
+        return None
+
+    def _extract_bracket_sector(self, token: str) -> str | None:
+        bracket_match = _LEADING_BRACKET_RE.match(token)
+        if not bracket_match:
+            return None
+
+        inside = bracket_match.group("name")
+        for sector in _SECTOR_KEYWORDS:
+            if sector in inside:
+                return sector
+        return None
+
+    def _render_company_filename(self, report: _ParsedReport) -> str:
+        return f"기업_{report.name}_{report.brokerage}_{report.date}.pdf"
+
+    def _render_industry_filename(self, report: _ParsedReport) -> str:
+        return f"산업_{report.name}_{report.brokerage}_{report.title}_{report.date}.pdf"
