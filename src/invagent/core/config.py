@@ -5,7 +5,7 @@ from pathlib import Path
 
 DEFAULT_CHANNELS: tuple[str, ...] = (
     "DOC_POOL",
-    "sunstudy1004",
+    "선진짱 주식공부방",
     "report_figure_by_offset",
     "YoungTiger_stock",
     "quick_report",
