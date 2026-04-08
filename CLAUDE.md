@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+**Always start session with caveman skill (`/caveman:caveman`). Default intensity: full.**
+
 이 프로젝트는 나의 투자 의사 결정을 돕는 도구들로 구성되어 있다.
 작성된 코드 및 스크립트는 `invagent` 파이썬 패키지(v0.2.0)안에 포함된다.
 
