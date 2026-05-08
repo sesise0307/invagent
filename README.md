@@ -59,7 +59,11 @@ uv run invagent show-stock AAPL
 ```text
 output/
   telegram-daily/
-    YYYY-MM-DD_raw.md
+    raw/
+      YYYY-MM-DD_raw.md           # 원본 (오늘자만 유지, 브리핑 후 자동 정리)
+    YYYY-MM/
+      YYYY-MM-DD.md               # 일일 브리핑 (월별 서브 디렉토리)
+    monthly_context.md            # 월간 누적 컨텍스트
   reports/
     YYYY-MM-DD/
       *.pdf

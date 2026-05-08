@@ -30,7 +30,7 @@ class Config:
 
     def telegram_daily_dir(self) -> Path:
         """Return the directory used for daily Telegram exports."""
-        return self.output_dir / "telegram-daily"
+        return self.output_dir / "telegram-daily/raw"
 
     def reports_dir(self, date: str) -> Path:
         """Return the directory used for downloaded PDF reports on a given date."""

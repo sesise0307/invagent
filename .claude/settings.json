@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv:*)",
+      "Bash(git:*)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(pytest:*)",
+      "Bash(ls:*)",
+      "Bash(lsof ~/.telegram_session*)",
+      "WebSearch",
+      "Edit(./output/**)",
+      "Read(//Users/sesise/.claude/plugins/notion/**)",
+      "Read(//Users/sesise/.claude/plugins/**)",
+      "Read(//tmp/**)",
+      "mcp__plugin_Notion_notion__notion-search",
+      "mcp__plugin_Notion_notion__notion-fetch",
+      "mcp__plugin_Notion_notion__notion-update-page"
+    ]
+  }
+}
