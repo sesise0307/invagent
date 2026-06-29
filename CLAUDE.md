@@ -14,6 +14,18 @@
 - 종목별 목표 주가 및 투자 의견 변경 트랙킹
 - 관심 종목 뉴스 및 공시 트랙킹
 - 투자 대가들의 관점에서 투자 조언
+- OpenDART 연동 — 기업 공시·재무·지배구조·사업보고서 조회 (MCP)
+
+## OpenDART 조회 (MCP)
+
+기업의 **공시 정보, 재무 정보, 지배구조, 사업보고서 내용** 등을 자세히 알고 싶을 때는
+`opendart` MCP 서버 도구를 사용한다. DART 공식 데이터 기반(연결·지배주주 귀속, 한국 표준).
+
+항상 `company`로 회사를 식별(ticker/corp_code 확정)한 뒤 후속 도구를 호출한다.
+재무·실적은 `financial_metrics`, 지분은 `ownership_structure`, 배당은 `dividend` 등 16개 도구 제공.
+
+**자세한 접속 방법·도구 레퍼런스·사용 예시는 `opendart` 스킬을 참조한다**
+(`.claude/skills/opendart/SKILL.md`). 기업 정보 질의가 들어오면 해당 스킬이 자동 트리거된다.
 
 ## Quick Start
 
