@@ -21,22 +21,17 @@ description: >
 
 ---
 
-## 접속 (MCP 연결)
+## 접속 확인
 
-도구는 `opendart` MCP 서버(remote, HTTP)를 통해 제공된다. 연결 URL:
+`opendart` MCP 서버의 도구를 사용한다. 먼저 현재 클라이언트에서 서버와
+`company` 도구를 사용할 수 있는지 확인한다. 도구가 지연 로딩 상태면 사용
+가능한 도구 검색/로드 기능으로 필요한 도구를 한 번에 불러온다.
 
-```
-https://open-proxy-mcp.fly.dev/mcp?opendart=REDACTED
-```
-
-- `~/.claude.json`의 `mcpServers.opendart.url`에 이미 등록되어 있어, Claude Code 세션에서 자동 연결된다.
-- URL 쿼리스트링의 `opendart=` 값은 OpenDART API 토큰이다. **노출 주의** — 공개 저장소·공유 채널에 그대로 올리지 말 것.
-- 도구가 deferred 상태(스키마 미로드)면 호출 전에 ToolSearch로 로드한다:
-  ```
-  ToolSearch query "select:mcp__opendart__company,mcp__opendart__financial_metrics"
-  ```
-  필요한 도구를 한 번의 ToolSearch에 콤마로 묶어서 로드한다(라운드트립 절약).
-- 토큰 재발급·API 키 발급은 공식 사이트에서: <https://opendart.fss.or.kr> (공시 원문 뷰어는 <https://dart.fss.or.kr>).
+서버가 없거나 인증되지 않았으면 웹 검색으로 대체하지 말고 로컬 MCP 설정
+누락을 보고하고 `docs/agent-setup.md`의 설정 절차를 안내한다. 엔드포인트와
+API 토큰은 사용자별 Claude/Codex 설정에만 저장하고 저장소 파일이나 응답에
+노출하지 않는다. 토큰 발급은 <https://opendart.fss.or.kr>, 공시 원문 확인은
+<https://dart.fss.or.kr>를 사용한다.
 
 ---
 
@@ -59,7 +54,8 @@ https://open-proxy-mcp.fly.dev/mcp?opendart=REDACTED
 
 ## 도구 레퍼런스
 
-모든 도구는 `mcp__opendart__<name>` 형태다. `company` 외 대부분 `company` 인자를 받는다.
+도구 표시 이름은 클라이언트에 따라 접두사가 달라질 수 있다. 아래 표의 기본
+도구 이름으로 찾는다. `company` 외 대부분 `company` 인자를 받는다.
 
 ### 식별 · 진입점
 | 도구 | 용도 | 핵심 scope/인자 |

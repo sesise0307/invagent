@@ -1,0 +1,4 @@
+interface:
+  display_name: "Investment Advice"
+  short_description: "Analyze investments through proven frameworks"
+  default_prompt: "Use $advice to assess this investment with my risk rules."

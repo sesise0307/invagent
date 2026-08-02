@@ -10,7 +10,8 @@ description: 텔레그램 저장 메시지를 가져와 섹터/종목별로 분�
 
 ## 기본 동작 모드
 
-이 스킬은 **caveman 모드(full)**를 기본으로 사용한다. 스킬 실행 시 가장 먼저 `/caveman full` 스킬을 호출하여 caveman 모드를 활성화한 뒤 작업을 진행한다.
+설치된 `caveman` 스킬을 `full` 강도로 활성화한 뒤 작업한다. 현재 클라이언트의
+기본 스킬 호출 문법을 사용한다.
 
 ## 실행 순서
 
@@ -23,7 +24,7 @@ output/telegram-daily/raw/<today>_raw.md
 
 - **파일이 없으면**: 아래 명령어로 먼저 메시지를 가져온다
   ```bash
-  cd /Users/sesise/1_Investment/invagent && uv run invagent fetch-messages --days 1
+  uv run invagent fetch-messages --days 1
   ```
 - **파일이 있으면**: 그대로 사용한다
 
@@ -34,7 +35,7 @@ output/telegram-daily/raw/<today>_raw.md
 StockEasy 시장 분석 페이지에서 시장 신호를 수집한다:
 
 ```bash
-cd /Users/sesise/1_Investment/invagent && python3 .claude/skills/summarize-telegram/scripts/fetch_market_signals.py
+uv run python .agents/skills/summarize-telegram/scripts/fetch_market_signals.py
 ```
 
 출력 내용 (신호등, 오닐 빅픽처, 지수, breadth, 신용/수급)을 해석해 브리핑 템플릿 최상단
@@ -47,17 +48,27 @@ cd /Users/sesise/1_Investment/invagent && python3 .claude/skills/summarize-teleg
 
 코스피 변동성 지수(VKOSPI, 코스피200 변동성지수 = 한국판 VIX)를 investing.com에서 가져온다.
 
-**WebFetch 툴을 사용한다** (curl/스크립트는 Cloudflare 403으로 차단됨):
+사용 가능한 웹/브라우저 조회 기능을 사용한다. curl/스크립트 직접 요청은
+Cloudflare 403으로 차단되므로 정상 수집 경로로 간주하지 않는다.
 
 ```
-WebFetch(
-  url="https://www.investing.com/indices/kospi-volatility",
-  prompt="Extract the current KOSPI Volatility Index value, change, percent change,
-          day's range, previous close, 52-week range, and last update time."
-)
+URL: `https://www.investing.com/indices/kospi-volatility`
+
+현재값, 등락, 등락률, 일간 범위, 전일 종가, 52주 범위, 갱신 시각을 추출한다.
 ```
 
 추출 항목: **현재가 · 전일대비(%) · 전일종가 · 일간범위 · 52주 범위 · 갱신시각**.
+
+**빈 응답 대응 (필수)**:
+1. URL `open` 결과가 빈 응답이면 곧바로 수집 실패로 판정하지 말고 같은 URL을 한 번 다시 연다.
+2. 재시도도 비면 브라우저 검색에서 `Investing.com KOSPI Volatility` 결과를 찾고 해당 결과를 연다.
+3. 텍스트 추출이 비어도 페이지 렌더링이 가능하면 브라우저 화면에서 위 추출 항목을 읽는다.
+4. 당일 브리핑을 재생성·수정하는 경우 기존 당일 산출물이나 백업에 이미 수집된 값이 있는지 확인한다.
+   값의 날짜와 출처가 같은 거래일임을 확인한 경우에만 재사용하고, 브리핑에 재사용 사실을 남긴다.
+5. 각 단계의 실제 오류를 구분해 기록한다: HTTP 403, 빈 응답, 파싱 실패, 값 날짜 불일치.
+
+웹 커넥터가 빈 본문을 반환하는 것은 지수 데이터 부재를 뜻하지 않는다. Investing.com 직접 HTTP
+요청의 403도 예상된 차단이므로, 이를 우회하려고 curl 기반 수집기를 추가하지 않는다.
 
 **해석 기준**:
 - 절대 레벨 밴드 (평시): ~20 이하 안일 / 20~30 정상 / 30~40 경계 / 40 이상 공포
@@ -81,9 +92,7 @@ WebFetch(
 raw 파일은 수천 줄에 달할 수 있으므로 한 번에 읽지 말고 청크 단위로 나눠 읽는다:
 
 ```
-Read(file_path, offset=0,   limit=200)   # 1번째 청크
-Read(file_path, offset=200, limit=200)   # 2번째 청크
-...반복...
+파일 읽기 기능이나 `sed`를 사용해 200줄 이하의 범위로 순차 조회한다.
 ```
 
 - `limit`은 200줄 이하로 유지한다 (토큰 초과 오류 방지)
@@ -142,7 +151,7 @@ output/telegram-daily/monthly_context.md
 
 ### 4단계: 투자 조언 생성
 
-`advice` 스킬(`/Users/sesise/1_Investment/invagent/.claude/skills/advice/SKILL.md`)의 방법론을 참조한다.
+`../advice/SKILL.md`의 방법론을 참조한다.
 
 **나만의 규칙 참조 (필수)**: 「의사 결정 조언」 섹션과 투자 조언 작성 시 advice 스킬의
 「🛡️ 나만의 규칙」 섹션(-8% 분할매도·-15% 손절·2%룰·레버리지 룰·분할매도·24~30% 수익쿠션)을
@@ -171,11 +180,11 @@ output/telegram-daily/monthly_context.md
 - **차트·추세 관점**: 미너비니/오닐 기준으로 스테이지, 진입/손절 조건
 - **매크로 관점**: 드루켄밀러/소로스 시각으로 금리/유동성/자금 흐름
 
-`references/` 디렉토리의 상세 방법론 파일도 참조할 수 있다:
-- `advice/references/value_investing.md`
-- `advice/references/trend_following.md`
-- `advice/references/macro.md`
-- `advice/references/aphorisms.md` — 상황에 맞는 격언 2-3개 선별
+상세 방법론 파일도 참조할 수 있다:
+- `../advice/references/value_investing.md`
+- `../advice/references/trend_following.md`
+- `../advice/references/macro.md`
+- `../advice/references/aphorisms.md` — 상황에 맞는 격언 2-3개 선별
 
 ### 5단계: 브리핑 파일 저장
 
@@ -229,11 +238,14 @@ output/telegram-daily/<yyyy-mm>/<yyyy-mm-dd>.md
 **삭제 명령**:
 ```bash
 TODAY=$(date +%Y-%m-%d)
-find /Users/sesise/1_Investment/invagent/output/telegram-daily/raw \
+find output/telegram-daily/raw \
      -maxdepth 1 -type f -name '*_raw.md' \
      ! -name "${TODAY}_raw.md" -print -delete
 ```
 
+- 저장소 루트에서 `output/telegram-daily/raw` 상대 경로를 사용한다.
+- 삭제 전에 후보 파일을 출력한다. 현재 요청에서 정리를 명시적으로 승인하지
+  않았다면 사용자 확인을 받은 뒤 `-delete`를 실행한다.
 - `-maxdepth 1`: 서브디렉토리 건드리지 않음
 - `! -name "${TODAY}_raw.md"`: 오늘자 보존
 - `-print -delete`: 삭제 경로 출력

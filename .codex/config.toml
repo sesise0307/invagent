@@ -1,0 +1,5 @@
+# Shared Codex defaults for this trusted repository. Keep credentials in the
+# user-level ~/.codex/config.toml, never in this file.
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+web_search = "live"

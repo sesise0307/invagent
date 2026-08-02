@@ -1,0 +1,4 @@
+interface:
+  display_name: "Monthly Investment Review"
+  short_description: "Review monthly investing decisions in Notion"
+  default_prompt: "Use $monthly-investment-review to review my latest monthly investment journal."

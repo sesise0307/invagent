@@ -18,3 +18,9 @@ output/
 
 # Etc
 .DS_Store
+
+# Environment variables
+.env
+
+# IDE
+.vscode/

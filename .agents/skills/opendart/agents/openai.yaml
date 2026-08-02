@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenDART Research"
+  short_description: "Research Korean companies from official filings"
+  default_prompt: "Use $opendart to research this Korean company from official filings."
