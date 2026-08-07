@@ -17,7 +17,10 @@ Telegram client setup in `src/invagent/core/`, Telegram fetch/download logic in
 tracking in `src/invagent/tracking/`. The CLI entry point is
 `src/invagent/cli.py`. Tests mirror the package in `tests/`. Runtime outputs go
 to `output/`, reusable templates to `template/`, reference context to `context/`,
-and design notes to `docs/`.
+and design notes to `docs/`. Curated reference files in `context/` are checked into
+the repository: `context/my_rules.md` holds the user's personal risk-management
+rules and `context/interested_stocks.md` holds the tracked holdings list. Skills
+read `context/my_rules.md` directly, so keep the rule numbering stable.
 
 Canonical project skills live in `.agents/skills/`. Claude compatibility entries
 under `.claude/skills/` point to the same directories. Edit the canonical files
@@ -58,4 +61,5 @@ and user-facing CLI examples where applicable.
 
 Preserve unrelated work in a dirty worktree. Do not commit `.env`, API credentials,
 Telegram sessions, generated outputs, or agent-local settings. Treat `context/`
-as local working data unless it is intentionally curated for the repository.
+as local working data unless it is intentionally curated for the repository;
+`context/my_rules.md` and `context/interested_stocks.md` are curated and tracked.
