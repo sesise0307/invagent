@@ -22,6 +22,11 @@ the repository: `context/my_rules.md` holds the user's personal risk-management
 rules and `context/interested_stocks.md` holds the tracked holdings list. Skills
 read `context/my_rules.md` directly, so keep the rule numbering stable.
 
+The Telegram daily briefing also reads the user's live holdings from the Google
+Sheets file `주식 포트폴리오` (sheet `포트폴리오`) through the Google Drive MCP
+connector, and stores a parsed snapshot in `output/portfolio/<yyyy-mm-dd>.md`.
+`output/` is gitignored, so portfolio data never enters the repository.
+
 Canonical project skills live in `.agents/skills/`. Claude compatibility entries
 under `.claude/skills/` point to the same directories. Edit the canonical files
 only.
