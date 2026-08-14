@@ -68,23 +68,103 @@ def test_project_codex_config_is_credential_free() -> None:
     assert "mcp_servers" not in config
 
 
-def test_market_signal_parser_with_embedded_payload(capsys: pytest.CaptureFixture[str]) -> None:
+def _load_market_signal_module():
     script_path = SKILLS_ROOT / "summarize-telegram" / "scripts" / "fetch_market_signals.py"
     spec = importlib.util.spec_from_file_location("fetch_market_signals", script_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
 
-    payload = (
-        r'\"initialMarketIndicesData\":'
-        r'{\"short_term_signal\":\"green\",\"long_term_signal\":\"yellow\",'
-        r'\"indices\":[]}'
-    )
-    data = module.extract_json(payload, "initialMarketIndicesData")
 
-    assert data["short_term_signal"] == "green"
-    module.print_signals(data)
-    assert "green" in capsys.readouterr().out
+def test_market_signal_endpoints_point_at_stockdata_api() -> None:
+    """사이트가 클라이언트 렌더링으로 바뀐 뒤 실제 호출 경로는 /stockdata/api/v1/market."""
+    module = _load_market_signal_module()
+
+    assert module.API_BASE == "https://stockeasy.intellio.kr/stockdata/api/v1/market"
+    assert set(module.ENDPOINTS) == {
+        "indices",
+        "big_picture",
+        "market_monitor",
+        "credit_balance",
+    }
+
+
+def test_market_signal_main_renders_api_payload(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load_market_signal_module()
+
+    payloads = {
+        "indices": {
+            "short_term_signal": "green",
+            "long_term_signal": "yellow",
+            "indices": [
+                {
+                    "index_name": "종합(KOSPI)",
+                    "current_value": 6977.94,
+                    "price_change_percent": 2.42,
+                    "rising_stocks": 677,
+                    "falling_stocks": 204,
+                    "upper_limit_stocks": 3,
+                    "lower_limit_stocks": 0,
+                }
+            ],
+        },
+        "big_picture": {
+            "kospi": {
+                "status": "confirmed_uptrend",
+                "rally_day_count": 0,
+                "distribution_days": [],
+                "last_ftd_date": "2026-08-05",
+            }
+        },
+        "market_monitor": {
+            "data": [
+                {
+                    "일자": "2026-08-14",
+                    "KOSPI": 6977.34,
+                    "20down_ratio": 0.176,
+                    "200down_ratio": 0.786,
+                    "52W_High_count": 74.0,
+                    "52W_Low_count": 43.0,
+                    "ADR(KOSPI)": 125.84,
+                    "ADR(KOSDAQ)": 118.65,
+                }
+            ]
+        },
+        "credit_balance": {
+            "data": [
+                {
+                    "date": "2026-08-13",
+                    "total_credit": 309262,
+                    "investor_deposit": 1000683,
+                    "credit_deposit_ratio": 30.9051,
+                    "margin_call_amount": 50,
+                }
+            ]
+        },
+    }
+    monkeypatch.setattr(module, "fetch_api", lambda name: (payloads[name], None))
+
+    assert module.main() == 0
+
+    out = capsys.readouterr().out
+    assert "green" in out
+    assert "6,977.94" in out
+    assert "상승 추세 확인" in out
+    assert "30.9%" in out
+
+
+def test_market_signal_main_reports_api_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """지수·빅픽처가 모두 실패하면 사유를 stderr에 남기고 exit 1."""
+    module = _load_market_signal_module()
+    monkeypatch.setattr(module, "fetch_api", lambda name: (None, "HTTP 404"))
+
+    assert module.main() == 1
+    assert "HTTP 404" in capsys.readouterr().err
 
 
 PORTFOLIO_DUMP = """|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |

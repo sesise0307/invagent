@@ -50,7 +50,8 @@ async def test_fetch_content_success():
     """URL 내용 정상 추출"""
     extractor = LinkExtractor()
 
-    with patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value=None), \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
         mock_response = AsyncMock()
         mock_response.status_code = 200
         mock_response.text = "<html><head><title>Test Page</title></head><body><p>Content here</p></body></html>"
@@ -68,7 +69,8 @@ async def test_fetch_content_timeout():
     """URL 타임아웃 처리"""
     extractor = LinkExtractor()
 
-    with patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value=None), \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
         import requests
         mock_get.side_effect = requests.exceptions.Timeout()
 
@@ -153,3 +155,31 @@ async def test_extract_and_fetch_parallel():
     # 두 fetch가 거의 동시에 시작됐는지 확인 (0.1초 이내 차이)
     if len(call_times) == 2:
         assert abs(call_times[1] - call_times[0]) < 0.1
+
+
+@pytest.mark.asyncio
+async def test_extract_and_fetch_hard_timeout():
+    """멈춘 URL 1건이 수집 전체를 막지 않고 타임아웃으로 회수된다"""
+    import asyncio
+
+    extractor = LinkExtractor(timeout=1, hard_timeout=1)
+    text = "https://hang.example.com https://ok.example.com"
+
+    async def fake_fetch(url: str) -> str:
+        if "hang" in url:
+            await asyncio.sleep(30)
+        return f"content of {url}"
+
+    with patch.object(extractor, "fetch_content", side_effect=fake_fetch):
+        result = await asyncio.wait_for(extractor.extract_and_fetch(text), timeout=10)
+
+    assert result["contents"]["https://hang.example.com"] == "[링크 읽기 타임아웃]"
+    assert result["contents"]["https://ok.example.com"] == "content of https://ok.example.com"
+
+
+def test_trafilatura_config_has_explicit_download_timeout():
+    """trafilatura 다운로드 타임아웃이 명시적으로 주입된다"""
+    extractor = LinkExtractor(timeout=7)
+
+    assert extractor._trafilatura_config["DEFAULT"]["DOWNLOAD_TIMEOUT"] == "7"
+    assert extractor.hard_timeout == 21

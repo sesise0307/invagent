@@ -5,6 +5,7 @@ URL 추출 및 내용 fetch 기능을 담당하는 LinkExtractor 클래스.
 """
 
 import asyncio
+import functools
 import re
 from typing import Optional
 
@@ -37,14 +38,33 @@ TELEGRAM_URL_PATTERN = re.compile(
 class LinkExtractor:
     """URL 추출 및 내용 fetch 기능을 제공하는 클래스."""
 
-    def __init__(self, timeout: int = 10) -> None:
+    def __init__(self, timeout: int = 10, hard_timeout: Optional[int] = None) -> None:
         """
         LinkExtractor를 초기화합니다.
 
         Args:
             timeout: URL 요청의 타임아웃 시간 (초). 기본값: 10초
+            hard_timeout: URL 1건 처리의 상한(초). trafilatura·BeautifulSoup 단계까지
+                포함해 이 시간을 넘기면 강제로 중단한다. 기본값: timeout의 3배
         """
         self.timeout = timeout
+        self.hard_timeout = hard_timeout if hard_timeout is not None else timeout * 3
+        self._trafilatura_config = self._build_trafilatura_config(timeout)
+
+    @staticmethod
+    def _build_trafilatura_config(timeout: int):
+        """trafilatura 다운로드에 명시적 타임아웃을 적용한 설정을 만든다."""
+        if not HAS_REQUESTS:
+            return None
+        from copy import deepcopy
+
+        from trafilatura.settings import DEFAULT_CONFIG
+
+        config = deepcopy(DEFAULT_CONFIG)
+        config["DEFAULT"]["DOWNLOAD_TIMEOUT"] = str(timeout)
+        config["DEFAULT"]["SLEEP_TIME"] = "0"
+        config["DEFAULT"]["MAX_REDIRECTS"] = "2"
+        return config
 
     @staticmethod
     def is_telegram_url(url: str) -> bool:
@@ -103,7 +123,10 @@ class LinkExtractor:
         try:
             # 1차: trafilatura로 본문 추출
             loop = asyncio.get_running_loop()
-            downloaded = await loop.run_in_executor(None, trafilatura.fetch_url, url)
+            downloaded = await loop.run_in_executor(
+                None,
+                functools.partial(trafilatura.fetch_url, url, config=self._trafilatura_config),
+            )
             if downloaded:
                 text = trafilatura.extract(
                     downloaded,
@@ -209,6 +232,17 @@ class LinkExtractor:
             allow_redirects=True
         )
 
+    async def _fetch_content_bounded(self, url: str) -> str:
+        """`fetch_content`를 hard_timeout으로 감싼다.
+
+        trafilatura·BeautifulSoup 단계가 자체 타임아웃을 지키지 못하고 멈추면
+        수집 전체가 무기한 대기 상태가 되므로, URL 1건마다 상한을 강제한다.
+        """
+        try:
+            return await asyncio.wait_for(self.fetch_content(url), timeout=self.hard_timeout)
+        except asyncio.TimeoutError:
+            return "[링크 읽기 타임아웃]"
+
     async def extract_and_fetch(self, text: str) -> dict[str, list[str] | str]:
         """
         텍스트에서 URL을 추출하고 각 URL의 내용을 병렬로 가져옵니다.
@@ -226,7 +260,7 @@ class LinkExtractor:
         urls = self.extract_urls(text)
 
         results = await asyncio.gather(
-            *[self.fetch_content(url) for url in urls],
+            *[self._fetch_content_bounded(url) for url in urls],
             return_exceptions=True,
         )
 

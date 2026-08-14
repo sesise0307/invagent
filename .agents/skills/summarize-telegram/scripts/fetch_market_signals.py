@@ -1,18 +1,30 @@
 #!/usr/bin/env python3
 """StockEasy 시장 신호 수집기.
 
-https://stockeasy.intellio.kr/market-analysis?tab=overview 페이지의
-SSR HTML에 임베딩된 RSC payload에서 시장 데이터를 추출해 요약 출력한다.
+stockeasy.intellio.kr의 `/stockdata/api/v1/market/*` JSON API에서 시장 데이터를
+직접 받아 요약 출력한다.
 
-의존성: stdlib만 사용 (urllib, json, re).
+2026-08-14 이전에는 페이지 HTML의 SSR RSC payload를 파싱했으나, 사이트가
+클라이언트 렌더링으로 전환하면서 payload가 사라져 수집이 실패했다. 지금은
+페이지가 실제로 호출하는 API를 같은 방식으로 호출한다.
+
+의존성: stdlib만 사용 (urllib, json).
 실패 시 stderr에 에러 출력 후 exit 1 — 호출측(스킬)은 실패해도 브리핑을 계속 진행한다.
 """
 
 import json
 import sys
+import urllib.error
 import urllib.request
 
-URL = "https://stockeasy.intellio.kr/market-analysis?tab=overview"
+PAGE_URL = "https://stockeasy.intellio.kr/market-analysis?tab=overview"
+API_BASE = "https://stockeasy.intellio.kr/stockdata/api/v1/market"
+ENDPOINTS = {
+    "indices": "/indices",
+    "big_picture": "/big-picture",
+    "market_monitor": "/market-monitor",
+    "credit_balance": "/credit-balance",
+}
 TIMEOUT = 20
 
 SIGNAL_EMOJI = {"red": "🔴", "yellow": "🟡", "green": "🟢"}
@@ -24,54 +36,24 @@ STATUS_KO = {
 }
 
 
-def fetch_html(url: str) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-        return resp.read().decode("utf-8", errors="replace")
-
-
-def extract_json(html: str, key: str):
-    """이스케이프된 RSC payload에서 key에 해당하는 JSON 값을 balanced 파싱으로 추출."""
-    marker = f'\\"{key}\\"'
-    i = html.find(marker)
-    if i < 0:
-        return None
-    j = html.find(":", i + len(marker)) + 1
-    # unicode_escape는 UTF-8 멀티바이트를 latin-1 문자로 깨뜨리므로 재인코딩으로 복원
-    seg = (
-        html[j : j + 500_000]
-        .encode()
-        .decode("unicode_escape")
-        .encode("latin-1", "ignore")
-        .decode("utf-8", "replace")
+def fetch_api(name: str):
+    """market API 하나를 호출해 JSON을 반환한다. 실패하면 (None, 사유)."""
+    url = API_BASE + ENDPOINTS[name]
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json",
+            "Referer": PAGE_URL,
+        },
     )
-    start = 0
-    while start < len(seg) and seg[start] in " \t":
-        start += 1
-    if start >= len(seg) or seg[start] not in "{[":
-        return None
-    open_c, close_c = (seg[start], "}" if seg[start] == "{" else "]")
-    depth, in_str, esc = 0, False, False
-    for k in range(start, len(seg)):
-        ch = seg[k]
-        if esc:
-            esc = False
-            continue
-        if ch == "\\":
-            esc = True
-            continue
-        if ch == '"':
-            in_str = not in_str
-            continue
-        if in_str:
-            continue
-        if ch == open_c:
-            depth += 1
-        elif ch == close_c:
-            depth -= 1
-            if depth == 0:
-                return json.loads(seg[start : k + 1])
-    return None
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            return json.loads(resp.read().decode("utf-8")), None
+    except urllib.error.HTTPError as e:
+        return None, f"HTTP {e.code}"
+    except Exception as e:  # 네트워크 오류·JSON 파싱 실패 등
+        return None, str(e)[:80]
 
 
 def fmt_pct(x) -> str:
@@ -138,22 +120,21 @@ def print_credit(cb: dict) -> None:
 
 
 def main() -> int:
-    try:
-        html = fetch_html(URL)
-    except Exception as e:
-        print(f"ERROR: 페이지 fetch 실패 — {e}", file=sys.stderr)
-        return 1
+    data, errors = {}, {}
+    for name in ENDPOINTS:
+        data[name], err = fetch_api(name)
+        if err:
+            errors[name] = err
 
-    indices_data = extract_json(html, "initialMarketIndicesData")
-    bp = extract_json(html, "initialBigPictureData")
-    mm = extract_json(html, "initialMarketMonitorData")
-    cb = extract_json(html, "initialCreditBalanceData")
+    indices_data, bp = data["indices"], data["big_picture"]
+    mm, cb = data["market_monitor"], data["credit_balance"]
 
     if not indices_data and not bp:
-        print("ERROR: payload 파싱 실패 — 페이지 구조 변경 가능성", file=sys.stderr)
+        detail = ", ".join(f"{k}={v}" for k, v in errors.items()) or "빈 응답"
+        print(f"ERROR: 시장 API 호출 실패 — {detail}", file=sys.stderr)
         return 1
 
-    print(f"=== StockEasy 시장 신호 ({URL}) ===")
+    print(f"=== StockEasy 시장 신호 ({API_BASE}) ===")
     if indices_data:
         print_signals(indices_data)
         print_indices(indices_data)
@@ -163,6 +144,9 @@ def main() -> int:
         print_breadth(mm)
     if cb:
         print_credit(cb)
+    # 일부만 실패한 경우: 받은 부분은 출력하고 누락 사실을 남긴다
+    for name, err in errors.items():
+        print(f"[누락] {name} — {err}", file=sys.stderr)
     return 0
 
 
