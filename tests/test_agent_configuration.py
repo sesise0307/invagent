@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import sys
 import tomllib
 from pathlib import Path
 
@@ -14,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = REPO_ROOT / ".agents" / "skills"
 SKILL_NAMES = (
     "advice",
+    "analyze-stock",
     "monthly-investment-review",
     "opendart",
     "summarize-telegram",
@@ -227,3 +229,375 @@ def test_portfolio_parser_unescapes_and_flags_rules() -> None:
     # 현금은 종목 수·룰 판정에서 제외
     assert "매매규칙 9(종목 수 5~12): 3종목 ← **미달**" in snapshot
     assert "현금 비중: 5.1% (₩5,000,000)" in snapshot
+
+
+def _load_find_reports_module():
+    script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "find_reports.py"
+    spec = importlib.util.spec_from_file_location("find_reports", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("stock", "expected"),
+    [
+        ("율촌화학", "ㅇ"),
+        ("삼성전자", "ㅅ"),
+        ("까뮤이앤씨", "ㄱ"),  # 쌍자음은 평자음 폴더로 접는다
+        ("쌍용C&E", "ㅅ"),
+        ("SK하이닉스", "A-Z"),
+        ("3S", "A-Z"),
+    ],
+)
+def test_find_reports_routes_by_chosung(stock: str, expected: str) -> None:
+    module = _load_find_reports_module()
+
+    assert module.chosung_dir(stock) == expected
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        ("20260327_[율촌화학] 배터리 포장.pdf", "2026-03-27"),
+        ("202602_이수페타시스 26년 경영계획.pdf", "2026-02"),
+        ("2020_반도체_후공정패키징_.pdf", "2020"),
+        ("20261332_잘못된_월.pdf", None),
+        ("24.9.12 iM증권 제약 CDMO.pdf", None),
+    ],
+)
+def test_find_reports_parses_leading_date(filename: str, expected: str | None) -> None:
+    module = _load_find_reports_module()
+
+    assert module.parse_date(filename) == expected
+
+
+def _build_archive(root: Path) -> None:
+    stock = root / "ㅇ" / "율촌화학"
+    (stock / "IR자료").mkdir(parents=True)
+    for name in (
+        "20260327_[율촌화학] 최신.pdf",
+        "20240502_율촌화학_구형.pdf",
+        "율촌화학_날짜없음.pdf",
+    ):
+        (stock / name).touch()
+    (stock / "IR자료" / "202505_율촌화학 IR.pdf").touch()
+    (root / "ㅅ" / "삼성전자").mkdir(parents=True)
+    sector = root / "_산업분석" / "화학"
+    sector.mkdir(parents=True)
+    (sector / "20260101_포장재_율촌화학_비교.pdf").touch()
+
+
+def test_find_reports_collects_sorted_with_aux_dirs(tmp_path: Path) -> None:
+    _build_archive(tmp_path)
+    module = _load_find_reports_module()
+
+    items, dirs, kind = module.collect(tmp_path, "율촌화학")
+
+    assert kind == "exact"
+    assert [d.name for d in dirs] == ["율촌화학"]
+    # IR자료 하위 + _산업분석 파일명 매칭까지 포함해 최신순
+    assert [parsed for parsed, _ in items] == [
+        "2026-03-27",
+        "2026-01-01",
+        "2025-05",
+        "2024-05-02",
+        None,
+    ]
+    assert items[2][1].parent.name == "IR자료"
+    assert items[1][1].parent.parent.name == "_산업분석"
+
+
+def test_find_reports_limit_and_missing_stock(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _build_archive(tmp_path)
+    module = _load_find_reports_module()
+    monkeypatch.setenv("INVAGENT_REPORT_ARCHIVE", str(tmp_path))
+
+    assert module.main(["율촌화학", "--limit", "2"]) == 0
+    out = capsys.readouterr().out
+    assert "선정 2건" in out
+    assert "20260327_[율촌화학] 최신.pdf" in out
+    assert "20240502_율촌화학_구형.pdf" not in out
+    assert "미선정 3건" in out
+
+    # 폴더가 없어도 블로킹하지 않는다
+    assert module.main(["없는종목명"]) == 0
+    assert "검색 결과 없음" in capsys.readouterr().out
+
+
+def test_find_reports_archive_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """저장소·스킬 파일에 절대경로를 박지 않기 위한 환경변수 오버라이드."""
+    module = _load_find_reports_module()
+    monkeypatch.setenv("INVAGENT_REPORT_ARCHIVE", str(tmp_path))
+
+    assert module.archive_root() == tmp_path
+
+
+def _load_find_mentions_module():
+    script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "find_mentions.py"
+    spec = importlib.util.spec_from_file_location("find_mentions", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # dataclass가 `from __future__ import annotations` 하에서 타입을 해석하려면
+    # 모듈이 sys.modules에 등록돼 있어야 한다.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+INDEX_MD = """# 월간 누적 컨텍스트 (인덱스)
+
+## 반복 등장 신호
+
+- **⭐ 알파전자 = 증설 사이클 진입 (8/9)** → [[themes/알파전자-증설]] · 캐파 2배 · 최근(2026-08-13): 가동률 92%
+- **⛔ 베타파마 = 임상 실패, 회피** · 후속 신호 없음
+- **감마엔터** · 신작 대기 · 최근(08-01): 예약 판매 호조
+"""
+
+THEME_MD = """# 알파전자 증설
+
+- **알파전자 증설** (2026-06-01~): 캐파 2배 증설
+  - 2026-06-20: 착공. 델타중공업이 EPC 수주.
+  - 2026-08-13: **⭐ 가동률 92% 확인** — 알파전자 증설분 조기 램프업.
+  - 2026-07-05: 장비 발주 완료. 알파전자 공시.
+"""
+
+DAILY_MD = """# 텔레그램 데일리 브리핑 — 2026-08-13
+
+## 📂 섹터별 / 종목별 정리
+
+### 반도체
+
+- **알파전자 (123456), 2Q OP +48% 서프라이즈**
+  - 매출 1.2조, OPM 18.4%
+  - 투자 시사점: 증설 효과가 실적으로 확인됨
+- **엡실론소재**, 원재료 단가 하락 수혜
+  - 알파전자 납품 비중 40%
+  - 투자 시사점: 전방 확인 필요
+
+## 💡 오늘의 투자 조언
+
+- 알전은 베이스 돌파 대기.
+"""
+
+BROKEN_MD = """알파전자 관련 메모지만 불릿 구조가 없다.
+두 번째 줄.
+"""
+
+
+def _build_telegram_archive(root: Path) -> Path:
+    archive = root / "telegram-daily"
+    (archive / "themes" / "archive").mkdir(parents=True)
+    (archive / "2026-08").mkdir(parents=True)
+
+    (archive / "monthly_context.md").write_text(INDEX_MD, encoding="utf-8")
+    (archive / "monthly_context.md.bak").write_text(INDEX_MD, encoding="utf-8")
+    (archive / "themes" / "알파전자-증설.md").write_text(THEME_MD, encoding="utf-8")
+    (archive / "themes" / "archive" / "pruned-2026-08-09-정리전-인덱스-전체.md").write_text(
+        THEME_MD, encoding="utf-8"
+    )
+    (archive / "2026-08" / "2026-08-13.md").write_text(DAILY_MD, encoding="utf-8")
+    (archive / "2026-08" / "backup.md").write_text(DAILY_MD, encoding="utf-8")
+    return archive
+
+
+def test_find_mentions_parses_records_per_source(tmp_path: Path) -> None:
+    module = _load_find_mentions_module()
+    archive = _build_telegram_archive(tmp_path)
+
+    result = module.collect(archive, ["알파전자"])
+
+    # 인덱스 항목은 현재 유효 판정 — 마커와 테마 포인터를 열로 보존한다
+    assert len(result.index_hits) == 1
+    assert result.index_hits[0].marker == "⭐"
+    assert result.index_hits[0].pointer == "알파전자-증설"
+
+    # 테마 서브불릿은 파일 내 순서가 어긋나도 최신순으로 정렬된다
+    assert [r.date for r in result.theme_hits] == ["2026-08-13", "2026-07-05", "2026-06-01"]
+
+    # 일일 브리핑: 헤드 매치가 본문 매치보다 먼저 온다
+    daily = result.daily_hits
+    assert daily[0].match == "head"
+    assert "알파전자" in daily[0].head
+    assert daily[0].label == "반도체"
+    assert [r.match for r in daily] == ["head", "body"]
+
+
+def test_find_mentions_groups_indented_block_into_head_record(tmp_path: Path) -> None:
+    """`- **종목**` 헤드에 딸린 들여쓴 하위 불릿은 같은 레코드의 본문이다."""
+    module = _load_find_mentions_module()
+    archive = _build_telegram_archive(tmp_path)
+
+    result = module.collect(archive, ["엡실론소재"])
+    record = result.daily_hits[0]
+
+    assert record.match == "head"
+    assert "알파전자 납품 비중 40%" in record.body
+    assert "투자 시사점" in record.body
+
+
+def test_find_mentions_excludes_duplicate_sources(tmp_path: Path) -> None:
+    module = _load_find_mentions_module()
+    archive = _build_telegram_archive(tmp_path)
+
+    paths = {hit.path.name for hit in module.collect(archive, ["알파전자"]).all_hits}
+
+    assert "monthly_context.md.bak" not in paths
+    assert "backup.md" not in paths
+    assert "pruned-2026-08-09-정리전-인덱스-전체.md" not in paths
+
+
+def test_find_mentions_alias_expands_search(tmp_path: Path) -> None:
+    module = _load_find_mentions_module()
+    archive = _build_telegram_archive(tmp_path)
+
+    plain = module.collect(archive, ["알파전자"]).daily_hits
+    expanded = module.collect(archive, ["알파전자", "알전"]).daily_hits
+
+    assert len(expanded) == len(plain) + 1
+    assert any("알전은 베이스 돌파" in hit.head for hit in expanded)
+
+
+def test_find_mentions_falls_back_to_line_scan(tmp_path: Path) -> None:
+    """레코드 구조가 없는 파일도 놓치지 않는다."""
+    module = _load_find_mentions_module()
+    archive = _build_telegram_archive(tmp_path)
+    (archive / "themes" / "깨진테마.md").write_text(BROKEN_MD, encoding="utf-8")
+
+    hits = [h for h in module.collect(archive, ["알파전자"]).theme_hits if h.path.name == "깨진테마.md"]
+
+    assert len(hits) == 1
+    assert hits[0].line == 1
+
+
+def test_find_mentions_output_is_locator_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_find_mentions_module()
+    _build_telegram_archive(tmp_path)
+    monkeypatch.setenv("INVAGENT_OUTPUT_DIR", str(tmp_path))
+
+    assert module.main(["알파전자", "--top", "1"]) == 0
+    out = capsys.readouterr().out
+
+    assert "## 인덱스 현재 판정" in out
+    assert "themes/알파전자-증설.md:5" in out  # 경로:줄번호 로케이터
+    assert "미표시 2건" in out  # 테마 3건 중 1건만 표시 → 나머지는 월별 집계로
+    assert "2026-07 1건" in out and "2026-06 1건" in out
+    # 본문(들여쓴 하위 불릿)은 출력하지 않는다
+    assert "OPM 18.4%" not in out
+
+    assert module.main(["없는종목명", "--count-only"]) == 0
+    assert "아카이브 언급 없음" in capsys.readouterr().out
+
+
+def _load_find_prior_report_module():
+    script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "find_prior_report.py"
+    spec = importlib.util.spec_from_file_location("find_prior_report", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+PRIOR_REPORT_FILES = (
+    "2026-08-14_율촌화학_반기보고서_분석.md",
+    "2026-07-02_율촌화학_실적분석.md",
+    "2026-08-11_기가비스_수주잔고_실적전망.md",
+    "2026-08-11_기판검사장비_기가비스_인텍플러스_비교.md",
+    "2026-08-09_반도체부품주_섹터리포트_분석.md",
+    "2026-08_투자전략.md",
+)
+
+
+def _build_reports_dir(root: Path) -> Path:
+    reports = root / "reports"
+    reports.mkdir(parents=True)
+    for name in PRIOR_REPORT_FILES:
+        (reports / name).write_text(f"# {name}\n", encoding="utf-8")
+    # 같은 부모에 날짜 디렉터리로 PDF가 쌓인다. 하위는 스캔 대상이 아니다.
+    (reports / "2026-08-14").mkdir()
+    (reports / "2026-08-14" / "2026-08-14_율촌화학_함정.md").write_text("x", encoding="utf-8")
+    return reports
+
+
+def test_find_prior_report_inherits_latest_own_report(tmp_path: Path) -> None:
+    module = _load_find_prior_report_module()
+    reports = _build_reports_dir(tmp_path)
+
+    result = module.lookup(reports, "율촌화학", "2026-09-01")
+
+    assert result.inherit is not None
+    assert result.inherit.path.name == "2026-08-14_율촌화학_반기보고서_분석.md"
+    assert [r.path.name for r in result.previous] == ["2026-07-02_율촌화학_실적분석.md"]
+    assert result.since == "2026-08-14"
+    assert result.target == reports / "2026-09-01_율촌화학_종목분석.md"
+    assert result.same_path is False
+
+
+def test_find_prior_report_treats_comparison_report_as_related(tmp_path: Path) -> None:
+    """종목명이 중간에 끼면 다른 종목 내용도 담겼다 — 참고만 하고 원본을 유지한다."""
+    module = _load_find_prior_report_module()
+    reports = _build_reports_dir(tmp_path)
+
+    result = module.lookup(reports, "기가비스", "2026-09-01")
+
+    assert result.inherit is not None
+    assert result.inherit.path.name == "2026-08-11_기가비스_수주잔고_실적전망.md"
+    assert [r.path.name for r in result.related] == [
+        "2026-08-11_기판검사장비_기가비스_인텍플러스_비교.md"
+    ]
+
+
+def test_find_prior_report_ignores_undated_and_subdirectories(tmp_path: Path) -> None:
+    module = _load_find_prior_report_module()
+    reports = _build_reports_dir(tmp_path)
+
+    scanned = {report.path.name for report in module.scan(reports)}
+
+    assert "2026-08_투자전략.md" not in scanned  # 일자 없음
+    assert "2026-08-14_율촌화학_함정.md" not in scanned  # 하위 디렉터리
+
+
+def test_find_prior_report_flags_same_path_rerun(tmp_path: Path) -> None:
+    module = _load_find_prior_report_module()
+    reports = _build_reports_dir(tmp_path)
+    (reports / "2026-09-01_에이피알_종목분석.md").write_text("# x\n", encoding="utf-8")
+
+    result = module.lookup(reports, "에이피알", "2026-09-01")
+
+    assert result.same_path is True
+
+
+def test_find_prior_report_main_reports_new_and_inherited(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_find_prior_report_module()
+    _build_reports_dir(tmp_path)
+    monkeypatch.setenv("INVAGENT_OUTPUT_DIR", str(tmp_path))
+
+    assert module.main(["율촌화학", "--today", "2026-09-01"]) == 0
+    out = capsys.readouterr().out
+    assert "2026-08-14_율촌화학_반기보고서_분석.md" in out
+    assert "reports/2026-09-01_율촌화학_종목분석.md" in out
+    assert "증분 기준일(`--since`): 2026-08-14" in out
+    assert "이전 개정 1건" in out
+
+    assert module.main(["카카오", "--today", "2026-09-01"]) == 0
+    new_out = capsys.readouterr().out
+    assert "승계 대상: 없음 (신규 작성)" in new_out
+    assert "reports/2026-09-01_카카오_종목분석.md" in new_out
+
+
+def test_find_mentions_since_filter(tmp_path: Path) -> None:
+    module = _load_find_mentions_module()
+    archive = _build_telegram_archive(tmp_path)
+
+    result = module.collect(archive, ["알파전자"], since="2026-08-01")
+
+    assert all(hit.date >= "2026-08-01" for hit in result.all_hits)
+    assert result.theme_hits and len(result.theme_hits) == 1

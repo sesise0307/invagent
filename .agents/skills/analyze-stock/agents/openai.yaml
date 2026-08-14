@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stock Analysis"
+  short_description: "Analyze one stock from reports, filings, web, and portfolio fit"
+  default_prompt: "Use $analyze-stock to analyze this stock and write the report."

@@ -1,8 +1,9 @@
 # Repository Guidelines
 
 This repository contains a personal investment-decision support package. Use the
-project skills for investment advice, Telegram briefings, monthly Notion reviews,
-and OpenDART research instead of recreating those workflows in a prompt.
+project skills for investment advice, single-stock analysis, Telegram briefings,
+monthly Notion reviews, and OpenDART research instead of recreating those
+workflows in a prompt.
 
 At the start of each session, activate the installed `caveman` skill at `full`
 intensity. In Codex use `$caveman:caveman full`; in Claude Code use
@@ -21,6 +22,22 @@ and design notes to `docs/`. Curated reference files in `context/` are checked i
 the repository: `context/my_rules.md` holds the user's personal risk-management
 rules and `context/interested_stocks.md` holds the tracked holdings list. Skills
 read `context/my_rules.md` directly, so keep the rule numbering stable.
+
+The `analyze-stock` skill reads the local analyst-report archive at
+`~/1_Investment/리포트/<초성>/<종목명>/` (PDF only, outside this repository).
+Override the location with `INVAGENT_REPORT_ARCHIVE`; never hardcode an absolute
+path in skill files. It also searches the accumulated briefing archive under
+`output/telegram-daily/` (index, theme files, daily briefings) through
+`scripts/find_mentions.py`, which emits `path:line` locators rather than content —
+the archive's index and theme lines run to several kilobytes each and must be read
+from the original file, never truncated. Its reports are written to
+`output/reports/<yyyy-mm-dd>_<종목명>_종목분석.md`, and the section layout is
+owned by `template/stock_analysis.md`. When a report for the same stock already
+exists, the skill inherits it instead of starting over: it reads the prior report,
+collects only what is newer than that report's date, corrects errors it finds,
+rewrites the investment call from scratch, and moves the file to today's date —
+writing the new file first and deleting the old one only afterwards, since
+`output/` is gitignored and has no recovery path.
 
 The Telegram daily briefing also reads the user's live holdings from the Google
 Sheets file `주식 포트폴리오` (sheet `포트폴리오`) through the Google Drive MCP
