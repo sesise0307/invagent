@@ -39,6 +39,19 @@ rewrites the investment call from scratch, and moves the file to today's date �
 writing the new file first and deleting the old one only afterwards, since
 `output/` is gitignored and has no recovery path.
 
+Quote, multiples, per-broker target-price history, consensus estimates, EPS
+consensus revisions, and stock news come from StockEasy through
+`.agents/skills/analyze-stock/scripts/fetch_stock_info.py`, which calls the
+unauthenticated `stockeasy.intellio.kr/stockdata/api/v1/**` JSON endpoints
+(`stock-search`, `stock-info/info-tab`, `news/by-stock-code`) and prints a
+compact summary — the raw `info-tab` payload is ~128 KB because it embeds three
+years of chart data. Analyst report summaries come from the same script through
+`securities-reports`, the one endpoint that requires a login: it reads the
+`STOCKEASY_COOKIE` variable (a browser Cookie header, environment first and then
+the repository-root `.env`) and sends it verbatim. Without it, or once it
+expires, only the report-summary section is skipped. Keep the real value in the
+gitignored `.env`, never in a tracked file, and never print it.
+
 The Telegram daily briefing also reads the user's live holdings from the Google
 Sheets file `주식 포트폴리오` (sheet `포트폴리오`) through the Google Drive MCP
 connector, and stores a parsed snapshot in `output/portfolio/<yyyy-mm-dd>.md`.
@@ -57,6 +70,12 @@ Use `uv` for local development.
 - `uv run pytest -q`: run the full test suite.
 - `uv run pytest tests/test_cli.py -q`: run a focused test file.
 - `uv run invagent fetch-messages --days 1`: manually verify message fetching.
+
+Reading analyst report PDFs needs poppler on the machine (`brew install poppler`,
+or `apt-get install poppler-utils`). Without `pdftoppm`, PDF pages cannot be
+rendered and `analyze-stock` falls back to plain text extraction, which loses the
+image-based forecast tables, sidebar valuation figures, and the analyst's own
+highlighting.
 
 Copy `.env.example` to `.env` for local configuration. Telegram commands require
 `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`. OpenDART agent access requires private

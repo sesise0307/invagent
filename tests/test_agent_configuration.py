@@ -169,6 +169,374 @@ def test_market_signal_main_reports_api_failure(
     assert "HTTP 404" in capsys.readouterr().err
 
 
+def _load_stock_info_module():
+    script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "fetch_stock_info.py"
+    spec = importlib.util.spec_from_file_location("fetch_stock_info", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+STOCK_INFO_PAYLOAD = {
+    "stock_code": "064290",
+    "primary_fs_type": "C",
+    "stock_info": {
+        "name": "인텍플러스",
+        "market": "KOSDAQ",
+        # 가격 필드는 등락 방향이 부호로 박혀 온다 (음수 가격이 아니다)
+        "cur_prc": "-30850",
+        "pred_pre": "-1250",
+        "flu_rt": "-3.89",
+        "mac": "3997",
+        "trde_qty": "169623",
+        "per": "",
+        "pbr": "7.76",
+        "eps": "-257",
+        "bps": "3982",
+        "roe": "-7.2",
+        "250hgst": "+54100",
+        "250lwst": "-8540",
+        "250hgst_pric_dt": "20260706",
+        "250lwst_pric_dt": "20250806",
+        "250hgst_pric_pre_rt": "-42.88",
+        "250lwst_pric_pre_rt": "+261.83",
+        "for_exh_rt": "+4.68",
+        "dstr_rt": "81.6",
+        "total_shares": 12958000,
+    },
+    "sector_info": {"major_name": "반도체", "mid_name": "반도체장비"},
+    "rs_data": {"rs": 91.25, "rs_1m": 1.78, "rs_3m": 88.85, "rs_6m": 92.05},
+    "investment": {
+        "base_period": "2026.1Q",
+        "financial_type": "C",
+        "overall_grade": "B",
+        "growth": {
+            "category_name": "성장성",
+            "average_grade": "A",
+            "metrics": [{"name": "매출성장률", "formatted_value": "-11.1%", "grade": "D"}],
+        },
+    },
+    "target_price_history": [
+        {
+            "report_date": "2026-07-03",
+            "securities_company": "메리츠증권",
+            "author": "김동관",
+            "investment_opinion": "Buy",
+            "target_price": 75000,
+            "target_price_change": "상향",
+            "current_price": 45800,
+            "upside_potential": 63.76,
+            "title": "넘치는 수주와 폭발적 실적 성장",
+        },
+        {
+            "report_date": "2026-04-22",
+            "securities_company": "메리츠증권",
+            "author": "김동관",
+            "investment_opinion": "Buy",
+            "target_price": 41000,
+            "target_price_change": "신규",
+            "current_price": 31450,
+            "upside_potential": 30.4,
+            "title": "4년만의 턴어라운드",
+        },
+        {
+            "report_date": "2026-05-28",
+            "securities_company": "NH투자증권",
+            "author": "심의섭",
+            "investment_opinion": "Not Rated",
+            "target_price": None,
+            "target_price_change": None,
+            "current_price": 40650,
+            "upside_potential": None,
+            "title": "호황기에 더욱 돋보이는 경쟁력",
+        },
+    ],
+    "financials": {
+        "consolidated": [
+            {
+                "year": 2026,
+                "quarter": 2,
+                "month": 6,
+                "revenue": 8960989867,
+                "operating_income": -5117444745,
+                "net_income": -6094354375,
+                "eps": -470.32,
+                "operating_margin": -57.11,
+                "per": None,
+                "pbr": None,
+            }
+        ],
+        "consolidatedEstimate": [
+            {
+                "year": 2026,
+                "quarter": 4,
+                "month": 12,
+                "revenue": 49267000000,
+                "operating_income": 8533000000,
+                "net_income": 8400000000,
+                "eps": 578.81,
+                "operating_margin": 17.32,
+                "per": None,
+                "pbr": 7.66,
+            }
+        ],
+        "consolidatedYearly": [],
+        "consolidatedYearlyEstimate": [],
+    },
+    "eps_changes": {
+        "count": 10,
+        "changes": [
+            {
+                "quarter": "2026Q4",
+                "change_date_str": "2026-08-12",
+                "value_old": 443.43,
+                "value_new": 427.55,
+                "change_rate": -3.58,
+            }
+        ],
+    },
+}
+
+NEWS_PAYLOAD = {
+    "items": [
+        {
+            "title": "TSMC, 첨단 패키징 외주 확대",
+            "link": "https://n.news.naver.com/mnews/article/277/0005803223",
+            "published_at": "2026-08-14T02:20:00Z",
+            "source": "아시아경제",
+        },
+        {
+            "title": "지난달 기사",
+            "link": "https://example.com/old",
+            "published_at": "2026-07-01T00:00:00Z",
+            "source": "예시",
+        },
+    ]
+}
+
+
+REPORTS_PAYLOAD = {
+    "total_count": 35,
+    "items": [
+        {
+            "id": 1,
+            "report_date": "2026-07-03",
+            "securities_company": "메리츠증권",
+            "author": "김동관",
+            "investment_opinion": "Buy",
+            "target_price": 75000,
+            "target_price_change": "상향",
+            "title": "넘치는 수주와 폭발적 실적 성장",
+            # 실제 응답 모양: point 키를 가진 dict 리스트
+            "summary_points": [
+                {"point": "CoWoS 검사 장비 본계약 임박"},
+                {"point": "생산능력 50% 확대 <b>계획</b>"},
+            ],
+            # 실제 응답 모양: 문자열이 아니라 섹션 dict
+            "detail_content": {
+                "card_news_sections": [
+                    {"header": "3Q26 전망", "content": "수주잔고 인식 본격화"},
+                ]
+            },
+            "file_name": "20260703_인텍플러스_064290_기계·장비_기업리포트_Meritz.pdf",
+        }
+    ],
+}
+
+
+def _patch_stock_info_fetch(
+    module, monkeypatch: pytest.MonkeyPatch, search=None, cookie="session=abc", reports_error=None
+) -> None:
+    calls = {}
+
+    def fake_fetch(path, params=None, referer=module.PAGE_BASE, cookie=None):
+        calls[path] = {"params": params, "cookie": cookie}
+        if path == module.ENDPOINTS["search"]:
+            return (search if search is not None else []), None
+        if path.startswith("/stock-info/info-tab/"):
+            return STOCK_INFO_PAYLOAD, None
+        if path.startswith("/news/by-stock-code/"):
+            return NEWS_PAYLOAD, None
+        if path == module.ENDPOINTS["reports"]:
+            if reports_error:
+                return None, reports_error
+            return REPORTS_PAYLOAD, None
+        return None, "HTTP 404"
+
+    monkeypatch.setattr(module, "fetch_json", fake_fetch)
+    monkeypatch.setattr(module, "load_cookie", lambda: cookie)
+    return calls
+
+
+def test_stock_info_endpoints_point_at_stockdata_api() -> None:
+    """리포트 요약을 뺀 종목 데이터는 무인증 /stockdata/api/v1 경로에서 받는다."""
+    module = _load_stock_info_module()
+
+    assert module.API_BASE == "https://stockeasy.intellio.kr/stockdata/api/v1"
+    assert set(module.ENDPOINTS) == {"search", "info_tab", "news", "reports"}
+    assert module.COOKIE_ENV == "STOCKEASY_COOKIE"
+
+
+def test_stock_info_price_fields_strip_direction_sign() -> None:
+    """`cur_prc: "-30850"`의 부호는 등락 방향 마커다. 가격은 절대값으로 읽는다."""
+    module = _load_stock_info_module()
+
+    assert module.unsigned("-30850") == 30850
+    assert module.unsigned("+54100") == 54100
+    assert module.unsigned("") is None
+    # 등락률·손익 지표의 부호는 의미가 있으므로 유지한다
+    assert module.signed("-3.89") == -3.89
+    assert module.signed("+261.83") == 261.83
+
+
+def test_stock_info_main_renders_quote_and_consensus(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load_stock_info_module()
+    _patch_stock_info_fetch(module, monkeypatch)
+
+    assert module.main(["064290"]) == 0
+
+    out = capsys.readouterr().out
+    assert "인텍플러스(064290)" in out
+    assert "[시세] 30,850원 (-3.89%" in out  # 음수 가격으로 새지 않는다
+    assert "고 54,100원(2026-07-06" in out
+    assert "저 8,540원(2025-08-06" in out
+    assert "메리츠증권" in out and "75,000원" in out and "상향" in out
+    # 목표가 미제시(Not Rated) 건은 평균에서 빠진다: (75000 + 41000) / 2
+    assert "평균 목표가 58,000원" in out
+    assert "커버 1사 / 목표가 제시 2건" in out
+    assert "추정 — 컨센서스, DART 데이터 아님" in out
+    assert "2026.2Q | 확정" in out and "2026.4Q | **추정 E**" in out
+    assert "2026Q4 2026-08-12: 443.43 → 427.55 (-3.58%)" in out
+
+
+def test_stock_info_since_filters_news_and_flags_new_reports(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """승계 작성 시 --since 이후 뉴스만 남기고 신규 리포트를 표시한다."""
+    module = _load_stock_info_module()
+    _patch_stock_info_fetch(module, monkeypatch)
+
+    assert module.main(["064290", "--since", "2026-08-01"]) == 0
+
+    out = capsys.readouterr().out
+    assert "[뉴스] 1건 (기준일 2026-08-01 이후)" in out
+    assert "지난달 기사" not in out
+    assert "🆕" not in out  # 리포트는 전부 기준일 이전
+
+
+def test_stock_info_renders_report_summaries_with_cookie(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`securities-reports`는 로그인 쿠키를 붙여야 요약이 나온다."""
+    module = _load_stock_info_module()
+    calls = _patch_stock_info_fetch(module, monkeypatch, cookie="session=abc")
+
+    assert module.main(["064290", "--since", "2026-08-01"]) == 0
+
+    out = capsys.readouterr().out
+    assert "[리포트 요약] 1건 (총 35건)" in out
+    assert "2026-07-03 [메리츠증권] 김동관 · Buy 목표가 75,000원(상향)" in out
+    assert "· CoWoS 검사 장비 본계약 임박" in out
+    assert "· 생산능력 50% 확대 계획" in out  # HTML 태그 제거
+    assert "파일: 20260703_인텍플러스_064290" in out  # 로컬 PDF 중복 판정용
+    assert "본문:" not in out  # --detail-chars 0이면 본문 생략
+    # 쿠키는 리포트 호출에만 붙고, date_from으로 기준일이 넘어간다
+    reports_call = calls[module.ENDPOINTS["reports"]]
+    assert reports_call["cookie"] == "session=abc"
+    assert reports_call["params"]["date_from"] == "2026-08-01"
+    assert calls["/stock-info/info-tab/064290"]["cookie"] is None
+    # 쿠키 값은 stdout으로 새지 않는다
+    assert "session=abc" not in out
+
+
+def test_stock_info_detail_content_sections_flatten(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`detail_content`는 문자열이 아니라 card_news_sections dict로 온다."""
+    module = _load_stock_info_module()
+    _patch_stock_info_fetch(module, monkeypatch)
+
+    assert module.main(["064290", "--detail-chars", "200"]) == 0
+    assert "본문: 3Q26 전망: 수주잔고 인식 본격화" in capsys.readouterr().out
+
+
+def test_stock_info_missing_cookie_only_skips_reports(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """쿠키가 없으면 리포트 섹션만 비고 나머지는 정상 출력된다 (비블로킹)."""
+    module = _load_stock_info_module()
+    _patch_stock_info_fetch(module, monkeypatch, cookie=None)
+
+    assert module.main(["064290"]) == 0
+
+    captured = capsys.readouterr()
+    assert "[리포트 요약] 미수집 — STOCKEASY_COOKIE 미설정" in captured.out
+    assert "[시세] 30,850원" in captured.out
+    assert "STOCKEASY_COOKIE 미설정" in captured.err
+
+
+def test_stock_info_expired_cookie_hints_refresh(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load_stock_info_module()
+    _patch_stock_info_fetch(module, monkeypatch, reports_error="HTTP 401")
+
+    assert module.main(["064290"]) == 0
+    assert "쿠키 만료" in capsys.readouterr().out
+
+
+def test_stock_info_cookie_read_from_env_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """저장소는 dotenv를 쓰지 않으므로 스크립트가 .env를 직접 훑는다."""
+    module = _load_stock_info_module()
+    monkeypatch.delenv(module.COOKIE_ENV, raising=False)
+
+    scripts_dir = tmp_path / "skills" / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (tmp_path / ".env").write_text(
+        "# comment\nTELEGRAM_API_ID=1\nSTOCKEASY_COOKIE='session=from-env-file'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "__file__", str(scripts_dir / "fetch_stock_info.py"))
+
+    assert module.load_cookie() == "session=from-env-file"
+
+    monkeypatch.setenv(module.COOKIE_ENV, "session=from-environ")
+    assert module.load_cookie() == "session=from-environ"
+
+
+def test_stock_info_ambiguous_name_exits_2(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """후보가 여러 개면 스킬이 사용자에게 되묻도록 exit 2로 알린다."""
+    module = _load_stock_info_module()
+    _patch_stock_info_fetch(
+        module,
+        monkeypatch,
+        search=[
+            {"market": "KR", "stock_code": "007280", "stock_name": "한국특강", "exchange": "KOSPI"},
+            {"market": "KR", "stock_code": "161890", "stock_name": "한국콜마", "exchange": "KOSPI"},
+        ],
+    )
+
+    assert module.main(["한국"]) == 2
+    assert "후보 다수" in capsys.readouterr().err
+
+
+def test_stock_info_unknown_name_exits_1(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load_stock_info_module()
+    _patch_stock_info_fetch(module, monkeypatch, search=[])
+
+    assert module.main(["없는종목명"]) == 1
+    assert "검색 결과 없음" in capsys.readouterr().err
+
+
 PORTFOLIO_DUMP = """|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
 | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | 구분 |  계좌 | 섹터 | 종목 | 보유 | 평단 | 현재가 | 매수금액 | 평가금액 | 수익률 | 손익 | 비중 |  | 잔고 | ₩100,000,000 | 수익률 | 25.53% |
