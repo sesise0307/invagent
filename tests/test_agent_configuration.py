@@ -61,6 +61,40 @@ def test_skills_contain_no_credentials_or_machine_paths() -> None:
     assert ".claude/skills" not in combined
 
 
+def test_analyze_stock_skill_defines_scenario_target_price() -> None:
+    """목표가는 컨센 단독이 아니라 자체 시나리오와의 동적 가중 결합으로 산정한다."""
+    content = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "### 9단계 — 목표주가 산정" in content
+    for scenario in ("Bull", "Base", "Bear"):
+        assert scenario in content
+    assert "w_c" in content and "w_s" in content
+    assert "손익비" in content
+    # 삼성전자 실행에서 커버 23사(상향)와 산포 2.61배(하향)가 동시 성립 — 우선순위가 없으면 재현 불가.
+    assert "[충돌 해소]" in content
+    assert "하향이 우선" in content
+    assert "최저값 하나만" in content
+    assert "기본 원칙 2" in content and "매매규칙 6" in content
+
+    steps = re.findall(r"^### (\d+)단계", content, re.MULTILINE)
+    assert [int(step) for step in steps] == list(range(1, 12))
+
+
+def test_stock_analysis_template_has_target_price_block() -> None:
+    """§5가 목표주가 산정의 정본이고, 12섹션 구조는 유지된다."""
+    content = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
+
+    assert "## 5. 밸류에이션 · 목표주가" in content
+    for heading in ("### 5-A.", "### 5-B.", "### 5-C."):
+        assert heading in content
+    assert "종합 목표주가" in content
+    assert "기대수익" in content
+    assert "손익비" in content
+
+    sections = re.findall(r"^## (\d+)\.", content, re.MULTILINE)
+    assert [int(section) for section in sections] == list(range(1, 13))
+
+
 def test_project_codex_config_is_credential_free() -> None:
     config_path = REPO_ROOT / ".codex" / "config.toml"
     config = tomllib.loads(config_path.read_text(encoding="utf-8"))
@@ -873,12 +907,12 @@ def _load_find_prior_report_module():
 
 
 PRIOR_REPORT_FILES = (
-    "2026-08-14_율촌화학_반기보고서_분석.md",
-    "2026-07-02_율촌화학_실적분석.md",
-    "2026-08-11_기가비스_수주잔고_실적전망.md",
-    "2026-08-11_기판검사장비_기가비스_인텍플러스_비교.md",
-    "2026-08-09_반도체부품주_섹터리포트_분석.md",
-    "2026-08_투자전략.md",
+    "종목/ㅇ/율촌화학_2026-08-14.md",
+    "종목/ㅇ/율촌화학_2026-07-02.md",
+    "종목/ㄱ/기가비스_2026-08-11.md",
+    "산업/2026-08-11_기판검사장비_기가비스_인텍플러스_비교.md",
+    "산업/2026-08-09_반도체부품주_섹터리포트_분석.md",
+    "기타/2026-08_투자전략.md",
 )
 
 
@@ -886,8 +920,10 @@ def _build_reports_dir(root: Path) -> Path:
     reports = root / "reports"
     reports.mkdir(parents=True)
     for name in PRIOR_REPORT_FILES:
-        (reports / name).write_text(f"# {name}\n", encoding="utf-8")
-    # 같은 부모에 날짜 디렉터리로 PDF가 쌓인다. 하위는 스캔 대상이 아니다.
+        path = reports / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {name}\n", encoding="utf-8")
+    # 루트에 날짜 디렉터리로 PDF가 쌓인다. 하위는 스캔 대상이 아니다.
     (reports / "2026-08-14").mkdir()
     (reports / "2026-08-14" / "2026-08-14_율촌화학_함정.md").write_text("x", encoding="utf-8")
     return reports
@@ -900,41 +936,78 @@ def test_find_prior_report_inherits_latest_own_report(tmp_path: Path) -> None:
     result = module.lookup(reports, "율촌화학", "2026-09-01")
 
     assert result.inherit is not None
-    assert result.inherit.path.name == "2026-08-14_율촌화학_반기보고서_분석.md"
-    assert [r.path.name for r in result.previous] == ["2026-07-02_율촌화학_실적분석.md"]
+    assert result.inherit.path.name == "율촌화학_2026-08-14.md"
+    assert [r.path.name for r in result.previous] == ["율촌화학_2026-07-02.md"]
     assert result.since == "2026-08-14"
-    assert result.target == reports / "2026-09-01_율촌화학_종목분석.md"
+    assert result.target == reports / "종목" / "ㅇ" / "율촌화학_2026-09-01.md"
     assert result.same_path is False
 
 
 def test_find_prior_report_treats_comparison_report_as_related(tmp_path: Path) -> None:
-    """종목명이 중간에 끼면 다른 종목 내용도 담겼다 — 참고만 하고 원본을 유지한다."""
+    """산업·기타 보고서는 다른 종목 내용도 담겼다 — 참고만 하고 원본을 유지한다."""
     module = _load_find_prior_report_module()
     reports = _build_reports_dir(tmp_path)
 
     result = module.lookup(reports, "기가비스", "2026-09-01")
 
     assert result.inherit is not None
-    assert result.inherit.path.name == "2026-08-11_기가비스_수주잔고_실적전망.md"
+    assert result.inherit.path.name == "기가비스_2026-08-11.md"
     assert [r.path.name for r in result.related] == [
         "2026-08-11_기판검사장비_기가비스_인텍플러스_비교.md"
     ]
 
 
-def test_find_prior_report_ignores_undated_and_subdirectories(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("stock", "expected_dir"),
+    [
+        ("율촌화학", "ㅇ"),
+        ("덕산네오룩스", "ㄷ"),
+        ("까뮤이앤씨", "ㄱ"),  # 쌍자음은 평자음 폴더로 접는다
+        ("OCI홀딩스", "A-Z"),
+    ],
+)
+def test_find_prior_report_target_routes_by_chosung(
+    tmp_path: Path, stock: str, expected_dir: str
+) -> None:
+    module = _load_find_prior_report_module()
+    reports = _build_reports_dir(tmp_path)
+
+    target = module.lookup(reports, stock, "2026-09-01").target
+
+    assert target == reports / "종목" / expected_dir / f"{stock}_2026-09-01.md"
+
+
+def test_find_prior_report_reads_new_filename_convention(tmp_path: Path) -> None:
+    """`<종목명>_<날짜>.md`로 바뀐 뒤에도 기존 보고서를 승계 대상으로 잡아야 한다."""
+    module = _load_find_prior_report_module()
+    reports = _build_reports_dir(tmp_path)
+    (reports / "종목" / "ㅇ").mkdir(parents=True, exist_ok=True)
+    (reports / "종목" / "ㅇ" / "와이지-원_2026-08-20.md").write_text("# x\n", encoding="utf-8")
+
+    result = module.lookup(reports, "와이지-원", "2026-09-01")
+
+    assert result.inherit is not None
+    assert result.inherit.path.name == "와이지-원_2026-08-20.md"
+    assert result.inherit.date == "2026-08-20"
+    assert result.since == "2026-08-20"
+
+
+def test_find_prior_report_ignores_undated_and_pdf_date_dirs(tmp_path: Path) -> None:
     module = _load_find_prior_report_module()
     reports = _build_reports_dir(tmp_path)
 
     scanned = {report.path.name for report in module.scan(reports)}
 
     assert "2026-08_투자전략.md" not in scanned  # 일자 없음
-    assert "2026-08-14_율촌화학_함정.md" not in scanned  # 하위 디렉터리
+    assert "2026-08-14_율촌화학_함정.md" not in scanned  # PDF 날짜 디렉터리
 
 
 def test_find_prior_report_flags_same_path_rerun(tmp_path: Path) -> None:
     module = _load_find_prior_report_module()
     reports = _build_reports_dir(tmp_path)
-    (reports / "2026-09-01_에이피알_종목분석.md").write_text("# x\n", encoding="utf-8")
+    rerun = reports / "종목" / "ㅇ" / "에이피알_2026-09-01.md"
+    rerun.parent.mkdir(parents=True, exist_ok=True)
+    rerun.write_text("# x\n", encoding="utf-8")
 
     result = module.lookup(reports, "에이피알", "2026-09-01")
 
@@ -950,15 +1023,15 @@ def test_find_prior_report_main_reports_new_and_inherited(
 
     assert module.main(["율촌화학", "--today", "2026-09-01"]) == 0
     out = capsys.readouterr().out
-    assert "2026-08-14_율촌화학_반기보고서_분석.md" in out
-    assert "reports/2026-09-01_율촌화학_종목분석.md" in out
+    assert "종목/ㅇ/율촌화학_2026-08-14.md" in out
+    assert "reports/종목/ㅇ/율촌화학_2026-09-01.md" in out
     assert "증분 기준일(`--since`): 2026-08-14" in out
     assert "이전 개정 1건" in out
 
     assert module.main(["카카오", "--today", "2026-09-01"]) == 0
     new_out = capsys.readouterr().out
     assert "승계 대상: 없음 (신규 작성)" in new_out
-    assert "reports/2026-09-01_카카오_종목분석.md" in new_out
+    assert "reports/종목/ㅋ/카카오_2026-09-01.md" in new_out
 
 
 def test_find_mentions_since_filter(tmp_path: Path) -> None:

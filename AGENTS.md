@@ -30,8 +30,12 @@ path in skill files. It also searches the accumulated briefing archive under
 `output/telegram-daily/` (index, theme files, daily briefings) through
 `scripts/find_mentions.py`, which emits `path:line` locators rather than content —
 the archive's index and theme lines run to several kilobytes each and must be read
-from the original file, never truncated. Its reports are written to
-`output/reports/<yyyy-mm-dd>_<종목명>_종목분석.md`, and the section layout is
+from the original file, never truncated. Reports are filed under `output/reports/`
+in three branches: `종목/<초성>/<종목명>_<yyyy-mm-dd>.md` for single-stock analyses
+(the 초성 folder follows the same rule as the PDF archive, via
+`find_reports.chosung_dir()`), `산업/<yyyy-mm-dd>_<주제>.md` for sector or theme
+comparisons, and `기타/<yyyy-mm-dd>_<주제>.md` for everything else. The target path
+is computed by `scripts/find_prior_report.py`, not by hand, and the section layout is
 owned by `template/stock_analysis.md`. When a report for the same stock already
 exists, the skill inherits it instead of starting over: it reads the prior report,
 collects only what is newer than that report's date, corrects errors it finds,
@@ -51,6 +55,15 @@ years of chart data. Analyst report summaries come from the same script through
 the repository-root `.env`) and sends it verbatim. Without it, or once it
 expires, only the report-summary section is skipped. Keep the real value in the
 gitignored `.env`, never in a tracked file, and never print it.
+
+Broker consensus is an input to the target price, not the verdict. The skill
+blends the StockEasy consensus average with its own probability-weighted
+bull/base/bear scenario target using a dynamic weight that moves with consensus
+quality (broker coverage, report recency, target dispersion, EPS revision
+direction), and the upside verdict is tied to `context/my_rules.md` — the
+50~100% expectation of 「기본 원칙 2」 and the -15% stop of 「매매규칙 6」. The
+calculation rules live in `analyze-stock/SKILL.md` step 9; the output layout
+lives in `template/stock_analysis.md` §5.
 
 The Telegram daily briefing also reads the user's live holdings from the Google
 Sheets file `주식 포트폴리오` (sheet `포트폴리오`) through the Google Drive MCP

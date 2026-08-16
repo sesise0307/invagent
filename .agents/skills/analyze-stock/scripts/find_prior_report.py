@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """`output/reports/`에서 같은 종목의 과거 분석 보고서를 찾아 승계 대상을 판정한다.
 
-파일명 관례는 `<YYYY-MM-DD>_<주제>_<유형>.md` 다. 날짜 다음 첫 토큰이 종목명인
-파일만 승계 대상으로 본다. 종목명이 중간에 끼어 있으면 비교·섹터 보고서라
-다른 종목 내용도 담겨 있으므로 참고로만 분류한다.
+보고서는 세 갈래로 나뉜다.
 
-    2026-08-14_율촌화학_반기보고서_분석.md               → 승계
-    2026-08-11_기판검사장비_기가비스_인텍플러스_비교.md  → 참고
-    2026-08_투자전략.md                                  → 무시 (일자 없음)
+    종목/<초성>/<종목명>_<YYYY-MM-DD>.md   개별 종목 분석 → 승계 대상
+    산업/<YYYY-MM-DD>_<주제>_….md          섹터·테마 비교 → 참고
+    기타/<YYYY-MM-DD>_<주제>_….md          전략·스크리닝  → 참고
+
+    종목/ㅇ/율촌화학_2026-08-14.md                        → 승계
+    산업/2026-08-11_기판검사장비_기가비스_인텍플러스_비교.md → 참고
+    기타/2026-08_투자전략.md                              → 무시 (일자 없음)
+
+산업·기타 보고서는 다른 종목 내용도 담고 있으므로 승계하지 않고 원본을 유지한다.
+초성 폴더 규칙은 로컬 PDF 아카이브와 같다 — `find_reports.chosung_dir()`을 재사용한다.
 
 기본 경로는 저장소 루트의 `output/` 이며 INVAGENT_OUTPUT_DIR 로 덮어쓸 수 있다.
 표준 라이브러리만 사용한다.
@@ -24,11 +29,20 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from find_reports import chosung_dir  # noqa: E402  (같은 스크립트 폴더)
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 REPORTS_SUBDIR = "reports"
-REPORT_SUFFIX = "종목분석"
+STOCK_DIR = "종목"
+SECTOR_DIR = "산업"
+MISC_DIR = "기타"
 
-_NAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})_(.+)$")
+# 종목 보고서 — 날짜가 뒤에 붙는다.
+_STOCK_RE = re.compile(r"^(.+)_(\d{4}-\d{2}-\d{2})$")
+# 산업·기타 보고서 — 날짜가 앞에 붙는 기존 관례.
+_DATED_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})_(.+)$")
 
 
 def nfc(text: str) -> str:
@@ -54,6 +68,7 @@ class Report:
     path: Path
     date: str
     tokens: list[str]
+    stock_report: bool = False
 
     @property
     def size_kb(self) -> int:
@@ -78,38 +93,61 @@ class Lookup:
         return self.inherit.date if self.inherit else None
 
 
-def parse_report(path: Path) -> Report | None:
-    """파일명에서 작성일과 토큰을 뽑는다. 일자가 없으면 대상이 아니다."""
-    match = _NAME_RE.match(nfc(path.stem))
+def parse_dated(path: Path) -> Report | None:
+    """`<YYYY-MM-DD>_<주제>_….md` — 산업·기타 보고서. 일자가 없으면 대상이 아니다."""
+    match = _DATED_RE.match(nfc(path.stem))
     if not match:
         return None
     return Report(path=path, date=match.group(1), tokens=match.group(2).split("_"))
 
 
-def scan(reports_dir: Path) -> list[Report]:
-    """`output/reports/` 바로 아래 마크다운만 본다.
+def parse_stock(path: Path) -> Report | None:
+    """`<종목명>_<YYYY-MM-DD>.md` — 종목 보고서. 구 파일명은 옛 관례로 한 번 더 시도한다."""
+    match = _STOCK_RE.match(nfc(path.stem))
+    if match:
+        return Report(
+            path=path, date=match.group(2), tokens=[match.group(1)], stock_report=True
+        )
+    legacy = parse_dated(path)
+    if legacy is not None:
+        legacy.stock_report = True
+    return legacy
 
-    같은 부모에 `<YYYY-MM-DD>/` 디렉터리로 내려받은 PDF가 쌓이므로 하위는 훑지 않는다.
+
+def target_path(reports_dir: Path, stock: str, today: str) -> Path:
+    """새 보고서를 쓸 자리. 초성 폴더는 PDF 아카이브와 같은 규칙."""
+    return reports_dir / STOCK_DIR / chosung_dir(stock) / f"{nfc(stock)}_{today}.md"
+
+
+def scan(reports_dir: Path) -> list[Report]:
+    """세 분류 폴더의 마크다운을 본다.
+
+    `종목/`은 초성 하위까지 훑고, `산업/`·`기타/`와 루트(이관 누락분)는 바로 아래만 본다.
+    루트에는 `<YYYY-MM-DD>/` 디렉터리로 내려받은 PDF가 쌓이므로 그 하위는 훑지 않는다.
     """
     if not reports_dir.is_dir():
         return []
-    found = [parse_report(path) for path in sorted(reports_dir.glob("*.md"))]
+
+    found: list[Report | None] = []
+    found += [parse_stock(path) for path in sorted((reports_dir / STOCK_DIR).glob("**/*.md"))]
+    for category in (SECTOR_DIR, MISC_DIR):
+        found += [parse_dated(path) for path in sorted((reports_dir / category).glob("*.md"))]
+    found += [parse_dated(path) for path in sorted(reports_dir.glob("*.md"))]
     return [report for report in found if report is not None]
 
 
 def lookup(reports_dir: Path, stock: str, today: str) -> Lookup:
     """승계 대상 · 이전 개정 · 참고 보고서를 분류한다."""
-    target = reports_dir / f"{today}_{nfc(stock)}_{REPORT_SUFFIX}.md"
-    result = Lookup(stock=nfc(stock), target=target)
+    result = Lookup(stock=nfc(stock), target=target_path(reports_dir, stock, today))
 
     key = _key(stock)
     owned: list[Report] = []
     for report in scan(reports_dir):
         if not report.tokens:
             continue
-        if _key(report.tokens[0]) == key:
+        if report.stock_report and _key(report.tokens[0]) == key:
             owned.append(report)
-        elif any(key == _key(token) for token in report.tokens[1:]):
+        elif not report.stock_report and any(key == _key(token) for token in report.tokens):
             result.related.append(report)
 
     owned.sort(key=lambda r: (r.date, nfc(r.path.name)), reverse=True)
