@@ -46,24 +46,43 @@ writing the new file first and deleting the old one only afterwards, since
 Quote, multiples, per-broker target-price history, consensus estimates, EPS
 consensus revisions, and stock news come from StockEasy through
 `.agents/skills/analyze-stock/scripts/fetch_stock_info.py`, which calls the
-unauthenticated `stockeasy.intellio.kr/stockdata/api/v1/**` JSON endpoints
-(`stock-search`, `stock-info/info-tab`, `news/by-stock-code`) and prints a
+`stockeasy.intellio.kr/stockdata/api/v1/**` JSON endpoints (`stock-search`,
+`stock-info/info-tab`, `news/by-stock-code`, `securities-reports`) and prints a
 compact summary — the raw `info-tab` payload is ~128 KB because it embeds three
-years of chart data. Analyst report summaries come from the same script through
-`securities-reports`, the one endpoint that requires a login: it reads the
-`STOCKEASY_COOKIE` variable (a browser Cookie header, environment first and then
-the repository-root `.env`) and sends it verbatim. Without it, or once it
-expires, only the report-summary section is skipped. Keep the real value in the
-gitignored `.env`, never in a tracked file, and never print it.
+years of chart data. **All of them except `stock-search` now require a login**
+(as of 2026-08 `info-tab` and `news/by-stock-code`, previously open, return HTTP
+401 without a session), so the script reads the `STOCKEASY_COOKIE` variable (a
+browser Cookie header, environment first and then the repository-root `.env`)
+once and sends it verbatim on every call. Without it the script cannot resolve
+quote, multiples, consensus, or news at all and exits 1 naming the cookie as the
+cause; the report-summary section alone stays non-blocking. Keep the real value
+in the gitignored `.env`, never in a tracked file, and never print it. To refresh
+it, copy the `cookie:` request header from a logged-in `securities-reports` call
+in Chrome DevTools' Network tab and replace the `.env` line, quoted, on one line.
 
-Broker consensus is an input to the target price, not the verdict. The skill
-blends the StockEasy consensus average with its own probability-weighted
-bull/base/bear scenario target using a dynamic weight that moves with consensus
-quality (broker coverage, report recency, target dispersion, EPS revision
-direction), and the upside verdict is tied to `context/my_rules.md` — the
-50~100% expectation of 「기본 원칙 2」 and the -15% stop of 「매매규칙 6」. The
-calculation rules live in `analyze-stock/SKILL.md` step 9; the output layout
-lives in `template/stock_analysis.md` §5.
+The `[컨센 요약]` line aggregates **the latest report per broker**, not every row
+in `target_price_history`. One broker publishing six times a year would otherwise
+count six times, and targets cut since publication would drag the average toward
+stale highs — the blend in step 9 needs today's consensus. The all-history simple
+average is still printed on the following `↳` line, labelled as not being the
+blend input.
+
+Broker consensus is an input to the target price, not the verdict, and the target
+price is always a **range, never a single number** — a consensus average carries
+the centre but discards the dispersion, so twelve brokers clustered in a narrow
+band and twelve brokers three-way split collapse to the same figure. The skill
+therefore blends consensus and its own bull/base/bear scenarios at three points
+in parallel — low (consensus minimum × bear), centre (consensus average ×
+probability-weighted), high (consensus maximum × bull) — under one dynamic weight
+that moves with consensus quality (target dispersion first, then broker coverage
+and report recency, then EPS revision direction). Range width and the two
+dispersion ratios are reported alongside the targets and drive the confidence
+grade. The verdict is tied to `context/my_rules.md`: the centre against the
+50~100% expectation of 「기본 원칙 2」 including its 30% capped-downside proviso,
+and the low point against the -15% stop of 「매매규칙 6」, which together set the
+effective stop width used for the reward/risk ratio and the 「기본 원칙 4」 2%-rule
+position cap. The calculation rules live in `analyze-stock/SKILL.md` step 9; the
+output layout lives in `template/stock_analysis.md` §5.
 
 The Telegram daily briefing also reads the user's live holdings from the Google
 Sheets file `주식 포트폴리오` (sheet `포트폴리오`) through the Google Drive MCP

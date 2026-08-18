@@ -286,16 +286,31 @@ def print_target_prices(history: list, current_price: float | None, limit: int, 
     if not rated:
         print("[컨센 요약] 목표가 제시 리포트 없음 (전부 Not Rated)")
         return
-    targets = [r["target_price"] for r in rated]
+    # 9단계 blend 입력은 "지금의 컨센"이다. 한 증권사가 1년에 6번 쓰면 6번 세어지고
+    # 하향 이전의 옛 목표가가 평균을 끌어올리므로, 증권사별 최신 1건만 남겨 집계한다.
+    # rows는 이미 발간일 내림차순이라 먼저 만나는 것이 그 증권사의 최신분이다.
+    latest: dict = {}
+    for r in rated:
+        latest.setdefault(r.get("securities_company"), r)
+    current = list(latest.values())
+
+    targets = [r["target_price"] for r in current]
     avg = sum(targets) / len(targets)
-    brokers = {r.get("securities_company") for r in rated}
-    ups = sum(1 for r in rows if r.get("target_price_change") == "상향")
-    downs = sum(1 for r in rows if r.get("target_price_change") == "하향")
+    ups = sum(1 for r in current if r.get("target_price_change") == "상향")
+    downs = sum(1 for r in current if r.get("target_price_change") == "하향")
     upside = f" · 현재가 대비 {(avg - current_price) / current_price * 100:+.1f}%" if current_price else ""
     print(
         f"[컨센 요약] 평균 목표가 {avg:,.0f}원 (최고 {max(targets):,.0f} / 최저 {min(targets):,.0f}) · "
-        f"커버 {len(brokers)}사 / 목표가 제시 {len(rated)}건 · 상향 {ups} / 하향 {downs}{upside}"
+        f"커버 {len(current)}사 / 목표가 제시 {len(rated)}건 · 상향 {ups} / 하향 {downs}{upside}"
     )
+    if len(rated) > len(current):
+        hist = [r["target_price"] for r in rated]
+        hist_avg = sum(hist) / len(hist)
+        print(
+            f"  ↳ 기준 = 증권사별 최신 1건. 전체 이력 {len(rated)}건 단순평균은 "
+            f"{hist_avg:,.0f}원 (최고 {max(hist):,.0f} / 최저 {min(hist):,.0f}) — "
+            f"옛 목표가·중복 포함이라 9단계 blend 입력이 아니다"
+        )
 
 
 def _fs_rows(financials: dict, primary: str, yearly: bool) -> tuple[list, list]:
@@ -476,22 +491,29 @@ def main(argv: list[str] | None = None) -> int:
     ticker = stock["stock_code"]
     referer = f"{PAGE_BASE}/{ticker}"
     errors = {}
+    # 2026-08 이후 info-tab·news도 로그인 세션을 요구한다(비인증 호출은 HTTP 401).
+    # 쿠키는 한 번만 읽어 세 엔드포인트에 함께 넘긴다. 없으면 종전대로 비인증으로 시도한다.
+    cookie = load_cookie()
 
-    info, e = fetch_json(ENDPOINTS["info_tab"].format(code=ticker), referer=referer)
+    info, e = fetch_json(
+        ENDPOINTS["info_tab"].format(code=ticker), referer=referer, cookie=cookie
+    )
     if e:
         errors["info_tab"] = e
     news = None
     if args.news:
         news, e = fetch_json(
-            ENDPOINTS["news"].format(code=ticker), {"limit": args.news}, referer=referer
+            ENDPOINTS["news"].format(code=ticker),
+            {"limit": args.news},
+            referer=referer,
+            cookie=cookie,
         )
         if e:
             errors["news"] = e
 
-    # 리포트 요약만 로그인 세션이 필요하다. 쿠키가 없으면 그 섹션만 비운다 (비블로킹).
+    # 리포트 요약은 로그인 세션이 반드시 필요하다. 쿠키가 없으면 그 섹션만 비운다 (비블로킹).
     reports = None
     if args.summaries:
-        cookie = load_cookie()
         if not cookie:
             errors["reports"] = f"{COOKIE_ENV} 미설정 — .env에 브라우저 Cookie 헤더를 넣어야 한다"
         else:
@@ -507,6 +529,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if not info:
         detail = ", ".join(f"{k}={v}" for k, v in errors.items()) or "빈 응답"
+        if errors.get("info_tab") == "HTTP 401":
+            detail += (
+                f" — 로그인 세션 필요. {COOKIE_ENV} "
+                + ("만료·무효" if cookie else "미설정")
+                + " (.env 갱신)"
+            )
         print(f"ERROR: StockEasy 종목정보 호출 실패 — {detail}", file=sys.stderr)
         return 1
 

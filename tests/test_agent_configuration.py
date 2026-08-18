@@ -70,14 +70,60 @@ def test_analyze_stock_skill_defines_scenario_target_price() -> None:
         assert scenario in content
     assert "w_c" in content and "w_s" in content
     assert "손익비" in content
-    # 삼성전자 실행에서 커버 23사(상향)와 산포 2.61배(하향)가 동시 성립 — 우선순위가 없으면 재현 불가.
-    assert "[충돌 해소]" in content
-    assert "하향이 우선" in content
-    assert "최저값 하나만" in content
     assert "기본 원칙 2" in content and "매매규칙 6" in content
 
     steps = re.findall(r"^### (\d+)단계", content, re.MULTILINE)
     assert [int(step) for step in steps] == list(range(1, 12))
+
+
+def test_analyze_stock_target_price_is_a_range_not_a_point() -> None:
+    """컨센 평균은 중심만 주고 분산을 못 준다 — 하단/중심/상단 3점으로 낸다."""
+    content = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+
+    for point in ("하단 = w_c × 컨센최저", "중심 = w_c × 컨센평균", "상단 = w_c × 컨센최고"):
+        assert point in content
+    # 분산도를 안 뽑으면 범위를 내도 의미가 없다.
+    for metric in ("범위 폭", "컨센 산포", "시나리오 산포"):
+        assert metric in content
+    # blend 금지는 중심값 괴리가 아니라 두 범위의 겹침 여부로 판정한다.
+    assert "전혀 겹치지 않으면" in content
+    assert "괴리 ≥30%" not in content
+
+
+def test_analyze_stock_weight_rules_are_ordered_and_deterministic() -> None:
+    """삼성전자 실행에서 커버 23사(상향)와 산포 2.61배(하향)가 동시 성립 — 순서가 곧 충돌 해소다."""
+    content = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "처음 걸리는 것 하나만" in content
+    # 산포가 커버 수보다 위에 와야 하향이 우선한다.
+    dispersion = content.index("1. 컨센 산포(최고/최저) > 2배")
+    coverage = content.index("3. 커버 ≥8사")
+    assert dispersion < coverage
+    assert "커버 수는 산포를 못 이긴다" in content
+    # 범위 가중치·미정의 「다수」는 같은 입력에 두 값을 낳는다.
+    assert "0.6~0.7" not in content
+    assert "리포트 ≥3건" in content
+
+
+def test_analyze_stock_downside_drives_stop_and_position_cap() -> None:
+    """손익비 분모가 상수 15%면 중심 기대수익의 재진술이 된다 — 실측 하방을 쓴다."""
+    content = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "실효 손절폭  = max(하방, 15%)" in content
+    assert "손익비      = 중심 기대수익 / 실효 손절폭" in content
+    # 「기본 원칙 2」 단서(하방 막힘 시 30%)가 판정선에 들어와야 한다.
+    assert "중심 30~50% & 하방 ≤ 0%" in content
+    # 2%룰과 「매매규칙 9」 30% 상한 중 어느 쪽이 구속하는지 계산으로 갈린다.
+    assert "포지션 상한 = min(2% / 실효 손절폭, 30%)" in content
+
+
+def test_analyze_stock_wires_detected_signals_to_user_rules() -> None:
+    """6단계가 잡은 서프라이즈·20주선 신호가 10단계 룰 환산까지 이어져야 한다."""
+    content = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "매매규칙 13" in content
+    assert "기술적 분석 규칙 1" in content
+    assert "확신도 판정" in content
 
 
 def test_stock_analysis_template_has_target_price_block() -> None:
@@ -90,6 +136,11 @@ def test_stock_analysis_template_has_target_price_block() -> None:
     assert "종합 목표주가" in content
     assert "기대수익" in content
     assert "손익비" in content
+    # §5-C·§1 모두 단일값이 아니라 하단/중심/상단을 요구한다.
+    for point in ("하단", "중심", "상단"):
+        assert point in content
+    assert "범위 폭" in content
+    assert "실효 손절폭" in content
 
     sections = re.findall(r"^## (\d+)\.", content, re.MULTILINE)
     assert [int(section) for section in sections] == list(range(1, 13))
@@ -404,12 +455,65 @@ def _patch_stock_info_fetch(
 
 
 def test_stock_info_endpoints_point_at_stockdata_api() -> None:
-    """리포트 요약을 뺀 종목 데이터는 무인증 /stockdata/api/v1 경로에서 받는다."""
+    """종목 데이터는 /stockdata/api/v1 경로에서 받는다."""
     module = _load_stock_info_module()
 
     assert module.API_BASE == "https://stockeasy.intellio.kr/stockdata/api/v1"
     assert set(module.ENDPOINTS) == {"search", "info_tab", "news", "reports"}
     assert module.COOKIE_ENV == "STOCKEASY_COOKIE"
+
+
+def test_stock_info_sends_cookie_to_info_tab_and_news(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """2026-08 이후 info-tab·news도 로그인 세션을 요구한다 — 쿠키를 함께 보낸다."""
+    module = _load_stock_info_module()
+    calls = _patch_stock_info_fetch(module, monkeypatch)
+
+    assert module.main(["064290", "--news", "3"]) == 0
+    capsys.readouterr()
+
+    info_call = next(v for k, v in calls.items() if k.startswith("/stock-info/info-tab/"))
+    news_call = next(v for k, v in calls.items() if k.startswith("/news/by-stock-code/"))
+    assert info_call["cookie"] == "session=abc"
+    assert news_call["cookie"] == "session=abc"
+
+
+def test_stock_info_consensus_counts_latest_report_per_broker(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """같은 증권사의 옛 목표가가 평균을 끌어올리면 안 된다 — 증권사별 최신 1건만 센다."""
+    module = _load_stock_info_module()
+    _patch_stock_info_fetch(module, monkeypatch)
+
+    assert module.main(["064290"]) == 0
+    out = capsys.readouterr().out
+
+    # 메리츠 2건(2026-07-03 75,000 / 2026-04-22 41,000) → 최신 1건만
+    assert "평균 목표가 75,000원 (최고 75,000 / 최저 75,000)" in out
+    assert "상향 1 / 하향 0" in out
+    # 전체 이력 단순평균은 참고로 남기되 blend 입력이 아님을 명시한다
+    assert "전체 이력 2건 단순평균은 58,000원" in out
+    assert "9단계 blend 입력이 아니다" in out
+
+
+def test_stock_info_info_tab_401_points_at_cookie(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """info-tab이 401이면 원인은 쿠키다 — 사유를 stderr에 특정해 준다."""
+    module = _load_stock_info_module()
+
+    def fake_fetch(path, params=None, referer=module.PAGE_BASE, cookie=None):
+        if path == module.ENDPOINTS["search"]:
+            return [{"stock_code": "064290", "stock_name": "인텍플러스", "market": "KR"}], None
+        return None, "HTTP 401"
+
+    monkeypatch.setattr(module, "fetch_json", fake_fetch)
+    monkeypatch.setattr(module, "load_cookie", lambda: "session=stale")
+
+    assert module.main(["064290"]) == 1
+    err = capsys.readouterr().err
+    assert "STOCKEASY_COOKIE 만료·무효" in err
 
 
 def test_stock_info_price_fields_strip_direction_sign() -> None:
@@ -438,8 +542,8 @@ def test_stock_info_main_renders_quote_and_consensus(
     assert "고 54,100원(2026-07-06" in out
     assert "저 8,540원(2025-08-06" in out
     assert "메리츠증권" in out and "75,000원" in out and "상향" in out
-    # 목표가 미제시(Not Rated) 건은 평균에서 빠진다: (75000 + 41000) / 2
-    assert "평균 목표가 58,000원" in out
+    # 목표가 미제시(Not Rated) 건은 빠지고, 같은 증권사는 최신 1건(2026-07-03 75,000)만 센다.
+    assert "평균 목표가 75,000원" in out
     assert "커버 1사 / 목표가 제시 2건" in out
     assert "추정 — 컨센서스, DART 데이터 아님" in out
     assert "2026.2Q | 확정" in out and "2026.4Q | **추정 E**" in out
@@ -477,11 +581,11 @@ def test_stock_info_renders_report_summaries_with_cookie(
     assert "· 생산능력 50% 확대 계획" in out  # HTML 태그 제거
     assert "파일: 20260703_인텍플러스_064290" in out  # 로컬 PDF 중복 판정용
     assert "본문:" not in out  # --detail-chars 0이면 본문 생략
-    # 쿠키는 리포트 호출에만 붙고, date_from으로 기준일이 넘어간다
+    # 쿠키는 세 엔드포인트 모두에 붙고, 리포트에는 date_from으로 기준일이 넘어간다
     reports_call = calls[module.ENDPOINTS["reports"]]
     assert reports_call["cookie"] == "session=abc"
     assert reports_call["params"]["date_from"] == "2026-08-01"
-    assert calls["/stock-info/info-tab/064290"]["cookie"] is None
+    assert calls["/stock-info/info-tab/064290"]["cookie"] == "session=abc"
     # 쿠키 값은 stdout으로 새지 않는다
     assert "session=abc" not in out
 
