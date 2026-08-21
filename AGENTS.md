@@ -13,9 +13,8 @@ professional language.
 ## Project Structure
 
 Core package code lives under `src/invagent/`. Keep shared configuration and
-Telegram client setup in `src/invagent/core/`, Telegram fetch/download logic in
-`src/invagent/telegram/`, filename parsing in `src/invagent/parsers/`, and stock
-tracking in `src/invagent/tracking/`. The CLI entry point is
+Telegram client setup in `src/invagent/core/`, Telegram fetch logic in
+`src/invagent/telegram/`, and stock tracking in `src/invagent/tracking/`. The CLI entry point is
 `src/invagent/cli.py`. Tests mirror the package in `tests/`. Runtime outputs go
 to `output/`, reusable templates to `template/`, reference context to `context/`,
 and design notes to `docs/`. Curated reference files in `context/` are checked into

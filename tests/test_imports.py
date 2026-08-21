@@ -8,9 +8,7 @@ def test_imports():
         TelegramClientManager,
         authenticate,
         MessageFetcher,
-        PDFDownloader,
         LinkExtractor,
-        PDFNamer,
         StockTracker,
     )
 
@@ -18,9 +16,7 @@ def test_imports():
     assert TelegramClientManager is not None
     assert authenticate is not None
     assert MessageFetcher is not None
-    assert PDFDownloader is not None
     assert LinkExtractor is not None
-    assert PDFNamer is not None
     assert StockTracker is not None
 
 

@@ -8,8 +8,7 @@ import click
 from invagent.core.config import Config
 from invagent.core.auth import authenticate
 from invagent.core.client import TelegramClientManager
-from invagent.telegram import MessageFetcher, PDFDownloader
-from invagent.parsers import PDFNamer
+from invagent.telegram import MessageFetcher
 from invagent.tracking.stock_tracker import StockTracker
 
 
@@ -87,67 +86,6 @@ def fetch_messages_cmd(days, fetch_links):
         click.echo(f"✅ Saved: {output_file}")
         click.echo(f"   Messages: {len(messages)}")
         click.echo(f"   Links fetched: {'yes' if fetch_links else 'no'}")
-
-    except ValueError as e:
-        click.echo(f"❌ Configuration Error: {e}", err=True)
-        raise SystemExit(1)
-    except Exception as e:
-        click.echo(f"❌ Error: {e}", err=True)
-        raise SystemExit(1)
-
-
-@cli.command()
-@click.option("--days", type=int, default=1, help="Download PDFs from last N days (default: 1)")
-@click.option(
-    "--channels",
-    multiple=True,
-    default=(),
-    help="Channel names to download from (default: configured channel list)"
-)
-def download_pdfs_cmd(days, channels):
-    """Download PDF reports from Telegram channels.
-
-    Saves PDFs to output/reports/<YYYY-MM-DD>/ directory.
-    """
-    try:
-        config = Config.from_env()
-
-        # Use provided channels or defaults
-        channels_to_use = list(channels) if channels else list(config.default_channels)
-
-        click.echo(f"📥 Downloading PDFs from {len(channels_to_use)} channel(s)...")
-        click.echo(f"   Period: last {days} day(s)")
-
-        client_manager = TelegramClientManager()
-        pdf_namer = PDFNamer()
-        downloader = PDFDownloader(config, client_manager, pdf_namer)
-
-        try:
-            results = asyncio.run(downloader.download_pdfs(channels_to_use, days))
-        finally:
-            asyncio.run(client_manager.disconnect())
-
-        # Print summary
-        downloaded = sum(
-            1
-            for files in results.values()
-            for item in files
-            if item.get("status") == "downloaded"
-        )
-        skipped = sum(
-            1
-            for files in results.values()
-            for item in files
-            if item.get("status") == "skipped"
-        )
-        failed_channels = [
-            channel for channel, files in results.items() if any(item.get("status") == "error" for item in files)
-        ]
-
-        click.echo(f"\n✅ Downloaded {downloaded} PDF(s)")
-        click.echo(f"   Skipped: {skipped}")
-        if failed_channels:
-            click.echo(f"   Failed channels: {', '.join(failed_channels)}")
 
     except ValueError as e:
         click.echo(f"❌ Configuration Error: {e}", err=True)
@@ -257,7 +195,6 @@ def show_stock_cmd(ticker):
 # Alias old function names to new command names for CLI
 cli.add_command(authenticate_cmd, name="authenticate")
 cli.add_command(fetch_messages_cmd, name="fetch-messages")
-cli.add_command(download_pdfs_cmd, name="download-pdfs")
 cli.add_command(add_stock_cmd, name="add-stock")
 cli.add_command(set_target_cmd, name="set-target")
 cli.add_command(show_stock_cmd, name="show-stock")

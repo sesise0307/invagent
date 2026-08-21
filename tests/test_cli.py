@@ -30,14 +30,6 @@ def test_cli_fetch_messages_help():
     assert result.exit_code == 0
 
 
-def test_cli_download_pdfs_help():
-    """download-pdfs 명령어 도움말"""
-    runner = CliRunner()
-    result = runner.invoke(cli, ['download-pdfs', '--help'])
-
-    assert result.exit_code == 0
-
-
 def test_cli_add_stock_help():
     """add-stock 명령어 도움말"""
     runner = CliRunner()

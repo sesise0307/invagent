@@ -40,12 +40,6 @@ Export saved messages from the last day:
 uv run invagent fetch-messages --days 1
 ```
 
-Download recent PDF reports:
-
-```bash
-uv run invagent download-pdfs --days 1
-```
-
 Track a stock and target price:
 
 ```bash
