@@ -32,10 +32,6 @@ class Config:
         """Return the directory used for daily Telegram exports."""
         return self.output_dir / "telegram-daily/raw"
 
-    def reports_dir(self, date: str) -> Path:
-        """Return the directory used for downloaded PDF reports on a given date."""
-        return self.output_dir / "reports" / date
-
     @classmethod
     def from_env(cls) -> "Config":
         """Load configuration from environment variables."""

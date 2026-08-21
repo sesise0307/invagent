@@ -1,6 +1,6 @@
 # Invagent
 
-Personal CLI tooling for collecting Telegram investment notes, downloading PDF reports, and tracking stock targets.
+Personal CLI tooling for collecting Telegram investment notes and tracking stock targets.
 
 ## Requirements
 
@@ -59,10 +59,11 @@ output/
       YYYY-MM-DD.md               # 일일 브리핑 (월별 서브 디렉토리)
     monthly_context.md            # 월간 누적 컨텍스트
   reports/
-    YYYY-MM-DD/
-      *.pdf
+    종목/<초성>/<종목명>_YYYY-MM-DD.md   # 개별 종목 분석 (analyze-stock)
+    산업/YYYY-MM-DD_<주제>.md
+    기타/YYYY-MM-DD_<주제>.md
 context/
-  stocks.json
+  stocks.json                       # add-stock/set-target 저장소
 ```
 
 ## Test

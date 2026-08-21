@@ -14,33 +14,35 @@ professional language.
 
 Core package code lives under `src/invagent/`. Keep shared configuration and
 Telegram client setup in `src/invagent/core/`, Telegram fetch logic in
-`src/invagent/telegram/`, and stock tracking in `src/invagent/tracking/`. The CLI entry point is
-`src/invagent/cli.py`. Tests mirror the package in `tests/`. Runtime outputs go
-to `output/`, reusable templates to `template/`, reference context to `context/`,
-and design notes to `docs/`. Curated reference files in `context/` are checked into
-the repository: `context/my_rules.md` holds the user's personal risk-management
-rules and `context/interested_stocks.md` holds the tracked holdings list. Skills
-read `context/my_rules.md` directly, so keep the rule numbering stable.
+`src/invagent/telegram/`, and stock tracking in `src/invagent/tracking/`. The
+CLI entry point is `src/invagent/cli.py`. Tests mirror the package in `tests/`.
+Runtime outputs go to `output/`, reusable templates to `template/`, reference
+context to `context/`, and design notes to `docs/`. Curated reference files in
+`context/` are checked into the repository: `context/my_rules.md` holds the
+user's personal risk-management rules and `context/interested_stocks.md` holds
+the tracked holdings list. Skills read `context/my_rules.md` directly, so keep
+the rule numbering stable.
 
 The `analyze-stock` skill reads the local analyst-report archive at
-`~/1_Investment/리포트/<초성>/<종목명>/` (PDF only, outside this repository).
-Override the location with `INVAGENT_REPORT_ARCHIVE`; never hardcode an absolute
-path in skill files. It also searches the accumulated briefing archive under
+`~/1_Investment/리포트/<초성>/<종목명>/` (PDF only, outside this repository). Override
+the location with `INVAGENT_REPORT_ARCHIVE`; never hardcode an absolute path in
+skill files. It also searches the accumulated briefing archive under
 `output/telegram-daily/` (index, theme files, daily briefings) through
-`scripts/find_mentions.py`, which emits `path:line` locators rather than content —
-the archive's index and theme lines run to several kilobytes each and must be read
-from the original file, never truncated. Reports are filed under `output/reports/`
-in three branches: `종목/<초성>/<종목명>_<yyyy-mm-dd>.md` for single-stock analyses
-(the 초성 folder follows the same rule as the PDF archive, via
-`find_reports.chosung_dir()`), `산업/<yyyy-mm-dd>_<주제>.md` for sector or theme
-comparisons, and `기타/<yyyy-mm-dd>_<주제>.md` for everything else. The target path
-is computed by `scripts/find_prior_report.py`, not by hand, and the section layout is
-owned by `template/stock_analysis.md`. When a report for the same stock already
-exists, the skill inherits it instead of starting over: it reads the prior report,
-collects only what is newer than that report's date, corrects errors it finds,
-rewrites the investment call from scratch, and moves the file to today's date —
-writing the new file first and deleting the old one only afterwards, since
-`output/` is gitignored and has no recovery path.
+`.agents/skills/analyze-stock/scripts/find_mentions.py`, which emits `path:line`
+locators rather than content — the archive's index and theme lines run to
+several kilobytes each and must be read from the original file, never truncated.
+Reports are filed under `output/reports/` in three branches:
+`종목/<초성>/<종목명>_<yyyy-mm-dd>.md` for single-stock analyses (the 초성 folder follows
+the same rule as the PDF archive, via `find_reports.chosung_dir()`),
+`산업/<yyyy-mm-dd>_<주제>.md` for sector or theme comparisons, and
+`기타/<yyyy-mm-dd>_<주제>.md` for everything else. The target path is computed by
+`.agents/skills/analyze-stock/scripts/find_prior_report.py`, not by hand, and
+the section layout is owned by `template/stock_analysis.md`. When a report for
+the same stock already exists, the skill inherits it instead of starting over:
+it reads the prior report, collects only what is newer than that report's date,
+corrects errors it finds, rewrites the investment call from scratch, and moves
+the file to today's date — writing the new file first and deleting the old one
+only afterwards, since `output/` is gitignored and has no recovery path.
 
 Quote, multiples, per-broker target-price history, consensus estimates, EPS
 consensus revisions, and stock news come from StockEasy through
@@ -88,9 +90,12 @@ Sheets file `주식 포트폴리오` (sheet `포트폴리오`) through the Googl
 connector, and stores a parsed snapshot in `output/portfolio/<yyyy-mm-dd>.md`.
 `output/` is gitignored, so portfolio data never enters the repository.
 
-Canonical project skills live in `.agents/skills/`. Claude compatibility entries
-under `.claude/skills/` point to the same directories. Edit the canonical files
-only.
+Canonical project skills live in `.agents/skills/`. Each `.claude/skills/<name>`
+is a symlink to the canonical directory — edit the canonical files only. Every
+skill needs `SKILL.md` with `name`/`description` frontmatter and
+`agents/openai.yaml` with `display_name`, `short_description`, and its `$<name>`
+invocation. `tests/test_agent_configuration.py` enforces all of that and fails on
+any credential or `/Users/...` path committed under `.agents/skills/`.
 
 ## Build and Development
 
@@ -102,11 +107,9 @@ Use `uv` for local development.
 - `uv run pytest tests/test_cli.py -q`: run a focused test file.
 - `uv run invagent fetch-messages --days 1`: manually verify message fetching.
 
-Reading analyst report PDFs needs poppler on the machine (`brew install poppler`,
-or `apt-get install poppler-utils`). Without `pdftoppm`, PDF pages cannot be
-rendered and `analyze-stock` falls back to plain text extraction, which loses the
-image-based forecast tables, sidebar valuation figures, and the analyst's own
-highlighting.
+Analyst report PDFs are read straight through the agent's file-read tool, which
+renders the pages — no local PDF toolchain needed. Past 10 pages the read needs an
+explicit page range (`analyze-stock/SKILL.md` step 4).
 
 Copy `.env.example` to `.env` for local configuration. Telegram commands require
 `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`. OpenDART agent access requires private
@@ -122,7 +125,7 @@ keep imports and surrounding style consistent.
 
 Tests use `pytest` and `pytest-asyncio`. Add or update tests for every behavior
 change, especially CLI flows, configuration parsing, Telegram integrations, and
-parser rules. Prefer small unit tests with mocks over live network calls. Name
+stock tracking. Prefer small unit tests with mocks over live network calls. Name
 test modules `tests/test_<area>.py` and functions `test_<behavior>()`.
 
 ## Git and Security
