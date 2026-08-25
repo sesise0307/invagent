@@ -38,11 +38,16 @@ the same rule as the PDF archive, via `find_reports.chosung_dir()`),
 `기타/<yyyy-mm-dd>_<주제>.md` for everything else. The target path is computed by
 `.agents/skills/analyze-stock/scripts/find_prior_report.py`, not by hand, and
 the section layout is owned by `template/stock_analysis.md`. When a report for
-the same stock already exists, the skill inherits it instead of starting over:
-it reads the prior report, collects only what is newer than that report's date,
-corrects errors it finds, rewrites the investment call from scratch, and moves
-the file to today's date — writing the new file first and deleting the old one
-only afterwards, since `output/` is gitignored and has no recovery path.
+the same stock already exists, the skill inherits it instead of starting over.
+It reads the prior report, collects only what is newer than that report's date,
+renames that existing file to today's target path, and then edits the renamed
+file in place. Keep one rolling report per stock; do not create or retain a
+separate dated snapshot. The report adds dated update blocks only where facts or
+judgments changed. Existing analysis must not be silently shortened or replaced;
+corrections keep the old claim and mark it superseded with evidence. The current
+investment call may be rewritten, but the prior call and its reasoning remain
+visible inside the rolling report. Because `output/` is gitignored, resolve the
+exact source and target before renaming and never overwrite an existing target.
 
 Quote, multiples, per-broker target-price history, consensus estimates, EPS
 consensus revisions, and stock news come from StockEasy through

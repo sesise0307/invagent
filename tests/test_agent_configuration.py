@@ -146,6 +146,20 @@ def test_stock_analysis_template_has_target_price_block() -> None:
     assert [int(section) for section in sections] == list(range(1, 13))
 
 
+def test_analyze_stock_inheritance_is_additive_in_one_rolling_file() -> None:
+    """승계 보고서는 기존 파일명을 바꿔 이어 쓰며 별도 스냅샷을 만들지 않는다."""
+    skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+    template = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
+
+    assert "### YYYY-MM-DD 업데이트" in skill
+    assert "누적 파일 1개만 유지" in skill
+    assert "파일명을 목표 경로로 변경" in skill
+    assert "복사본을 만들지 않는다" in skill
+    assert "불변 스냅샷" not in skill
+    assert "기존 분석을 삭제·축약하지 않는다" in template
+    assert "기존 분석 (보존)" in template
+
+
 def test_project_codex_config_is_credential_free() -> None:
     config_path = REPO_ROOT / ".codex" / "config.toml"
     config = tomllib.loads(config_path.read_text(encoding="utf-8"))
@@ -1130,7 +1144,10 @@ def test_find_prior_report_main_reports_new_and_inherited(
     assert "종목/ㅇ/율촌화학_2026-08-14.md" in out
     assert "reports/종목/ㅇ/율촌화학_2026-09-01.md" in out
     assert "증분 기준일(`--since`): 2026-08-14" in out
-    assert "이전 개정 1건" in out
+    assert "과거 중복 후보 1건" in out
+    assert "승계 파일명을 목표 경로로 먼저 변경" in out
+    assert "복사본을 만들지 마라" in out
+    assert "기존 본문을 삭제·축약하지 않는다" in out
 
     assert module.main(["카카오", "--today", "2026-09-01"]) == 0
     new_out = capsys.readouterr().out

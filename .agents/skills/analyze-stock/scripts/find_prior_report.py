@@ -85,7 +85,7 @@ class Lookup:
 
     @property
     def same_path(self) -> bool:
-        """오늘 이미 같은 경로가 승계 대상이면 구 파일을 지우면 안 된다."""
+        """오늘 이미 같은 경로가 승계 대상인지 판정한다."""
         return self.inherit is not None and self.inherit.path == self.target
 
     @property
@@ -177,14 +177,14 @@ def render(result: Lookup, output_root: Path) -> str:
         )
         lines.append(f"- 목표 경로: `{_rel(result.target, output_root)}`")
         if result.same_path:
-            lines.append("- 같은 경로 여부: **yes** → 같은 날 재실행. 구 파일을 삭제하지 마라.")
+            lines.append("- 같은 경로 여부: **yes** → 같은 날 재실행. 기존 본문을 보존하고 날짜 업데이트만 추가하라.")
         else:
-            lines.append("- 같은 경로 여부: no → 새 경로로 전문을 쓴 뒤 구 파일을 삭제하라.")
+            lines.append("- 같은 경로 여부: no → 승계 파일명을 목표 경로로 먼저 변경한 뒤 같은 파일에 증분을 추가하라. 복사본을 만들지 마라.")
         lines.append(f"- 증분 기준일(`--since`): {inherit.date}")
 
     if result.previous:
         names = ", ".join(f"`{nfc(r.path.name)}`" for r in result.previous)
-        lines.append(f"- 이전 개정 {len(result.previous)}건 (참고만): {names}")
+        lines.append(f"- 과거 중복 후보 {len(result.previous)}건: {names}")
     if result.related:
         names = ", ".join(f"`{nfc(r.path.name)}`" for r in result.related)
         lines.append(f"- 참고(비교·섹터) {len(result.related)}건: {names}")
@@ -193,7 +193,9 @@ def render(result: Lookup, output_root: Path) -> str:
         lines += [
             "",
             "승계본 전문을 먼저 읽어라. 이후 단계는 증분 기준일 이후만 새로 수집한다.",
-            "수치·기준이 어긋나면 고치고 `## 12. 개정 이력`에 근거와 함께 남긴다.",
+            "승계본과 목표 경로가 다르면 수집·작성 전에 파일명을 목표 경로로 변경한다.",
+            "기존 본문을 삭제·축약하지 않는다. 새 정보는 날짜 업데이트 블록으로 추가한다.",
+            "수치·기준이 어긋나면 기존 주장을 보존한 채 정정하고 `## 12. 개정 이력`에 근거와 함께 남긴다.",
         ]
     return "\n".join(lines) + "\n"
 
