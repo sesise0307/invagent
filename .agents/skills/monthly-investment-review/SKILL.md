@@ -52,6 +52,7 @@ Notion 플러그인/앱 커넥터를 사용한다. 필요한 읽기 또는 쓰�
 - `value_investing.md` — 버핏, 멍거, 린치
 - `trend_following.md` — 미너비니, 오닐
 - `macro.md` — 드루켄밀러, 소로스
+- `second_level_thinking.md` — 하워드 막스, 세스 클라만 (2차적 사고·사이클·영구 손실)
 - `aphorisms.md` — 격언
 
 원칙:

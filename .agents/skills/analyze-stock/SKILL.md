@@ -363,7 +363,10 @@ w_s = 1 - w_c
 
 ### 10단계 — 투자 판단 (`advice` 스킬 위임)
 
-방법론은 `../advice/SKILL.md`와 `../advice/references/{value_investing,trend_following,macro}.md`.
+방법론은 `../advice/SKILL.md`와 `../advice/references/{value_investing,trend_following,macro,second_level_thinking}.md`.
+  `second_level_thinking.md`(막스·클라만)는 별도 섹션을 만들지 말고 **가치 관점의 「이미 가격에 반영됐나」와
+  매크로 관점의 사이클 위치 판정에 녹여 쓴다** — §9 섹션 구성은 `template/stock_analysis.md` 고정.
+  미너비니·오닐 채점은 `N/8`·`N/7` 형태로 남긴다.
 
 - **출발점은 9단계 §5-C 판정이다.** 3관점이 이를 뒤집으면 **뒤집는 근거를 명시한다.**
   근거 없이 기대수익 판정과 다른 결론을 내지 않는다.
