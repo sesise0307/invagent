@@ -75,6 +75,10 @@
 - 시장 환경: 시장 전체가 상승 사이클에 있을 것
 
 ### 스테이지 분석 (Stage Analysis by Stan Weinstein)
+> 단계 판정은 눈대중으로 하지 말고 `stage-analysis` 스킬(`stage_scan.py`)로 계산한다.
+> 150일선·기울기·스윙 고저점·영업이익 증가율까지 반영한 통합 버전 방법론은
+> `../../stage-analysis/SKILL.md`와 `../../stage-analysis/references/stage_theory.md`.
+
 미너비니도 참조하는 4단계 모델:
 - **Stage 1 (바닥 다지기)**: 횡보, 기회 없음
 - **Stage 2 (상승)**: ✅ 매수 구간

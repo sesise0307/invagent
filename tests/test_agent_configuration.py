@@ -18,6 +18,7 @@ SKILL_NAMES = (
     "analyze-stock",
     "monthly-investment-review",
     "opendart",
+    "stage-analysis",
     "summarize-telegram",
 )
 

@@ -1,9 +1,9 @@
 # Repository Guidelines
 
 This repository contains a personal investment-decision support package. Use the
-project skills for investment advice, single-stock analysis, Telegram briefings,
-monthly Notion reviews, and OpenDART research instead of recreating those
-workflows in a prompt.
+project skills for investment advice, single-stock analysis, price-stage
+judgement, Telegram briefings, monthly Notion reviews, and OpenDART research
+instead of recreating those workflows in a prompt.
 
 At the start of each session, activate the installed `caveman` skill at `full`
 intensity. In Codex use `$caveman:caveman full`; in Claude Code use
@@ -65,6 +65,24 @@ cause; the report-summary section alone stays non-blocking. Keep the real value
 in the gitignored `.env`, never in a tracked file, and never print it. To refresh
 it, copy the `cookie:` request header from a logged-in `securities-reports` call
 in Chrome DevTools' Network tab and replace the `.env` line, quoted, on one line.
+
+The `stage-analysis` skill judges which of the four price-maturity stages a stock
+sits in, following DB Securities' 2026-08-25 「Stage Analysis 마스터하기」 integrated
+version — Weinstein's price/150-day-moving-average axis plus Minervini's operating
+-profit-growth axis. `.agents/skills/stage-analysis/scripts/stage_scan.py` fixes the
+stage **deterministically**; the model interprets boundaries and maps the verdict to
+`context/my_rules.md`, it does not re-grade the number. Daily OHLCV comes from Naver
+Finance's open `api.finance.naver.com/siseJson.naver` endpoint (no auth, response is
+a single-quoted literal rather than strict JSON), and the quarterly operating-profit
+series comes from the same StockEasy `info-tab` payload described above, so a missing
+`STOCKEASY_COOKIE` degrades the run to a price-only verdict instead of failing it.
+Ticker resolution, cookie loading, and financial-row selection are imported from
+`analyze-stock/scripts/fetch_stock_info.py` rather than reimplemented. The judgement
+thresholds (150-day line, ±1.5%/20-day flat band, 80/20% position ratio, 10-day
+pivot radius, 60-day box, 250-day cycle window) are this skill's own operating
+choices, not the report's — they live as constants at the top of the script and are
+documented with their rationale in `stage-analysis/SKILL.md`; change both together.
+`analyze-stock` step 6 runs the same script and quotes its verdict verbatim in §9.
 
 The `[컨센 요약]` line aggregates **the latest report per broker**, not every row
 in `target_price_history`. One broker publishing six times a year would otherwise

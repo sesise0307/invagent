@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stage Analysis"
+  short_description: "Classify a stock into the 4-stage price maturity cycle"
+  default_prompt: "Use $stage-analysis to judge which stage this stock is in."
