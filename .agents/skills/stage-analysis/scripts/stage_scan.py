@@ -52,6 +52,9 @@ PIVOT_K = 10             # 스윙 피벗 프랙탈 반경 (좌우 거래일)
 BOX_WINDOW = 60          # 박스권 상·하단 측정 구간 (거래일)
 CYCLE_WINDOW = 250       # 순환적 고점·저점 탐색 구간 (거래일 ≈ 1년)
 TREND_WINDOW = 250       # 중간 구간 1·3단계 가르기용 장기 방향 구간
+PROJECT_HORIZONS = (20, 40, 60, 80, 100)   # 전망 계산 구간 (거래일)
+PROJECT_MAX_DAYS = 400   # 전망 탐색 상한 (거래일)
+TRADING_DAYS_PER_MONTH = 21
 
 STAGE_LABEL = {
     1: "1단계 (기초 지역 / 무시 국면)",
@@ -240,6 +243,129 @@ def volume_bias(bars: list[dict], window: int = BOX_WINDOW) -> float | None:
     if not ups or not downs or not sum(downs):
         return None
     return (sum(ups) / len(ups)) / (sum(downs) / len(downs))
+
+
+# --- 전망: 이동평균 교차 시점 (--project) -----------------------------------
+#
+# 이동평균은 새 종가가 들어오고 `window`일 전 종가가 빠지며 움직인다. 앞으로 빠져나갈 값은
+# **이미 확정돼 있으므로**, 주가를 한 값으로 가정하면 이평선의 미래 경로가 결정된다.
+# 4단계 종목이 언제 2단계에 닿을 수 있는지(혹은 2단계 종목이 언제 이평선에 닿는지)를
+# 예측이 아니라 **산술**로 답하는 부분이다. 주가 가정은 어디까지나 가정이라는 점을 잊지 마라.
+
+
+def dropout_schedule(
+    closes: list[float], window: int = MA_DAYS, bucket: int = 20, buckets: int = 7
+) -> list[dict]:
+    """앞으로 이동평균에서 빠져나갈 과거 종가의 구간별 평균.
+
+    빠지는 값이 현재가보다 높을수록 이평선은 저절로 내려온다 — 하락 압력이 풀리는 속도다.
+    """
+    pending = closes[-window:]
+    out = []
+    for i in range(buckets):
+        seg = pending[i * bucket : (i + 1) * bucket]
+        if not seg:
+            break
+        out.append(
+            {"from_day": i * bucket, "to_day": i * bucket + len(seg), "avg": sum(seg) / len(seg)}
+        )
+    return out
+
+
+def project_ma_path(
+    closes: list[float], ma_now: float, price: float, days: int, window: int = MA_DAYS
+) -> list[float]:
+    """주가가 `price`로 고정된다고 가정한 이동평균의 미래 경로 (오늘 값 포함)."""
+    pending = list(closes[-window:])
+    path, ma = [ma_now], ma_now
+    for _ in range(days):
+        leaving = pending.pop(0) if pending else price
+        ma += (price - leaving) / window
+        pending.append(price)
+        path.append(ma)
+    return path
+
+
+def days_to_cross(
+    closes: list[float],
+    ma_now: float,
+    price: float,
+    window: int = MA_DAYS,
+    max_days: int = PROJECT_MAX_DAYS,
+) -> int | None:
+    """주가가 `price`로 횡보할 때 이평선과 만나기까지의 거래일 수.
+
+    주가가 이평선 아래면 이평선이 내려와 만나는 날, 위면 이평선이 올라와 닿는 날이다.
+    상한 안에 만나지 못하면 None.
+    """
+    below = price < ma_now
+    path = project_ma_path(closes, ma_now, price, max_days, window)
+    # 누적 가감산이라 정확히 만나는 날에도 끝자리 오차가 남는다. 상대 허용오차로 비교한다.
+    tol = abs(price) * 1e-9
+    for day, ma in enumerate(path):
+        if day and ((below and ma - price <= tol) or (not below and price - ma <= tol)):
+            return day
+    return None
+
+
+def price_for_cross_in(
+    closes: list[float], ma_now: float, days: int, window: int = MA_DAYS
+) -> float | None:
+    """`days` 거래일 뒤 이평선과 만나려면 주가가 얼마여야 하나.
+
+    `days < window`이면 닫힌 해가 있다. days일 뒤 이평선은
+    `ma_now + (days·p - S)/window` (S = 그 사이 빠져나갈 종가 합)이고, 이것이 p와 같아지는
+    p를 풀면 된다. `days >= window`면 이평선이 곧 p가 되어 해가 무의미하므로 None.
+    """
+    if days <= 0 or days >= window:
+        return None
+    leaving = sum(closes[-window:][:days])
+    return (ma_now - leaving / window) / (1 - days / window)
+
+
+def days_to_flat_slope(
+    closes: list[float],
+    ma_now: float,
+    price: float,
+    window: int = MA_DAYS,
+    max_days: int = PROJECT_MAX_DAYS,
+) -> int | None:
+    """주가 횡보 가정에서 이평선 기울기가 '평탄' 밴드에 들어가기까지의 거래일 수."""
+    path = project_ma_path(closes, ma_now, price, max_days, window)
+    for day in range(SLOPE_WINDOW, len(path)):
+        base = path[day - SLOPE_WINDOW]
+        if not base:
+            continue
+        if abs((path[day] - base) / base * 100) <= SLOPE_FLAT_PCT:
+            return day
+    return None
+
+
+def project(bars: list[dict], window: int = MA_DAYS) -> dict:
+    """현재가 횡보 가정과 목표 시점별 필요 주가를 함께 낸다."""
+    closes = [b["close"] for b in bars]
+    ma_now = sma(closes, window)[-1]
+    price = closes[-1]
+    if ma_now is None:
+        return {}
+    below = price < ma_now
+    targets = []
+    for days in PROJECT_HORIZONS:
+        needed = price_for_cross_in(closes, ma_now, days, window)
+        if needed is None or needed <= 0:
+            continue
+        targets.append({"days": days, "price": needed, "change_pct": (needed - price) / price * 100})
+    return {
+        "direction": "상향 교차(2단계 진입)" if below else "하향 이탈(4단계 전환)",
+        "below": below,
+        "close": price,
+        "ma": ma_now,
+        "gap_pct": (price - ma_now) / ma_now * 100,
+        "flat_days": days_to_cross(closes, ma_now, price, window),
+        "flat_slope_days": days_to_flat_slope(closes, ma_now, price, window),
+        "targets": targets,
+        "dropouts": dropout_schedule(closes, window),
+    }
 
 
 # --- 영업이익 증가율 --------------------------------------------------------
@@ -530,6 +656,37 @@ def print_result(name: str, code: str, result: dict, sources: list[str]) -> None
     print(f"대응: {v['action']}")
 
 
+def _months(days: int) -> str:
+    return f"약 {days / TRADING_DAYS_PER_MONTH:.1f}개월"
+
+
+def print_projection(proj: dict) -> None:
+    """이동평균 교차 전망. 주가를 현 수준으로 고정한 **산술 계산**이지 예측이 아니다."""
+    if not proj:
+        return
+    print(f"[전망] {proj['direction']} — 현재가 {proj['close']:,.0f}원 유지 가정")
+    if proj["flat_days"] is not None:
+        d = proj["flat_days"]
+        print(f"  주가 횡보 시 {MA_DAYS}일선 교차: {d}거래일 뒤 ({_months(d)})")
+    else:
+        print(f"  주가 횡보 시 {PROJECT_MAX_DAYS}거래일 안에는 {MA_DAYS}일선과 만나지 않는다")
+    if proj["flat_slope_days"] is not None:
+        d = proj["flat_slope_days"]
+        print(f"  주가 횡보 시 기울기 '평탄' 진입: {d}거래일 뒤 ({_months(d)})")
+    if proj["targets"]:
+        verb = "상향 교차" if proj["below"] else "하향 이탈"
+        print(f"  N거래일 안에 {verb}하려면 필요한 주가 (그 기간 그 가격 유지 가정):")
+        for t in proj["targets"]:
+            print(
+                f"    {t['days']:>3d}거래일({_months(t['days'])}): "
+                f"{t['price']:>10,.0f}원 ({t['change_pct']:+.1f}%)"
+            )
+    if proj["dropouts"]:
+        print(f"  {MA_DAYS}일선에서 빠져나갈 과거 종가 (클수록 이평선이 저절로 내려온다):")
+        for d in proj["dropouts"]:
+            print(f"    +{d['from_day']:>3d}~{d['to_day']:>3d}일: {d['avg']:>10,.0f}원")
+
+
 # --- main ------------------------------------------------------------------
 
 
@@ -538,6 +695,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("query", help="종목명 또는 6자리 티커")
     parser.add_argument("--days", type=int, default=1100, help="일봉 조회 일수 (기본 1100 ≈ 3년)")
     parser.add_argument("--no-fundamental", action="store_true", help="영업이익 축 없이 가격만으로 판정")
+    parser.add_argument(
+        "--project",
+        action="store_true",
+        help="이동평균 교차 시점 전망 — 현재가 횡보 가정과 시점별 필요 주가",
+    )
     parser.add_argument("--json", action="store_true", help="판정 결과 JSON 덤프")
     args = parser.parse_args(argv)
 
@@ -579,6 +741,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[누락] info_tab — {reason} · 가격 전용 판정으로 진행", file=sys.stderr)
 
     result = analyze(bars, financials, primary)
+    if args.project:
+        result["projection"] = project(bars)
 
     if args.json:
         print(
@@ -592,6 +756,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     print_result(name, ticker, result, sources)
+    if args.project:
+        print_projection(result.get("projection") or {})
     return 0
 
 

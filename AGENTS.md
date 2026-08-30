@@ -82,6 +82,12 @@ thresholds (150-day line, ±1.5%/20-day flat band, 80/20% position ratio, 10-day
 pivot radius, 60-day box, 250-day cycle window) are this skill's own operating
 choices, not the report's — they live as constants at the top of the script and are
 documented with their rationale in `stage-analysis/SKILL.md`; change both together.
+The optional `--project` flag answers "when could this reach stage 2" arithmetically
+rather than by guesswork: the closes about to roll out of the 150-day average are already
+fixed, so holding the price constant determines the average's future path, and the price
+needed to cross within N (< 150) trading days has the closed form
+`(MA - S/150) / (1 - N/150)`. It is a calculation under a stated price assumption, not a
+forecast, and the skill requires saying so alongside any date it produces.
 `analyze-stock` step 6 runs the same script and quotes its verdict verbatim in §9.
 
 The `[컨센 요약]` line aggregates **the latest report per broker**, not every row

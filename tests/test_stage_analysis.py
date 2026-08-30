@@ -271,6 +271,68 @@ def test_op_growth_is_unavailable_when_prior_year_was_a_loss() -> None:
     assert "0 이하" in (growth["note"] or "")
 
 
+# --- 전망 (--project) -------------------------------------------------------
+
+
+def test_price_for_cross_in_is_flat_on_a_flat_series() -> None:
+    """모든 종가가 같으면 이평선도 같은 값이라 교차에 필요한 주가도 그 값이다."""
+    closes = [100.0] * 300
+    ma_now = stage_scan.sma(closes, stage_scan.MA_DAYS)[-1]
+
+    for days in (20, 60, 100):
+        assert stage_scan.price_for_cross_in(closes, ma_now, days) == pytest.approx(100.0)
+
+
+def test_price_for_cross_in_matches_the_simulated_path() -> None:
+    """닫힌 해는 경로 시뮬레이션과 같은 값을 줘야 한다."""
+    closes = _wave(30_000, -0.2, 400)
+    ma_now = stage_scan.sma(closes, stage_scan.MA_DAYS)[-1]
+    days = 40
+
+    needed = stage_scan.price_for_cross_in(closes, ma_now, days)
+    path = stage_scan.project_ma_path(closes, ma_now, needed, days)
+
+    assert path[-1] == pytest.approx(needed)
+
+
+def test_price_for_cross_in_is_undefined_beyond_the_ma_window() -> None:
+    closes = [100.0] * 300
+    ma_now = stage_scan.sma(closes, stage_scan.MA_DAYS)[-1]
+
+    assert stage_scan.price_for_cross_in(closes, ma_now, stage_scan.MA_DAYS) is None
+    assert stage_scan.price_for_cross_in(closes, ma_now, 0) is None
+
+
+def test_days_to_cross_counts_the_roll_off_of_old_bars() -> None:
+    """150봉이 전부 200원이고 현재가가 100원이면 하루에 (100-200)/150씩 내려온다."""
+    closes = [200.0] * stage_scan.MA_DAYS
+    ma_now = 200.0
+
+    assert stage_scan.days_to_cross(closes, ma_now, 100.0) == 150
+
+
+def test_days_to_cross_handles_price_above_the_moving_average() -> None:
+    closes = [100.0] * stage_scan.MA_DAYS
+    ma_now = 100.0
+
+    # 주가가 위에 있으면 이평선이 올라와 닿는 날을 센다
+    assert stage_scan.days_to_cross(closes, ma_now, 200.0) == 150
+
+
+def test_project_labels_the_direction_from_the_price_position() -> None:
+    below = stage_scan.project(_bars(DOWNTREND))
+    above = stage_scan.project(_bars(UPTREND))
+
+    assert below["below"] is True and "2단계 진입" in below["direction"]
+    assert above["below"] is False and "4단계 전환" in above["direction"]
+    assert below["targets"] and below["dropouts"]
+
+
+def test_analyze_does_not_include_a_projection_by_default() -> None:
+    """전망은 --project를 줬을 때만 붙는다. 기본 판정은 가정 없는 사실만 담는다."""
+    assert "projection" not in _analyze(UPTREND)
+
+
 # --- siseJson 파싱 ---------------------------------------------------------
 
 
