@@ -20,7 +20,12 @@ output/
 .DS_Store
 
 # Environment variables
-.env
+.env*
+!.env.example
 
 # IDE
 .vscode/
+
+# Agent-local (previously ignored only via machine-global git config)
+.claude/settings.local.json
+.claude/RESUME.md
