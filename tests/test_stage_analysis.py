@@ -151,6 +151,37 @@ def test_below_falling_ma_is_stage_four_even_when_swing_disagrees() -> None:
     assert any("어긋난다" in r for r in verdict["reasons"])
 
 
+def test_stage_two_warning_separates_late_stage_from_early_stage() -> None:
+    """기울기가 어긋난 방향이 후반부와 초입부를 가른다.
+
+    평탄 = 상승세가 식은 2단계 후반, 하락 = 바닥에서 갓 올라탄 2단계 초입.
+    두 경우를 같은 문구로 묶으면 매수·매도 방향이 반대로 읽힌다.
+    """
+    flat = stage_scan.classify(
+        _price("위", "평탄", "혼조", "상단", 12_000), {}, _growth(), 12_000
+    )
+    falling = stage_scan.classify(
+        _price("위", "하락", "혼조", "중단", 12_000), {}, _growth(), 12_000
+    )
+
+    assert any("2단계 후반" in r for r in flat["reasons"])
+    assert not any("초입" in r for r in flat["reasons"])
+    assert any("2단계 초입" in r for r in falling["reasons"])
+    assert not any("후반이거나 3단계" in r for r in falling["reasons"])
+
+
+def test_stage_four_warning_separates_late_stage_from_early_stage() -> None:
+    flat = stage_scan.classify(
+        _price("아래", "평탄", "혼조", "하단", 7_000), {}, _growth(), 7_000
+    )
+    rising = stage_scan.classify(
+        _price("아래", "상승", "혼조", "중단", 7_000), {}, _growth(), 7_000
+    )
+
+    assert any("4단계 후반" in r for r in flat["reasons"])
+    assert any("4단계 초입" in r for r in rising["reasons"])
+
+
 def test_above_flat_ma_is_stage_two_not_stage_one() -> None:
     """주가가 150일선 위에 붙어 있으면 1·3단계 후보가 아니다.
 

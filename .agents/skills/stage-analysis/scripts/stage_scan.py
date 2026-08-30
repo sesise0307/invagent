@@ -349,13 +349,26 @@ def classify(price: dict, cyclical: dict, growth: dict, close: float) -> dict:
             stage = 3 if price["long_trend_up"] else 1
         reasons.append(f"가격 축 혼재 ({axis}) → 52주 밴드 {band}권 기준 {stage}단계")
 
-    if stage == 2 and slope != "상승":
+    # 기울기가 단계와 어긋날 때, **어긋난 방향에 따라 뜻이 정반대다.**
+    # 주가가 위인데 이평선이 평탄 = 상승세가 식은 후반부. 이평선이 아직 하락 = 바닥에서 갓
+    # 올라탄 초입부. 하나의 문구로 뭉뚱그리면 후반과 초입을 뒤바꿔 읽게 된다.
+    if stage == 2 and slope == "평탄":
         reasons.append(
-            f"⚠️ 150일선 기울기 {slope} — 2단계 후반이거나 3단계로 이행 중일 수 있다"
+            "⚠️ 150일선 기울기 평탄 — 상승세가 식은 2단계 후반이거나 3단계 이행 구간일 수 있다"
         )
-    if stage == 4 and slope != "하락":
+    elif stage == 2 and slope == "하락":
         reasons.append(
-            f"⚠️ 150일선 기울기 {slope} — 4단계 초입이거나 1단계로 이행 중일 수 있다"
+            "⚠️ 150일선이 아직 하락 중 — 4단계 이후 바닥에서 갓 올라탄 1단계 후반~2단계 초입일 "
+            "수 있다. 이평선 상승 전환이 확인 조건이다"
+        )
+    if stage == 4 and slope == "평탄":
+        reasons.append(
+            "⚠️ 150일선 기울기 평탄 — 하락세가 멎은 4단계 후반이거나 1단계 이행 구간일 수 있다"
+        )
+    elif stage == 4 and slope == "상승":
+        reasons.append(
+            "⚠️ 150일선이 아직 상승 중 — 2·3단계에서 갓 이탈한 4단계 초입일 수 있다. "
+            "이평선 하락 전환이 확인 조건이다"
         )
     if (stage == 2 and swing == "낮아짐") or (stage == 4 and swing == "높아짐"):
         reasons.append(f"⚠️ 스윙({swing})이 단계와 어긋난다 — 확신도 하향, 전환 신호일 수 있다")
