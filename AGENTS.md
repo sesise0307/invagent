@@ -19,9 +19,10 @@ CLI entry point is `src/invagent/cli.py`. Tests mirror the package in `tests/`.
 Runtime outputs go to `output/`, reusable templates to `template/`, reference
 context to `context/`, and design notes to `docs/`. Curated reference files in
 `context/` are checked into the repository: `context/my_rules.md` holds the
-user's personal risk-management rules and `context/interested_stocks.md` holds
-the tracked holdings list. Skills read `context/my_rules.md` directly, so keep
-the rule numbering stable.
+user's personal risk-management rules, `context/interested_stocks.md` holds the
+tracked holdings list, and `context/ticker_overrides.md` pins stock names to
+tickers the StockEasy search cannot resolve. Skills read `context/my_rules.md`
+directly, so keep the rule numbering stable.
 
 The `analyze-stock` skill reads the local analyst-report archive at
 `~/1_Investment/리포트/<초성>/<종목명>/` (PDF only, outside this repository). Override
@@ -135,6 +136,29 @@ snapshot in `output/portfolio/<yyyy-mm-dd>.md`. `analyze-stock` and `advice` rea
 the latest snapshot instead of re-fetching the sheet. `output/` is gitignored, so
 portfolio data never enters the repository.
 
+`extract_portfolio.py` grades holdings on the **average-cost** axis only, so a
+position that ran up and then rolled over stays silent while it is still in
+profit. `.agents/skills/summarize-telegram/scripts/peak_drawdown.py` adds the
+**peak** axis: it reads the snapshot that script just wrote, computes each
+holding's drawdown from its highest close over the last 250 trading days, and
+flags the -10 / -15 / -20 / -30% bands that map to 「매매규칙 3·15」. The same run
+derives the account MDD of 「기본 원칙 13」 from the balance line of every past
+snapshot in `output/portfolio/`, noting that this peak covers only the snapshot
+window and is not adjusted for deposits or withdrawals. `--append` writes the
+result back into the snapshot, replacing its own section so reruns stay
+idempotent. Daily bars come from the same unauthenticated Naver `siseJson`
+endpoint as `stage-analysis`, reusing its `fetch_bars`, and ticker resolution
+reuses `analyze-stock`'s `resolve_stock` — neither is reimplemented. The peak
+window and the band list are this skill's own operating choices and live as
+constants at the top of the script; the band-to-rule mapping is documented in
+`summarize-telegram/SKILL.md` step 1-3-1, and the two must change together.
+Because the -15% band is measured from the peak while 「매매규칙 6」's -15% is
+measured from average cost, the skill is required to keep the two axes apart.
+Names the StockEasy search cannot resolve (a new listing, or a sheet label that
+differs from the official name) are pinned in the tracked
+`context/ticker_overrides.md` as `종목명 = <6-digit code>` lines, which the script
+consults before the API.
+
 Canonical project skills live in `.agents/skills/`: `advice`, `analyze-stock`,
 `monthly-investment-review`, `opendart`, `stage-analysis`, and
 `summarize-telegram`. Each `.claude/skills/<name>` is a symlink to the canonical
@@ -212,4 +236,5 @@ excludes `output/`, `.env*` (except `.env.example`), `docs/superpowers/`,
 under a path that is already covered rather than in a fresh tracked directory.
 Treat `context/` as local working data unless it is intentionally curated for the
 repository;
-`context/my_rules.md` and `context/interested_stocks.md` are curated and tracked.
+`context/my_rules.md`, `context/interested_stocks.md`, and
+`context/ticker_overrides.md` are curated and tracked.

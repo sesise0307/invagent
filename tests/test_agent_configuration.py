@@ -1164,3 +1164,234 @@ def test_find_mentions_since_filter(tmp_path: Path) -> None:
 
     assert all(hit.date >= "2026-08-01" for hit in result.all_hits)
     assert result.theme_hits and len(result.theme_hits) == 1
+
+
+# --- peak_drawdown.py (전고점 낙폭 · 계좌 MDD) --------------------------------
+
+PEAK_SNAPSHOT = """# 포트폴리오 스냅샷 — 2026-08-28
+
+> 출처: Google Sheets '주식 포트폴리오' / 「포트폴리오」 시트 · 수집 2026-08-28T21:03:43
+> 잔고 ₩90,000,000 · 총손익 ₩10,000,000 · 투자금 ₩80,000,000 · 수익률 12.50%
+
+## 보유 (2종목 + 현금)
+
+| 종목 | 섹터 | 보유 | 평단 | 현재가 | 수익률 | 비중 | 평가금액 | 투자 아이디어 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| _현금 | 현금 | 1 | ₩9,000,000 | ₩9,000,000 | 0.00% | 10.0% | ₩9,000,000 | 현금도 종목이다 |
+| 알파전자 | 반도체 | 100 | ₩50,000 | ₩70,000 | 40.00% | 40.0% | ₩36,000,000 | 슈퍼사이클 |
+| 베타파마 | 바이오 | 200 | ₩60,000 | ₩50,000 | -16.67% | 50.0% | ₩45,000,000 | 임상 |
+
+## 룰 자동 판정
+
+- 매매규칙 6(-15% 손절): 베타파마 -16.67% (비중 50.0%) ← **위반**
+"""
+
+
+def _load_peak_drawdown_module():
+    script_path = SKILLS_ROOT / "summarize-telegram" / "scripts" / "peak_drawdown.py"
+    spec = importlib.util.spec_from_file_location("peak_drawdown", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _bars(closes: list[tuple[str, float]]) -> list[dict]:
+    return [
+        {"date": d, "open": c, "high": c, "low": c, "close": c, "volume": 1.0}
+        for d, c in closes
+    ]
+
+
+@pytest.mark.parametrize(
+    ("drawdown", "expected"),
+    [
+        (0.0, None),
+        (-9.9, None),
+        (-10.0, -10.0),
+        (-14.9, -10.0),
+        (-15.0, -15.0),
+        (-20.0, -20.0),
+        (-29.9, -20.0),
+        (-30.5, -30.0),
+        (None, None),
+    ],
+)
+def test_peak_drawdown_bands_take_the_deepest_hit(drawdown, expected) -> None:
+    module = _load_peak_drawdown_module()
+
+    assert module.band_for(drawdown) == expected
+
+
+def test_peak_drawdown_band_survives_float_boundary() -> None:
+    """90,000/100,000-1 = -9.999999999999998 — 표에 -10.0%로 찍히면 밴드도 걸려야 한다."""
+    module = _load_peak_drawdown_module()
+    result = module.peak_drawdown(
+        _bars([("20260601", 100_000.0), ("20260828", 90_000.0)])
+    )
+
+    assert f"{result['drawdown']:+.1f}%" == "-10.0%"
+    assert module.band_for(result["drawdown"]) == -10.0
+
+
+def test_peak_drawdown_parses_holdings_and_drops_cash() -> None:
+    module = _load_peak_drawdown_module()
+
+    holdings = module.parse_holdings(PEAK_SNAPSHOT)
+
+    assert [h["종목"] for h in holdings] == ["알파전자", "베타파마"]
+    assert holdings[0]["수익률"] == "40.00%" and holdings[0]["비중"] == "40.0%"
+    assert module.parse_balance(PEAK_SNAPSHOT) == 90_000_000.0
+
+
+def test_peak_is_highest_close_in_window_with_its_date() -> None:
+    module = _load_peak_drawdown_module()
+    # 창(250거래일) 밖의 더 높은 종가는 전고점으로 잡히지 않는다
+    old = [(f"2024{i:04d}", 999_000.0) for i in range(1, 3)]
+    window = [("20260101", 80_000.0), ("20260615", 100_000.0), ("20260828", 70_000.0)]
+
+    result = module.peak_drawdown(_bars(old + window * 100)[-module.PEAK_WINDOW_DAYS:])
+
+    assert result["peak"] == 100_000.0
+    assert result["peak_date"] == "20260615"
+    assert result["close"] == 70_000.0
+    assert result["drawdown"] == pytest.approx(-30.0)
+
+
+def test_peak_drawdown_unresolved_ticker_does_not_block_others(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_peak_drawdown_module()
+    monkeypatch.setattr(
+        module.si_api,
+        "resolve_stock",
+        lambda name: (
+            ({"stock_code": "000660"}, None, 0)
+            if name == "알파전자"
+            else (None, "종목 검색 결과 없음", 1)
+        ),
+    )
+    monkeypatch.setattr(
+        module.stage_scan,
+        "fetch_bars",
+        lambda code, days: (_bars([("20260601", 100_000.0), ("20260828", 60_000.0)]), None),
+    )
+
+    results = module.analyze_holdings(module.parse_holdings(PEAK_SNAPSHOT), {})
+
+    assert results[0]["band"] == -30.0 and results[0]["drawdown"] == pytest.approx(-40.0)
+    assert "티커 미해석" in results[1]["error"]
+    section = module.render(results, {"error": "잔고 이력 없음"})
+    assert "베타파마(티커 미해석" in section
+    assert "ticker_overrides.md" in section
+
+
+def test_peak_drawdown_overrides_win_over_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_peak_drawdown_module()
+    monkeypatch.setattr(
+        module.si_api, "resolve_stock", lambda name: ({"stock_code": "999999"}, None, 0)
+    )
+
+    assert module.resolve_code("알파전자", {"알파전자": "000660"}) == ("000660", None)
+    assert module.resolve_code("베타파마", {}) == ("999999", None)
+
+
+def test_peak_drawdown_overrides_file_ignores_comments(tmp_path: Path) -> None:
+    module = _load_peak_drawdown_module()
+    path = tmp_path / "ticker_overrides.md"
+    path.write_text(
+        "# 티커 오버라이드\n> 설명 줄\n- 불릿 줄\n\n알파전자 = 000660   # 표기 오타\n베타파마 = bad\n",
+        encoding="utf-8",
+    )
+
+    assert module.load_overrides(path) == {"알파전자": "000660"}
+
+
+def test_peak_drawdown_fetch_failure_is_non_blocking(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_peak_drawdown_module()
+    monkeypatch.setattr(
+        module.si_api, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+    )
+    monkeypatch.setattr(module.stage_scan, "fetch_bars", lambda code, days: ([], "HTTP 500"))
+
+    results = module.analyze_holdings(module.parse_holdings(PEAK_SNAPSHOT), {})
+
+    assert all("시세 수집 실패 — HTTP 500" in r["error"] for r in results)
+    assert "전고점 낙폭 판정: 해당 없음" in module.render(results, {"error": "잔고 이력 없음"})
+
+
+def test_account_mdd_uses_snapshot_balance_peak(tmp_path: Path) -> None:
+    module = _load_peak_drawdown_module()
+    for day, balance in (("2026-08-20", 100_000_000), ("2026-08-25", 95_000_000)):
+        (tmp_path / f"{day}.md").write_text(f"> 잔고 ₩{balance:,} · 수익률 1.00%\n", encoding="utf-8")
+
+    account = module.account_mdd(tmp_path, 88_000_000.0, "2026-08-28")
+
+    assert account["peak"] == 100_000_000.0 and account["peak_date"] == "2026-08-20"
+    assert account["mdd"] == pytest.approx(-12.0)
+    assert account["band"] == -10.0
+    rendered = module.render([], account)
+    assert "계좌 MDD(「기본 원칙 13」)" in rendered
+    assert "-12.0% ← **발동 (-10%)**" in rendered
+    assert "입출금을 보정하지 않는다" in rendered
+
+
+def test_peak_drawdown_append_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load_peak_drawdown_module()
+    monkeypatch.setattr(
+        module.si_api, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+    )
+    monkeypatch.setattr(
+        module.stage_scan,
+        "fetch_bars",
+        lambda code, days: (_bars([("20260601", 100_000.0), ("20260828", 90_000.0)]), None),
+    )
+    snapshot = tmp_path / "2026-08-28.md"
+    snapshot.write_text(PEAK_SNAPSHOT, encoding="utf-8")
+
+    assert module.main([str(snapshot), "--append"]) == 0
+    assert module.main([str(snapshot), "--append"]) == 0
+    capsys.readouterr()
+
+    text = snapshot.read_text(encoding="utf-8")
+    assert text.count(module.SECTION_TITLE) == 1
+    # 기존 룰 자동 판정 섹션은 그대로 남는다
+    assert "매매규칙 6(-15% 손절)" in text
+    assert "🟡 -10%" in text
+
+
+def test_peak_drawdown_exits_1_on_unparsable_snapshot(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load_peak_drawdown_module()
+    broken = tmp_path / "2026-08-28.md"
+    broken.write_text("# 스냅샷\n\n표가 없다\n", encoding="utf-8")
+
+    assert module.main([str(broken)]) == 1
+    assert "스냅샷 파싱 실패" in capsys.readouterr().err
+
+
+def test_summarize_telegram_documents_peak_drawdown_step() -> None:
+    skill = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "### 1-3-1단계: 전고점 낙폭·계좌 MDD 판정" in skill
+    assert "peak_drawdown.py" in skill
+    # 밴드 4개와 룰 매핑이 모두 문서화돼 있어야 한다
+    for band in ("-10%", "-15%", "-20%", "-30%"):
+        assert band in skill
+    assert "매매규칙 3(추세 기반 매도)" in skill
+    assert "매매규칙 15" in skill
+    assert "기본 원칙 13" in skill
+    # 평단 축과 고점 축을 섞지 말라는 경고
+    assert "평단 기준 룰과 다른 축이다" in skill
+    assert "ticker_overrides.md" in skill
+
+
+def test_peak_drawdown_thresholds_match_documented_bands() -> None:
+    module = _load_peak_drawdown_module()
+
+    assert module.PEAK_WINDOW_DAYS == 250
+    assert module.DRAWDOWN_BANDS == (-10.0, -15.0, -20.0, -30.0)
+    assert module.ACCOUNT_MDD_BANDS == (-10.0, -15.0)
