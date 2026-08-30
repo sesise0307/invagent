@@ -6,8 +6,11 @@ URL 추출 및 내용 fetch 기능을 담당하는 LinkExtractor 클래스.
 
 import asyncio
 import functools
+import ipaddress
 import re
+import socket
 from typing import Optional
+from urllib.parse import urljoin, urlparse
 
 try:
     import requests
@@ -33,6 +36,60 @@ TELEGRAM_URL_PATTERN = re.compile(
     r'(?<!\S)t\.me/[^\s\)]*',    # t.me/ 링크 (단어 경계)
     re.IGNORECASE
 )
+
+# fetch 대상 URL은 텔레그램 메시지 본문에서 나온다. 즉 신뢰할 수 없는 입력이므로
+# 그대로 요청하면 SSRF다. http/https 외의 스킴과 비공개 대역(루프백, 사설망,
+# 링크로컬 169.254.169.254 클라우드 메타데이터 포함)을 차단하고, 응답 크기에도
+# 상한을 둔다.
+ALLOWED_SCHEMES = ("http", "https")
+MAX_REDIRECTS = 3
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+
+
+class BlockedURLError(ValueError):
+    """공개 인터넷 대상이 아니어서 요청을 거부한 URL."""
+
+
+def normalize_url(url: str) -> str:
+    """스킴이 빠진 `www.example.com` 형태에 https를 붙인다."""
+    stripped = url.strip()
+    return stripped if "://" in stripped else "https://" + stripped
+
+
+def assert_public_url(url: str) -> None:
+    """공개 인터넷 주소가 아니면 `BlockedURLError`를 던진다.
+
+    호스트명을 직접 해석해 확인하므로 `http://intranet.example.com/`처럼 이름은
+    평범하지만 사설 IP를 가리키는 경우도 걸러진다. 요청 시점의 재해석까지
+    막지는 못하지만(TOCTOU), 리터럴 내부 주소·내부를 가리키는 이름·내부로
+    향하는 리다이렉트라는 실제 공격 경로는 모두 닫는다.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ALLOWED_SCHEMES:
+        raise BlockedURLError(f"허용되지 않는 스킴: {parsed.scheme or '없음'}")
+
+    host = parsed.hostname
+    if not host:
+        raise BlockedURLError("호스트가 없는 URL")
+
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError as exc:  # 포트 자리에 숫자가 아닌 값
+        raise BlockedURLError("포트가 잘못된 URL") from exc
+
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise BlockedURLError(f"이름 해석 실패: {host}") from exc
+
+    for info in infos:
+        raw = info[4][0].split("%", 1)[0]  # IPv6 scope id 제거
+        try:
+            address = ipaddress.ip_address(raw)
+        except ValueError as exc:
+            raise BlockedURLError(f"주소 해석 실패: {raw}") from exc
+        if not address.is_global:
+            raise BlockedURLError(f"공개 대역이 아님: {host} -> {address}")
 
 
 class LinkExtractor:
@@ -63,7 +120,9 @@ class LinkExtractor:
         config = deepcopy(DEFAULT_CONFIG)
         config["DEFAULT"]["DOWNLOAD_TIMEOUT"] = str(timeout)
         config["DEFAULT"]["SLEEP_TIME"] = "0"
-        config["DEFAULT"]["MAX_REDIRECTS"] = "2"
+        # trafilatura의 리다이렉트는 목적지를 재검사할 방법이 없어 SSRF 우회로가 된다.
+        # 리다이렉트가 걸린 URL은 홉마다 검사하는 `_fetch_sync` fallback이 처리한다.
+        config["DEFAULT"]["MAX_REDIRECTS"] = "0"
         return config
 
     @staticmethod
@@ -121,11 +180,17 @@ class LinkExtractor:
             return ""
 
         try:
+            target = normalize_url(url)
+            assert_public_url(target)
+        except BlockedURLError as e:
+            return f"[차단된 URL: {e}]"
+
+        try:
             # 1차: trafilatura로 본문 추출
             loop = asyncio.get_running_loop()
             downloaded = await loop.run_in_executor(
                 None,
-                functools.partial(trafilatura.fetch_url, url, config=self._trafilatura_config),
+                functools.partial(trafilatura.fetch_url, target, config=self._trafilatura_config),
             )
             if downloaded:
                 text = trafilatura.extract(
@@ -140,17 +205,12 @@ class LinkExtractor:
                         return stripped[:1500] + ("..." if len(stripped) > 1500 else "")
 
             # 2차 fallback: BeautifulSoup
-            response = await loop.run_in_executor(None, self._fetch_sync, url)
+            status_code, html = await loop.run_in_executor(None, self._fetch_sync, target)
 
-            if response is None:
-                return "[링크 읽기 실패]"
+            if status_code != 200:
+                return f"[링크 읽기 실패: HTTP {status_code}]"
 
-            response.encoding = "utf-8"
-
-            if response.status_code != 200:
-                return f"[링크 읽기 실패: HTTP {response.status_code}]"
-
-            soup = BeautifulSoup(response.text, "html.parser")
+            soup = BeautifulSoup(html, "html.parser")
 
             # 제목 추출 (meta 제거 전에)
             title = ""
@@ -202,6 +262,8 @@ class LinkExtractor:
 
             return result if result else "[내용을 읽을 수 없습니다]"
 
+        except BlockedURLError as e:
+            return f"[차단된 URL: {e}]"
         except requests.exceptions.Timeout:
             return "[링크 읽기 타임아웃]"
         except requests.exceptions.ConnectionError:
@@ -209,28 +271,66 @@ class LinkExtractor:
         except Exception as e:
             return f"[링크 읽기 오류: {str(e)[:50]}]"
 
-    def _fetch_sync(self, url: str) -> Optional["requests.Response"]:
+    def _fetch_sync(self, url: str) -> tuple[int, str]:
         """
         동기 HTTP GET 요청을 수행합니다.
 
         이 메서드는 asyncio.run_in_executor에서 호출됩니다.
 
+        리다이렉트를 requests에 맡기지 않고 직접 따라가며 홉마다
+        `assert_public_url`을 다시 건다. 최종 목적지만 검사하면 공개 주소로
+        시작해 내부 주소로 넘기는 리다이렉트를 막을 수 없다.
+
         Args:
-            url: 요청할 URL
+            url: 요청할 URL (호출 전에 이미 1회 검증된 상태)
 
         Returns:
-            requests.Response 객체 또는 None
+            (HTTP 상태코드, 본문 텍스트) 튜플
+
+        Raises:
+            BlockedURLError: 리다이렉트 목적지가 비공개 대역이거나 홉 한도 초과
         """
         headers = {
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
                          'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
-        return requests.get(
-            url,
-            headers=headers,
-            timeout=self.timeout,
-            allow_redirects=True
-        )
+        current = url
+        for _ in range(MAX_REDIRECTS + 1):
+            assert_public_url(current)
+            response = requests.get(
+                current,
+                headers=headers,
+                timeout=self.timeout,
+                allow_redirects=False,
+                stream=True,
+            )
+            location = response.headers.get("Location")
+            if 300 <= response.status_code < 400 and location:
+                response.close()
+                current = urljoin(current, location)
+                continue
+            return response.status_code, self._read_capped(response)
+
+        raise BlockedURLError(f"리다이렉트 {MAX_REDIRECTS}회 초과")
+
+    @staticmethod
+    def _read_capped(response: "requests.Response") -> str:
+        """응답 본문을 `MAX_RESPONSE_BYTES`까지만 읽어 문자열로 만든다.
+
+        본문 전체를 메모리에 올리면 거대한 응답 하나로 수집이 멈춘다. 어차피
+        뒤에서 1500자로 자르므로 앞부분만 있으면 충분하다.
+        """
+        chunks: list[bytes] = []
+        size = 0
+        for chunk in response.iter_content(chunk_size=65536):
+            if not chunk:
+                continue
+            chunks.append(chunk)
+            size += len(chunk)
+            if size >= MAX_RESPONSE_BYTES:
+                break
+        response.close()
+        return b"".join(chunks)[:MAX_RESPONSE_BYTES].decode("utf-8", errors="replace")
 
     async def _fetch_content_bounded(self, url: str) -> str:
         """`fetch_content`를 hard_timeout으로 감싼다.

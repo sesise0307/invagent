@@ -1,6 +1,36 @@
+import socket
+
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
-from invagent.telegram.link_extractor import LinkExtractor
+from unittest.mock import patch, MagicMock
+from invagent.telegram.link_extractor import (
+    BlockedURLError,
+    LinkExtractor,
+    assert_public_url,
+    normalize_url,
+)
+
+
+def fake_response(status_code=200, body="", location=None):
+    """`_fetch_sync`가 기대하는 스트리밍 응답을 흉내낸다."""
+    response = MagicMock()
+    response.status_code = status_code
+    response.headers = {"Location": location} if location else {}
+    response.iter_content.return_value = iter([body.encode("utf-8")])
+    return response
+
+
+@pytest.fixture
+def public_dns():
+    """모든 호스트명이 공개 IP로 해석되게 만든다 (테스트에서 실제 DNS 금지)."""
+    resolved = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+    with patch("invagent.telegram.link_extractor.socket.getaddrinfo", return_value=resolved):
+        yield
+
+
+def private_dns(ip):
+    """호스트명이 주어진 사설/내부 IP로 해석되게 만드는 패치 컨텍스트."""
+    resolved = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 443))]
+    return patch("invagent.telegram.link_extractor.socket.getaddrinfo", return_value=resolved)
 
 
 def test_extract_urls_basic():
@@ -46,17 +76,15 @@ def test_extract_urls_empty_text():
 
 
 @pytest.mark.asyncio
-async def test_fetch_content_success():
+async def test_fetch_content_success(public_dns):
     """URL 내용 정상 추출"""
     extractor = LinkExtractor()
 
     with patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value=None), \
          patch("invagent.telegram.link_extractor.requests.get") as mock_get:
-        mock_response = AsyncMock()
-        mock_response.status_code = 200
-        mock_response.text = "<html><head><title>Test Page</title></head><body><p>Content here</p></body></html>"
-        mock_response.encoding = 'utf-8'
-        mock_get.return_value = mock_response
+        mock_get.return_value = fake_response(
+            body="<html><head><title>Test Page</title></head><body><p>Content here</p></body></html>"
+        )
 
         content = await extractor.fetch_content("https://example.com")
 
@@ -65,7 +93,7 @@ async def test_fetch_content_success():
 
 
 @pytest.mark.asyncio
-async def test_fetch_content_timeout():
+async def test_fetch_content_timeout(public_dns):
     """URL 타임아웃 처리"""
     extractor = LinkExtractor()
 
@@ -80,7 +108,7 @@ async def test_fetch_content_timeout():
 
 
 @pytest.mark.asyncio
-async def test_fetch_content_uses_trafilatura():
+async def test_fetch_content_uses_trafilatura(public_dns):
     """trafilatura로 본문 추출 성공"""
     extractor = LinkExtractor()
 
@@ -95,7 +123,7 @@ async def test_fetch_content_uses_trafilatura():
 
 
 @pytest.mark.asyncio
-async def test_fetch_content_falls_back_to_bs4_when_trafilatura_returns_none():
+async def test_fetch_content_falls_back_to_bs4_when_trafilatura_returns_none(public_dns):
     """trafilatura가 None 반환 시 BeautifulSoup fallback"""
     extractor = LinkExtractor()
 
@@ -105,11 +133,9 @@ async def test_fetch_content_falls_back_to_bs4_when_trafilatura_returns_none():
         mock_fetch.return_value = "<html></html>"
         mock_extract.return_value = None
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.text = "<html><head><title>Fallback Page</title></head><body><p>fallback content</p></body></html>"
-        mock_response.encoding = "utf-8"
-        mock_get.return_value = mock_response
+        mock_get.return_value = fake_response(
+            body="<html><head><title>Fallback Page</title></head><body><p>fallback content</p></body></html>"
+        )
 
         content = await extractor.fetch_content("https://example.com")
 
@@ -118,7 +144,7 @@ async def test_fetch_content_falls_back_to_bs4_when_trafilatura_returns_none():
 
 
 @pytest.mark.asyncio
-async def test_fetch_content_long_content_not_truncated_at_300():
+async def test_fetch_content_long_content_not_truncated_at_300(public_dns):
     """1500자까지 내용 반환"""
     extractor = LinkExtractor()
     long_text = "가" * 1000
@@ -183,3 +209,153 @@ def test_trafilatura_config_has_explicit_download_timeout():
 
     assert extractor._trafilatura_config["DEFAULT"]["DOWNLOAD_TIMEOUT"] == "7"
     assert extractor.hard_timeout == 21
+
+
+def test_trafilatura_config_disables_redirects():
+    """trafilatura 리다이렉트는 목적지 재검사가 불가능하므로 막는다"""
+    extractor = LinkExtractor()
+
+    assert extractor._trafilatura_config["DEFAULT"]["MAX_REDIRECTS"] == "0"
+
+
+def test_normalize_url_adds_https_to_schemeless_host():
+    """`www.` 형태는 스킴이 없으므로 https를 붙인다"""
+    assert normalize_url("www.example.com/a") == "https://www.example.com/a"
+    assert normalize_url("https://example.com") == "https://example.com"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd",
+        "ftp://example.com/x",
+        "gopher://example.com/",
+        "https://",
+    ],
+)
+def test_assert_public_url_rejects_non_http_schemes_and_hostless(url):
+    """http/https가 아니거나 호스트가 없는 URL은 거부된다"""
+    with pytest.raises(BlockedURLError):
+        assert_public_url(url)
+
+
+@pytest.mark.parametrize(
+    "ip",
+    [
+        "127.0.0.1",       # loopback
+        "10.0.0.5",        # 사설
+        "192.168.1.1",     # 사설
+        "172.16.0.1",      # 사설
+        "169.254.169.254", # 클라우드 메타데이터
+        "0.0.0.0",         # unspecified
+    ],
+)
+def test_assert_public_url_rejects_internal_addresses(ip):
+    """이름이 내부 주소로 해석되면 거부된다 (리터럴 IP·평범한 호스트명 모두)"""
+    with private_dns(ip):
+        with pytest.raises(BlockedURLError):
+            assert_public_url(f"http://{ip}/")
+        with pytest.raises(BlockedURLError):
+            assert_public_url("http://intranet.example.com/")
+
+
+def test_assert_public_url_allows_public_address(public_dns):
+    """공개 대역으로 해석되는 주소는 통과한다"""
+    assert_public_url("https://example.com/path")
+
+
+def test_assert_public_url_rejects_unresolvable_host():
+    """이름 해석 실패는 거부로 처리한다"""
+    with patch(
+        "invagent.telegram.link_extractor.socket.getaddrinfo",
+        side_effect=socket.gaierror("no such host"),
+    ):
+        with pytest.raises(BlockedURLError):
+            assert_public_url("https://nonexistent.invalid/")
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_blocks_internal_url_without_requesting():
+    """내부 주소는 trafilatura·requests 어느 쪽도 호출하지 않고 차단된다"""
+    extractor = LinkExtractor()
+
+    with private_dns("169.254.169.254"), \
+         patch("invagent.telegram.link_extractor.trafilatura.fetch_url") as mock_fetch, \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        content = await extractor.fetch_content("http://169.254.169.254/latest/meta-data/")
+
+    assert content.startswith("[차단된 URL")
+    mock_fetch.assert_not_called()
+    mock_get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_blocks_redirect_into_internal_network():
+    """공개 주소에서 내부 주소로 넘기는 리다이렉트도 홉에서 차단된다"""
+    extractor = LinkExtractor()
+    resolved = {
+        "evil.example.com": "93.184.216.34",
+        "169.254.169.254": "169.254.169.254",
+    }
+
+    def resolve(host, port, **kwargs):
+        ip = resolved[host]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))]
+
+    with patch("invagent.telegram.link_extractor.socket.getaddrinfo", side_effect=resolve), \
+         patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value=None), \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        mock_get.return_value = fake_response(
+            status_code=302, location="http://169.254.169.254/latest/meta-data/"
+        )
+
+        content = await extractor.fetch_content("https://evil.example.com/redirect")
+
+    assert content.startswith("[차단된 URL")
+    assert mock_get.call_count == 1  # 첫 홉만 나가고 두 번째는 막힌다
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_follows_public_redirect(public_dns):
+    """공개 주소로 향하는 리다이렉트는 정상적으로 따라간다"""
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value=None), \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        mock_get.side_effect = [
+            fake_response(status_code=301, location="https://example.org/final"),
+            fake_response(body="<html><head><title>Final Page</title></head></html>"),
+        ]
+
+        content = await extractor.fetch_content("https://example.com/start")
+
+    assert "Final Page" in content
+    assert mock_get.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_stops_after_redirect_limit(public_dns):
+    """리다이렉트 루프는 홉 한도에서 끊긴다"""
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value=None), \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        mock_get.return_value = fake_response(status_code=302, location="https://example.com/loop")
+
+        content = await extractor.fetch_content("https://example.com/loop")
+
+    assert content.startswith("[차단된 URL")
+    assert mock_get.call_count == 4  # MAX_REDIRECTS(3) + 1
+
+
+def test_read_capped_stops_at_max_response_bytes():
+    """응답 본문은 상한까지만 읽고 스트림을 닫는다"""
+    from invagent.telegram.link_extractor import MAX_RESPONSE_BYTES
+
+    response = MagicMock()
+    response.iter_content.return_value = iter([b"a" * 65536] * 1000)
+
+    body = LinkExtractor._read_capped(response)
+
+    assert len(body) == MAX_RESPONSE_BYTES
+    response.close.assert_called_once()
