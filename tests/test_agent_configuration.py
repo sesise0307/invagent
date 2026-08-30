@@ -127,6 +127,41 @@ def test_analyze_stock_wires_detected_signals_to_user_rules() -> None:
     assert "확신도 판정" in content
 
 
+def test_analyze_stock_checks_overhang_before_entry() -> None:
+    """5-1단계 오버행·수급 점검이 필수 수집이고 10단계 진입 게이트까지 배선돼야 한다."""
+    skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "### 5-1단계 — 오버행 · 수급 점검 (필수)" in skill
+    # 물량 출처가 도구 이름으로 고정된다 — 웹 추측으로 대체하지 않는다.
+    for tool in ("dilutive_issuance", "treasury_share", "ownership_structure", "risk_events"):
+        assert tool in skill
+    # 크기 환산·일정·미확정 처리 3원칙.
+    assert "상장주식수 대비 %로 환산" in skill
+    assert "리픽싱" in skill
+    assert "회사채면 중립, 메자닌(CB·BW)이면 희석" in skill
+    # 스톡옵션 행사를 장내매수로 승격하지 않는다.
+    assert "스톡옵션 행사는 내부자 장내매수와 다르다" in skill
+    # 판정이 10단계 진입 게이트의 입력이 된다.
+    assert "오버행 게이트" in skill
+    assert "기본 원칙 5(교집합)" in skill
+    assert "`미수집`은 `해당 없음`이 아니다" in skill
+
+
+def test_stock_analysis_template_has_overhang_section() -> None:
+    """§6-A가 오버행 점검의 출력 정본이고 12섹션 구조를 깨지 않는다."""
+    template = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
+
+    assert "### 6-A. 오버행 · 수급 점검" in template
+    for row in ("CB · BW · 전환우선주", "보호예수 · 임원 락업", "대량보유(5%) 변동 · 블록딜"):
+        assert row in template
+    assert "상장주식수 대비" in template
+    assert "회사채(중립) / 메자닌(희석) / 미확정" in template
+    # 빈칸 대신 해당 없음/미수집을 강제한다.
+    assert "빈칸으로 두지 않는다" in template
+    # 미해소 판정은 §10 리스크로 이어진다.
+    assert "§6-A 오버행 판정이 `미해소`면" in template
+
+
 def test_stock_analysis_template_has_target_price_block() -> None:
     """§5가 목표주가 산정의 정본이고, 12섹션 구조는 유지된다."""
     content = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")

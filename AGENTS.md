@@ -115,6 +115,24 @@ effective stop width used for the reward/risk ratio and the 「기본 원칙 4�
 position cap. The calculation rules live in `analyze-stock/SKILL.md` step 9; the
 output layout lives in `template/stock_analysis.md` §5.
 
+`analyze-stock` step 5-1 is a mandatory overhang and share-supply check that gates
+entry, because a position whose thesis is right but whose supply is not breaks
+expensively, and finding the overhang after the buying is finished is an ordering
+failure rather than a stock-picking one. It pulls convertibles, rights issues and
+their refixing dates from OpenDART `dilutive_issuance`, large-holder and blockdeal
+moves from `ownership_structure`, buybacks from `treasury_share`, and lockup
+expiries from the StockEasy news pass, converts every block to a percentage of
+shares outstanding, and puts the dated ones on the §6 catalyst calendar as well.
+A funding method the company has left open ("internal reserves or external
+financing") stays 미확정 rather than 없음 — straight debt is neutral, mezzanine
+dilutes — and an insider's stock-option exercise is never promoted to the signal
+strength of an open-market purchase. The verdict line (해소 / 미해소 / 해당 없음)
+feeds the step 10 entry gate: 미해소 downgrades a buy call, caps it at the first
+분할 매수 tranche, and requires a dated confirmation point, since an unresolved
+funding method leaves the value leg of 「기본 원칙 5(교집합)」 empty. The check
+lives in `analyze-stock/SKILL.md` step 5-1; the output layout lives in
+`template/stock_analysis.md` §6-A.
+
 The `summarize-telegram` skill owns everything under `output/telegram-daily/`.
 `uv run invagent fetch-messages` writes the raw export to
 `raw/<yyyy-mm-dd>_raw.md`; the finished briefing goes to
