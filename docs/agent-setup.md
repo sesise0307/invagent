@@ -85,11 +85,13 @@ should print `200`).
 
 ## Verification
 
-In both clients, list available skills and confirm these four project skills:
+In both clients, list available skills and confirm these six project skills:
 
 - `advice`
+- `analyze-stock`
 - `monthly-investment-review`
 - `opendart`
+- `stage-analysis`
 - `summarize-telegram`
 
 Run repository checks with:

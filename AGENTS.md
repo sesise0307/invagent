@@ -114,14 +114,34 @@ effective stop width used for the reward/risk ratio and the 「기본 원칙 4�
 position cap. The calculation rules live in `analyze-stock/SKILL.md` step 9; the
 output layout lives in `template/stock_analysis.md` §5.
 
+The `summarize-telegram` skill owns everything under `output/telegram-daily/`.
+`uv run invagent fetch-messages` writes the raw export to
+`raw/<yyyy-mm-dd>_raw.md`; the finished briefing goes to
+`<yyyy-mm>/<yyyy-mm-dd>.md`, the rolling cross-day index to
+`monthly_context.md`, and the full text of each running theme to
+`themes/<slug>.md`, with sub-bullets older than 30 days rolled off to
+`themes/archive/`. The index and theme files are the accumulated memory that
+`analyze-stock` searches, so they are appended to and rolled off, never rewritten
+from scratch. At the end of a run the skill deletes every raw file except today's
+(`raw/` only, `-maxdepth 1`); nothing outside `raw/` is ever deleted. Market
+indices come from `.agents/skills/summarize-telegram/scripts/fetch_market_signals.py`,
+which calls the same StockEasy `stockdata/api/v1` host as `fetch_stock_info.py`.
+
 The Telegram daily briefing also reads the user's live holdings from the Google
 Sheets file `주식 포트폴리오` (sheet `포트폴리오`) through the Google Drive MCP
-connector, and stores a parsed snapshot in `output/portfolio/<yyyy-mm-dd>.md`.
-`output/` is gitignored, so portfolio data never enters the repository.
+connector, parses it with
+`.agents/skills/summarize-telegram/scripts/extract_portfolio.py`, and stores the
+snapshot in `output/portfolio/<yyyy-mm-dd>.md`. `analyze-stock` and `advice` read
+the latest snapshot instead of re-fetching the sheet. `output/` is gitignored, so
+portfolio data never enters the repository.
 
-Canonical project skills live in `.agents/skills/`. Each `.claude/skills/<name>`
-is a symlink to the canonical directory — edit the canonical files only. Every
-skill needs `SKILL.md` with `name`/`description` frontmatter and
+Canonical project skills live in `.agents/skills/`: `advice`, `analyze-stock`,
+`monthly-investment-review`, `opendart`, `stage-analysis`, and
+`summarize-telegram`. Each `.claude/skills/<name>` is a symlink to the canonical
+directory — edit the canonical files only. Client-side setup that cannot live in
+the repository (Codex plugins, the local OpenDART MCP server, Notion) is
+documented in `docs/agent-setup.md`; keep its skill list in sync when adding a
+skill. Every skill needs `SKILL.md` with `name`/`description` frontmatter and
 `agents/openai.yaml` with `display_name`, `short_description`, and its `$<name>`
 invocation. `tests/test_agent_configuration.py` enforces all of that and fails on
 any credential or `/Users/...` path committed under `.agents/skills/`.
@@ -134,6 +154,9 @@ Use `uv` for local development.
 - `uv run invagent --help`: inspect the CLI surface.
 - `uv run pytest -q`: run the full test suite.
 - `uv run pytest tests/test_cli.py -q`: run a focused test file.
+- `uv run pytest tests/test_agent_configuration.py -q`: check skill wiring,
+  skill-script behavior, and the credential/absolute-path guard after editing
+  anything under `.agents/skills/` or `template/`.
 - `uv run invagent fetch-messages --days 1`: manually verify message fetching.
 
 Analyst report PDFs are read straight through the agent's file-read tool, which
@@ -141,8 +164,12 @@ renders the pages — no local PDF toolchain needed. Past 10 pages the read need
 explicit page range (`analyze-stock/SKILL.md` step 4).
 
 Copy `.env.example` to `.env` for local configuration. Telegram commands require
-`TELEGRAM_API_ID` and `TELEGRAM_API_HASH`. OpenDART agent access requires private
-per-client MCP configuration; never put its credential in repository files.
+`TELEGRAM_API_ID` and `TELEGRAM_API_HASH`; `TELEGRAM_SESSION_PATH`,
+`INVAGENT_OUTPUT_DIR`, and `INVAGENT_DEFAULT_CHANNELS` override the defaults in
+`src/invagent/core/config.py`. Skills read `STOCKEASY_COOKIE` (StockEasy session)
+and `INVAGENT_REPORT_ARCHIVE` (analyst-PDF root) from the same file. OpenDART
+agent access requires private per-client MCP configuration; never put its
+credential in repository files.
 
 ## Coding and Testing Style
 
@@ -152,10 +179,25 @@ for functions, variables, and modules, and `PascalCase` for classes. Match exist
 Click patterns in `src/invagent/cli.py`. No formatter or linter is configured, so
 keep imports and surrounding style consistent.
 
+`src/invagent/telegram/link_extractor.py` fetches URLs that come out of saved
+Telegram messages, which is untrusted input, so it is the one place in the
+package exposed to SSRF. It allows only `http`/`https`, resolves the host and
+rejects every non-global address (loopback, private, link-local — including the
+`169.254.169.254` metadata address), follows redirects manually so each hop is
+re-validated (`MAX_REDIRECTS`), keeps trafilatura from following redirects of its
+own, and caps both response size (`MAX_RESPONSE_BYTES`) and per-URL wall time
+(`hard_timeout`). Keep those checks when changing the module, and add cases to
+`tests/test_telegram_link_extractor.py` for any new fetch path.
+
 Tests use `pytest` and `pytest-asyncio`. Add or update tests for every behavior
 change, especially CLI flows, configuration parsing, Telegram integrations, and
 stock tracking. Prefer small unit tests with mocks over live network calls. Name
-test modules `tests/test_<area>.py` and functions `test_<behavior>()`.
+test modules `tests/test_<area>.py` and functions `test_<behavior>()`. Skill
+behavior is covered by two files that call the skill scripts directly:
+`tests/test_agent_configuration.py` (skill wiring plus the script behavior that
+matters, against mocked HTTP payloads) and `tests/test_stage_analysis.py` (stage
+grading, against synthetic price series). Keep their assertions about documented
+thresholds and output rules in step with the SKILL.md files they mirror.
 
 ## Git and Security
 
@@ -164,6 +206,10 @@ should summarize behavior, configuration or output-path changes, related issues,
 and user-facing CLI examples where applicable.
 
 Preserve unrelated work in a dirty worktree. Do not commit `.env`, API credentials,
-Telegram sessions, generated outputs, or agent-local settings. Treat `context/`
-as local working data unless it is intentionally curated for the repository;
+Telegram sessions, generated outputs, or agent-local settings — `.gitignore` already
+excludes `output/`, `.env*` (except `.env.example`), `docs/superpowers/`,
+`.claude/settings.local.json`, and `.claude/RESUME.md`, so new working files belong
+under a path that is already covered rather than in a fresh tracked directory.
+Treat `context/` as local working data unless it is intentionally curated for the
+repository;
 `context/my_rules.md` and `context/interested_stocks.md` are curated and tracked.

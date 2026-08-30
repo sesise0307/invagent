@@ -57,7 +57,7 @@ def fetch_messages_cmd(days, fetch_links):
     """Fetch saved messages from Telegram.
 
     Retrieves messages from Telegram 'Saved Messages' channel.
-    Saves formatted output to output/telegram-daily/<YYYY-MM-DD>_raw.txt
+    Saves formatted output to output/telegram-daily/raw/<YYYY-MM-DD>_raw.md
     """
     try:
         config = Config.from_env()
