@@ -53,21 +53,36 @@ async def _authenticate_and_report(config: Config) -> None:
 @cli.command()
 @click.option("--days", type=int, default=1, help="Fetch messages from last N days (default: 1)")
 @click.option("--fetch-links", is_flag=True, default=True, help="Extract and include link content (default: enabled)")
-def fetch_messages_cmd(days, fetch_links):
+@click.option(
+    "--download-images/--no-download-images",
+    default=True,
+    help="Download attached images for later reading (default: enabled)",
+)
+def fetch_messages_cmd(days, fetch_links, download_images):
     """Fetch saved messages from Telegram.
 
     Retrieves messages from Telegram 'Saved Messages' channel.
     Saves formatted output to output/telegram-daily/raw/<YYYY-MM-DD>_raw.md
+    and attached images to output/telegram-daily/media/<YYYY-MM-DD>/
     """
     try:
         config = Config.from_env()
         click.echo(f"📨 Fetching messages from last {days} day(s)...")
 
+        # The raw file name and the media directory must share one date string,
+        # or the skill's cleanup step retires them on different days.
+        today = datetime.now().strftime("%Y-%m-%d")
+        media_dir = config.telegram_media_dir(today) if download_images else None
+
         client_manager = TelegramClientManager()
         fetcher = MessageFetcher(config, client_manager)
 
         try:
-            messages = asyncio.run(fetcher.fetch_saved_messages(days, fetch_links=fetch_links))
+            messages = asyncio.run(
+                fetcher.fetch_saved_messages(
+                    days, fetch_links=fetch_links, media_dir=media_dir
+                )
+            )
         finally:
             asyncio.run(client_manager.disconnect())
 
@@ -79,13 +94,20 @@ def fetch_messages_cmd(days, fetch_links):
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Save to file
-        today = datetime.now().strftime("%Y-%m-%d")
         output_file = output_dir / f"{today}_raw.md"
         output_file.write_text(formatted_content, encoding="utf-8")
+
+        image_count = sum(
+            1
+            for msg in messages
+            for image in msg.get("images", [])
+            if not image.startswith("[")
+        )
 
         click.echo(f"✅ Saved: {output_file}")
         click.echo(f"   Messages: {len(messages)}")
         click.echo(f"   Links fetched: {'yes' if fetch_links else 'no'}")
+        click.echo(f"   Images saved: {image_count}")
 
     except ValueError as e:
         click.echo(f"❌ Configuration Error: {e}", err=True)

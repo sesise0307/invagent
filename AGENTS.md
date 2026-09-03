@@ -142,9 +142,34 @@ The `summarize-telegram` skill owns everything under `output/telegram-daily/`.
 `themes/archive/`. The index and theme files are the accumulated memory that
 `analyze-stock` searches, so they are appended to and rolled off, never rewritten
 from scratch. At the end of a run the skill deletes every raw file except today's
-(`raw/` only, `-maxdepth 1`); nothing outside `raw/` is ever deleted. Market
+and every dated media directory except today's (`raw/` and `media/` only,
+`-maxdepth 1`); nothing outside those two directories is ever deleted. Market
 indices come from `.agents/skills/summarize-telegram/scripts/fetch_market_signals.py`,
 which calls the same StockEasy `stockdata/api/v1` host as `fetch_stock_info.py`.
+
+The same command downloads attached images to `media/<yyyy-mm-dd>/` and leaves
+them unread, because reading them is not a fetch-time job. `fetch-messages` only
+decides what is an image — photos and `image/*` documents, by whitelist, so a
+link preview or a PDF is not mistaken for one — writes the file, and emits an
+`이미지:` block into the raw export carrying the path and the literal marker
+`[분석 대기]`. Step 1-4 of the skill then reads each image through the agent's
+file-read tool, exactly as analyst-report PDFs are read, and replaces the marker
+with the transcribed text and, for a chart, its axes, series, and turning points.
+There is no local OCR toolchain and no new runtime dependency; a chart is
+interpreted rather than transcribed, which a text-only OCR pass cannot do. The
+marker string is a contract between `PENDING_IMAGE_MARKER` in
+`src/invagent/telegram/fetch.py` and the grep in `summarize-telegram/SKILL.md`
+step 1-4 — change both together, and a test asserts they match, because a
+one-sided edit makes the skill find nothing and skip silently. That grep needs
+`-a`: raw exports contain NUL bytes whenever a fetched link returned a binary
+body, so plain `grep` treats the file as binary and prints nothing. An image that
+cannot be downloaded or read never blocks the run — the fetcher records a
+bracketed sentinel the way `LinkExtractor` does, and the briefing falls back to
+caption and context marked `(이미지 미확인)`. A message carrying only an image
+and no caption is now kept; it used to be dropped whole at the fetch loop's
+empty-text check, which is why chart captures never reached a briefing.
+`MAX_IMAGE_BYTES` and `MAX_IMAGES_PER_RUN` cap what one run can spend on disk and
+on reading, and live as constants at the top of the fetch module.
 
 The Telegram daily briefing also reads the user's live holdings from the Google
 Sheets file `주식 포트폴리오` (sheet `포트폴리오`) through the Google Drive MCP

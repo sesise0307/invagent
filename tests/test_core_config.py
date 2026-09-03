@@ -55,3 +55,18 @@ def test_config_from_env_invalid_api_id(monkeypatch):
 
     with pytest.raises(ValueError, match="TELEGRAM_API_ID는 정수여야"):
         Config.from_env()
+
+
+def test_config_telegram_media_dir_is_sibling_of_raw_dir():
+    """미디어 디렉토리는 raw 디렉토리의 형제로 날짜별 하위 폴더를 쓴다"""
+    config = Config(
+        api_id=123,
+        api_hash="abc123",
+        session_path=Path("/tmp/session"),
+        output_dir=Path("/tmp/outputs"),
+    )
+
+    assert config.telegram_daily_dir() == Path("/tmp/outputs/telegram-daily/raw")
+    assert config.telegram_media_dir("2026-09-03") == Path(
+        "/tmp/outputs/telegram-daily/media/2026-09-03"
+    )

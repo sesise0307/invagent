@@ -28,6 +28,8 @@ def test_cli_fetch_messages_help():
     result = runner.invoke(cli, ['fetch-messages', '--help'])
 
     assert result.exit_code == 0
+    assert '--download-images' in result.output
+    assert '--no-download-images' in result.output
 
 
 def test_cli_add_stock_help():

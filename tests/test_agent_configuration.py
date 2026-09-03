@@ -1611,6 +1611,42 @@ def test_summarize_telegram_documents_peak_drawdown_step() -> None:
     assert "어느 축에서 걸렸는지를 반드시 밝힌다" in skill
 
 
+def test_summarize_telegram_documents_image_reading_step() -> None:
+    skill = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "### 1-4단계: 이미지 판독 (OCR·차트 해석)" in skill
+    # 이미지는 fetch 단계가 내려받고 판독은 에이전트가 파일 읽기 툴로 한다
+    assert "output/telegram-daily/media/" in skill
+    assert "파일 읽기 툴로 직접 읽는다" in skill
+    # raw 파일에 NUL 바이트가 섞여 있어 grep -a 없이는 마커를 못 찾는다
+    assert "grep -an" in skill
+    # 판독 결과 3줄 스키마
+    for field in ("> 유형:", "> 텍스트:", "> 해석:"):
+        assert field in skill
+    # 실패 경로가 브리핑을 막지 않는다는 계약
+    assert "[이미지 판독 실패]" in skill
+    assert "(이미지 미확인)" in skill
+    # 7단계가 미디어까지 정리한다
+    assert "### 7단계: 과거 raw·미디어 정리" in skill
+    assert "output/telegram-daily/media \\" in skill
+    assert "output/telegram-daily/media/{today}/**" in skill
+
+
+def test_image_pending_marker_matches_the_fetcher_constant() -> None:
+    """SKILL.md가 찾는 마커와 fetch.py가 쓰는 마커가 같아야 한다.
+
+    한쪽만 바꾸면 스킬이 판독 대상을 하나도 못 찾고 조용히 넘어간다.
+    """
+    from invagent.telegram.fetch import PENDING_IMAGE_MARKER
+
+    skill = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert PENDING_IMAGE_MARKER == "[분석 대기]"
+    # grep 명령에 이스케이프된 형태로, 멱등성 설명에 그대로 등장한다
+    assert "\\[분석 대기\\]" in skill
+    assert f"`{PENDING_IMAGE_MARKER}`로 남은 항목만 처리" in skill
+
+
 def test_peak_drawdown_thresholds_match_documented_bands() -> None:
     module = _load_peak_drawdown_module()
 

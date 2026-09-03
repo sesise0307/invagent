@@ -32,6 +32,14 @@ class Config:
         """Return the directory used for daily Telegram exports."""
         return self.output_dir / "telegram-daily/raw"
 
+    def telegram_media_dir(self, date_str: str) -> Path:
+        """Return the directory holding downloaded media for one export date.
+
+        Sibling of the raw export directory so the summarize-telegram cleanup
+        step can retire both on the same schedule.
+        """
+        return self.output_dir / "telegram-daily/media" / date_str
+
     @classmethod
     def from_env(cls) -> "Config":
         """Load configuration from environment variables."""
