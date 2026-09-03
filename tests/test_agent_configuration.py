@@ -6,6 +6,7 @@ import importlib.util
 import re
 import sys
 import tomllib
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -1352,7 +1353,8 @@ def test_peak_drawdown_fetch_failure_is_non_blocking(monkeypatch: pytest.MonkeyP
     results = module.analyze_holdings(module.parse_holdings(PEAK_SNAPSHOT), {})
 
     assert all("시세 수집 실패 — HTTP 500" in r["error"] for r in results)
-    assert "전고점 낙폭 판정: 해당 없음" in module.render(results, {"error": "잔고 이력 없음"})
+    section = module.render(results, {"error": "잔고 이력 없음"})
+    assert "전고점 낙폭 판정(52주 시장 종가 기준): 해당 없음" in section
 
 
 def test_account_mdd_uses_snapshot_balance_peak(tmp_path: Path) -> None:
@@ -1369,6 +1371,185 @@ def test_account_mdd_uses_snapshot_balance_peak(tmp_path: Path) -> None:
     assert "계좌 MDD(「기본 원칙 13」)" in rendered
     assert "-12.0% ← **발동 (-10%)**" in rendered
     assert "입출금을 보정하지 않는다" in rendered
+
+
+def test_stock_band_warns_before_it_is_hit() -> None:
+    """종목도 밴드를 밟기 전에 경고한다 — trailing stop은 밟은 뒤 정하면 늦다."""
+    module = _load_peak_drawdown_module()
+
+    pending = module.pending_bands(-9.8, 112_700.0, module.DRAWDOWN_BANDS)
+    near = module.approaching_band(pending, module.DRAWDOWN_WARN_MARGIN_PP)
+
+    assert [p["band"] for p in pending] == [-10.0, -15.0, -20.0, -30.0]
+    assert near["band"] == -10.0
+    assert near["trigger"] == pytest.approx(101_430.0)  # 발동가를 금액으로 준다
+    assert near["gap_pp"] == pytest.approx(0.2, abs=0.01)
+
+
+def test_stock_band_already_hit_is_not_an_approach() -> None:
+    """발동한 밴드는 임박 대상이 아니고, 다음 밴드로 넘어간다."""
+    module = _load_peak_drawdown_module()
+
+    pending = module.pending_bands(-13.0, 100_000.0, module.DRAWDOWN_BANDS)
+
+    assert [p["band"] for p in pending] == [-15.0, -20.0, -30.0]  # -10%는 이미 밟음
+    assert module.approaching_band(pending, 2.0)["band"] == -15.0
+    # 표의 경보 칸 = 발동이 임박을 가리지 않는다
+    assert module.alert_label(-10.0, {"band": -15.0}) == "🟡 -10%"
+    assert module.alert_label(None, {"band": -10.0}) == "⚠️ -10%"
+    assert module.alert_label(None, None) == "—"
+
+
+def test_stock_approach_uses_displayed_precision() -> None:
+    """-12.969%는 표에 -13.0%로 찍히므로 -15%까지 2.0%p로 읽힌다 — 경고도 그 값으로 판단한다."""
+    module = _load_peak_drawdown_module()
+    drawdown = (406_000 / 466_500 - 1) * 100  # 에이피알 실제값 = -12.969%
+
+    pending = module.pending_bands(drawdown, 466_500.0, module.DRAWDOWN_BANDS)
+    near = module.approaching_band(pending, module.DRAWDOWN_WARN_MARGIN_PP)
+
+    assert f"{drawdown:+.1f}%" == "-13.0%"
+    assert near is not None and near["band"] == -15.0
+    assert near["trigger"] == pytest.approx(396_525.0)
+
+
+def test_stock_deepest_band_leaves_nothing_to_warn() -> None:
+    module = _load_peak_drawdown_module()
+
+    assert module.pending_bands(-45.3, 2_919_000.0, module.DRAWDOWN_BANDS) == []
+    assert module.approaching_band([], 2.0) is None
+
+
+def test_render_lists_stock_approaches_per_axis(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_peak_drawdown_module()
+    monkeypatch.setattr(
+        module.si_api, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+    )
+    # 52주 축 = -9.0%(-10% 임박) / 기록 축 = -9.5%(-10% 임박)
+    monkeypatch.setattr(
+        module.stage_scan,
+        "fetch_bars",
+        lambda code, days: (_bars([("20260601", 100_000.0), ("20260828", 91_000.0)]), None),
+    )
+    history = {"알파전자": [("2026-08-10", 77_348.0)]}  # 현재가 ₩70,000 → -9.5%
+
+    results = module.analyze_holdings(
+        module.parse_holdings(PEAK_SNAPSHOT), {}, history, "2026-08-28"
+    )
+    section = module.render(results, {"error": "잔고 이력 없음"})
+
+    assert "⚠️ 임박(52주 시장 종가 기준): 알파전자 -9.0% → -10% 발동가 ₩90,000 (1.0%p 남음)" in section
+    assert "⚠️ 임박(계좌 스냅샷 기록 기준): 알파전자 -9.5% → -10% 발동가 ₩69,613" in section
+    # 미발동이지만 임박한 종목은 표의 경보 칸에도 표시된다
+    assert "| -9.0% | ⚠️ -10% |" in section
+
+
+def test_render_omits_approach_line_when_nothing_is_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_peak_drawdown_module()
+    monkeypatch.setattr(
+        module.si_api, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+    )
+    monkeypatch.setattr(
+        module.stage_scan,
+        "fetch_bars",
+        lambda code, days: (_bars([("20260601", 100_000.0), ("20260828", 99_000.0)]), None),
+    )
+
+    section = module.render(
+        module.analyze_holdings(module.parse_holdings(PEAK_SNAPSHOT), {}, {}, "2026-08-28"),
+        {"error": "잔고 이력 없음"},
+    )
+
+    assert "임박" not in section
+
+
+def _account(tmp_path: Path, today_balance: float, peak: float = 100_000_000.0) -> dict:
+    """스냅샷 고점이 `peak`인 계좌에서 오늘 잔고가 `today_balance`일 때의 MDD 판정."""
+    (tmp_path / "2026-08-20.md").write_text(f"> 잔고 ₩{peak:,.0f} · 수익률 1.00%\n", encoding="utf-8")
+    return _load_peak_drawdown_module().account_mdd(tmp_path, today_balance, "2026-08-28")
+
+
+def test_account_mdd_warns_before_band_is_hit(tmp_path: Path) -> None:
+    """-15% 밟은 뒤 알리면 「기본 원칙 13」 대응을 준비할 시간이 없다 — 도달 전에 경고한다."""
+    module = _load_peak_drawdown_module()
+
+    account = _account(tmp_path, 86_500_000.0)  # MDD -13.5%
+
+    assert account["mdd"] == pytest.approx(-13.5)
+    assert account["band"] == -10.0  # -10%는 이미 발동
+    assert account["approaching"]["band"] == -15.0  # -15%는 임박
+    assert account["approaching"]["gap_pp"] == pytest.approx(1.5)
+    assert account["approaching"]["trigger"] == pytest.approx(85_000_000.0)
+    assert account["approaching"]["gap_won"] == pytest.approx(1_500_000.0)
+
+    rendered = module.render([], account)
+    assert "⚠️⚠️ **계좌 MDD -15% 임박 — 남은 거리 1.5%p(₩1,500,000).**" in rendered
+    assert "잔고가 ₩85,000,000 아래로 내려가면 발동한다" in rendered
+    assert "5거래일 신규 매수 금지" in rendered
+    # 이미 밟은 -10%는 임박 대상이 아니다
+    assert "계좌 MDD -10% 임박" not in rendered
+
+
+def test_account_mdd_stays_quiet_outside_warn_margin(tmp_path: Path) -> None:
+    module = _load_peak_drawdown_module()
+
+    account = _account(tmp_path, 87_500_000.0)  # MDD -12.5% = -15%까지 2.5%p
+
+    assert account["approaching"] is None
+    rendered = module.render([], account)
+    assert "임박" not in rendered
+    # 경고가 없어도 발동선과 남은 거리는 매일 보인다
+    assert "계좌 MDD -15% 발동선: ₩85,000,000 (현 잔고에서 2.5%p · ₩2,500,000 남음)" in rendered
+
+
+def test_account_mdd_warn_margin_boundary_counts_as_approaching(tmp_path: Path) -> None:
+    """경계값(정확히 2.0%p)은 경고에 포함한다 — 한 발 늦는 쪽으로 반올림하지 않는다."""
+    module = _load_peak_drawdown_module()
+
+    account = _account(tmp_path, 87_000_000.0)  # MDD -13.0% = -15%까지 정확히 2.0%p
+
+    assert account["approaching"]["band"] == -15.0
+    assert account["approaching"]["gap_pp"] == pytest.approx(module.ACCOUNT_MDD_WARN_MARGIN_PP)
+
+
+def test_account_mdd_deepest_band_hit_has_nothing_left_to_warn(tmp_path: Path) -> None:
+    module = _load_peak_drawdown_module()
+
+    account = _account(tmp_path, 80_000_000.0)  # MDD -20%
+
+    assert account["band"] == -15.0
+    assert account["pending"] == [] and account["approaching"] is None
+    rendered = module.render([], account)
+    assert "임박" not in rendered and "발동선" not in rendered
+
+
+def test_account_mdd_shows_distance_to_both_bands_when_healthy(tmp_path: Path) -> None:
+    """오늘 같은 -6.8% 구간 = 경고는 없지만 두 발동선까지의 거리는 항상 찍힌다."""
+    module = _load_peak_drawdown_module()
+
+    account = _account(tmp_path, 93_200_000.0)  # MDD -6.8%
+
+    assert account["approaching"] is None
+    assert [p["band"] for p in account["pending"]] == [-10.0, -15.0]
+    rendered = module.render([], account)
+    assert "계좌 MDD -10% 발동선: ₩90,000,000 (현 잔고에서 3.2%p · ₩3,200,000 남음)" in rendered
+    assert "계좌 MDD -15% 발동선: ₩85,000,000 (현 잔고에서 8.2%p · ₩8,200,000 남음)" in rendered
+
+
+def test_account_mdd_action_text_matches_my_rules(tmp_path: Path) -> None:
+    """경고에 붙는 대응 문구는 「기본 원칙 13」 원문에서 온다 — 룰이 바뀌면 같이 바뀌어야 한다."""
+    module = _load_peak_drawdown_module()
+    rules = (REPO_ROOT / "context" / "my_rules.md").read_text(encoding="utf-8")
+
+    assert set(module.ACCOUNT_MDD_ACTION) == set(module.ACCOUNT_MDD_BANDS)
+    assert "레버리지를 모두 정리하고 신규 매수를 중단" in rules
+    assert "현금 비중을 30% 이상 확보" in rules
+    assert "5거래일 동안 신규 매수를 금지" in rules
+    assert "복기한 뒤에만 매매를 재개" in rules
+    assert "레버리지 전량 정리" in module.ACCOUNT_MDD_ACTION[-10.0]
+    assert "5거래일 신규 매수 금지" in module.ACCOUNT_MDD_ACTION[-15.0]
 
 
 def test_peak_drawdown_append_is_idempotent(
@@ -1395,6 +1576,8 @@ def test_peak_drawdown_append_is_idempotent(
     # 기존 룰 자동 판정 섹션은 그대로 남는다
     assert "매매규칙 6(-15% 손절)" in text
     assert "🟡 -10%" in text
+    # 계좌 기록 축도 같은 섹션에 함께 쓰인다
+    assert "계좌 기록 고점(일자)" in text
 
 
 def test_peak_drawdown_exits_1_on_unparsable_snapshot(
@@ -1422,6 +1605,10 @@ def test_summarize_telegram_documents_peak_drawdown_step() -> None:
     # 평단 축과 고점 축을 섞지 말라는 경고
     assert "평단 기준 룰과 다른 축이다" in skill
     assert "ticker_overrides.md" in skill
+    # 고점 축이 둘(52주 시장 / 계좌 기록)이라는 사실과 혼용 금지가 문서화돼 있어야 한다
+    assert "계좌 기록 고점" in skill
+    assert "52주 시장 고점" in skill
+    assert "어느 축에서 걸렸는지를 반드시 밝힌다" in skill
 
 
 def test_peak_drawdown_thresholds_match_documented_bands() -> None:
@@ -1430,3 +1617,275 @@ def test_peak_drawdown_thresholds_match_documented_bands() -> None:
     assert module.PEAK_WINDOW_DAYS == 250
     assert module.DRAWDOWN_BANDS == (-10.0, -15.0, -20.0, -30.0)
     assert module.ACCOUNT_MDD_BANDS == (-10.0, -15.0)
+
+
+# --- 계좌 기록 고점 축 --------------------------------------------------------
+
+
+def _record_snapshot(date: str, prices: dict[str, int]) -> str:
+    """합성 스냅샷 마크다운. 현금 행은 기록 축에서 제외돼야 한다."""
+    rows = "\n".join(
+        f"| {name} | 반도체 | 10 | ₩1,000 | ₩{price:,} | 1.00% | 10.0% | ₩10,000 | 아이디어 |"
+        for name, price in prices.items()
+    )
+    return (
+        f"# 포트폴리오 스냅샷 — {date}\n\n"
+        f"> 잔고 ₩90,000,000 · 수익률 1.00%\n\n"
+        f"## 보유 ({len(prices)}종목 + 현금)\n\n"
+        "| 종목 | 섹터 | 보유 | 평단 | 현재가 | 수익률 | 비중 | 평가금액 | 투자 아이디어 |\n"
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n"
+        "| _현금 | 현금 | 1 | ₩1,000 | ₩1,000 | 0.00% | 1.0% | ₩1,000 | 현금도 종목이다 |\n"
+        f"{rows}\n"
+    )
+
+
+def test_record_history_skips_unparsable_snapshot(tmp_path: Path) -> None:
+    """`## 보유` 표가 없는 손글씨 스냅샷(실제 2026-08-15)이 섞여도 나머지로 계속 계산한다."""
+    module = _load_peak_drawdown_module()
+    (tmp_path / "2026-08-10.md").write_text(
+        _record_snapshot("2026-08-10", {"알파전자": 355_000}), encoding="utf-8"
+    )
+    (tmp_path / "2026-08-15.md").write_text(
+        "# 포트폴리오 스냅샷 — 2026-08-15\n\n| 종목 | 비중 | 비고 |\n|---|---:|---|\n"
+        "| 알파전자 | 26.0% | 반도체 |\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "2026-09-03.md").write_text(
+        _record_snapshot("2026-09-03", {"알파전자": 283_000}), encoding="utf-8"
+    )
+
+    history, meta = module.load_record_history(tmp_path)
+
+    assert [d for d, _ in history["알파전자"]] == ["2026-08-10", "2026-09-03"]
+    assert meta["valid_files"] == 2 and meta["total_files"] == 3
+    assert meta["from"] == "2026-08-10" and meta["to"] == "2026-09-03"
+    # 현금 행은 기록 축에 들어오지 않는다
+    assert "_현금" not in history
+
+
+def test_record_drawdown_uses_history_peak() -> None:
+    module = _load_peak_drawdown_module()
+    history = {"알파전자": [("2026-08-01", 300_000.0), ("2026-08-10", 355_000.0)]}
+
+    result = module.record_drawdown("알파전자", 283_000.0, "2026-09-03", history)
+
+    assert result["peak"] == 355_000.0 and result["peak_date"] == "2026-08-10"
+    assert result["drawdown"] == pytest.approx(-20.28, abs=0.01)
+    assert result["band"] == -20.0
+    assert result["samples"] == 3
+
+
+def test_record_drawdown_today_value_overrides_disk_entry() -> None:
+    """오늘 일자 항목은 디스크 값을 버리고 방금 파싱한 값을 쓴다(`account_mdd`와 같은 규약)."""
+    module = _load_peak_drawdown_module()
+    history = {"알파전자": [("2026-09-03", 999_000.0), ("2026-08-10", 355_000.0)]}
+
+    result = module.record_drawdown("알파전자", 283_000.0, "2026-09-03", history)
+
+    assert result["peak"] == 355_000.0
+    assert result["current"] == 283_000.0
+    assert result["samples"] == 2
+
+
+def test_record_drawdown_without_prior_history_is_flat() -> None:
+    """편입 첫날 = 고점도 오늘, 현재가도 오늘 → 낙폭 0%. 마커 없이 숫자만 남는다."""
+    module = _load_peak_drawdown_module()
+
+    result = module.record_drawdown("신규종목", 100_000.0, "2026-09-03", {})
+
+    assert result["error"] is None
+    assert result["peak"] == result["current"] == 100_000.0
+    assert result["drawdown"] == pytest.approx(0.0)
+    assert result["band"] is None
+
+    assert module.record_drawdown("신규종목", None, "2026-09-03", {}) == {
+        "error": "스냅샷 기록 없음"
+    }
+
+
+def test_record_axis_survives_market_data_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """네트워크가 죽어 52주 축이 비어도 계좌 기록 축은 그대로 표에 남아야 한다."""
+    module = _load_peak_drawdown_module()
+    monkeypatch.setattr(
+        module.si_api, "resolve_stock", lambda name: (None, "종목 검색 결과 없음", 1)
+    )
+    history = {"알파전자": [("2026-08-10", 100_000.0)]}
+
+    results = module.analyze_holdings(
+        module.parse_holdings(PEAK_SNAPSHOT), {}, history, "2026-08-28"
+    )
+
+    assert results[0]["error"] is not None  # 52주 축은 실패
+    assert results[0]["record"]["drawdown"] == pytest.approx(-30.0)  # 기록 축은 살아있다
+    section = module.render(results, {"error": "잔고 이력 없음"})
+    assert "₩100,000 (2026-08-10) | -30.0% ⛔" in section
+
+
+def test_render_names_both_axes_and_forbids_summing(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_peak_drawdown_module()
+    monkeypatch.setattr(
+        module.si_api, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+    )
+    monkeypatch.setattr(
+        module.stage_scan,
+        "fetch_bars",
+        lambda code, days: (_bars([("20260601", 100_000.0), ("20260828", 60_000.0)]), None),
+    )
+    # 52주 축은 -40%(⛔), 기록 축은 -12.5%(🟡) — 두 축이 두 밴드만큼 어긋나는 상황
+    history = {"알파전자": [("2026-08-10", 80_000.0)], "베타파마": [("2026-08-10", 80_000.0)]}
+
+    results = module.analyze_holdings(
+        module.parse_holdings(PEAK_SNAPSHOT), {}, history, "2026-08-28"
+    )
+    section = module.render(
+        results,
+        {"error": "잔고 이력 없음"},
+        {"valid_files": 22, "total_files": 23, "from": "2026-08-09", "to": "2026-09-03"},
+    )
+
+    # 같은 종목이 두 축에서 두 밴드만큼 다르게 걸린다 — 합쳐 세면 안 되는 이유
+    assert "전고점 낙폭 판정(52주 시장 종가 기준): 알파전자 -40.0% (⛔ -30%)" in section
+    assert "기록 낙폭 판정(계좌 스냅샷 기록 기준):" in section
+    assert "알파전자 -12.5% (🟡 -10%)" in section
+    assert "같은 룰 번호로 합산하지 않고" in section
+    # 각주 = 기록 구간·개수·제외 파일 수
+    assert "스냅샷 22개(2026-08-09~2026-09-03)" in section
+    assert "1개는 형식이 달라 제외" in section
+    assert "매도 후 재매수 구간도 구분하지 않고" in section
+
+
+def test_append_section_removes_legacy_title(tmp_path: Path) -> None:
+    """옛 제목으로 쓰인 스냅샷에 재실행해도 섹션이 둘로 갈라지지 않는다."""
+    module = _load_peak_drawdown_module()
+    snapshot = tmp_path / "2026-08-28.md"
+    snapshot.write_text(
+        PEAK_SNAPSHOT
+        + f"\n{module.LEGACY_SECTION_TITLES[0]}\n\n| 종목 | 낙폭 |\n| --- | ---: |\n"
+        "| 알파전자 | -45.3% |\n",
+        encoding="utf-8",
+    )
+
+    module.append_section(snapshot, f"{module.SECTION_TITLE}\n\n- 새 내용\n")
+    text = snapshot.read_text(encoding="utf-8")
+
+    assert text.count(module.SECTION_TITLE) == 1
+    assert module.LEGACY_SECTION_TITLES[0] not in text
+    assert "-45.3%" not in text  # 옛 섹션 본문까지 걷어낸다
+    assert "매매규칙 6(-15% 손절)" in text  # 다른 섹션은 보존
+
+
+# --- cash_deploy_check.py (현금 투입 사다리) ---------------------------------
+
+
+def _load_cash_deploy_module():
+    script_path = SKILLS_ROOT / "summarize-telegram" / "scripts" / "cash_deploy_check.py"
+    spec = importlib.util.spec_from_file_location("cash_deploy_check", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _all_pass_metrics(module) -> dict:
+    """세 단계를 전부 여는 지표 묶음."""
+    return {
+        "last_ftd": "2026-09-20",
+        "distribution_days": 1,
+        "hold_days_ma150": 4,
+        "ma150": 6_500.0,
+        "ma20week": 6_900.0,
+        "close": 7_000.0,
+        "below_200ma_ratio": 0.45,
+        "vkospi": 24.0,
+        "net_buy_days": 6,
+    }
+
+
+def test_cash_deploy_ladder_opens_all_three_when_conditions_met() -> None:
+    module = _load_cash_deploy_module()
+
+    conditions = module.grade(_all_pass_metrics(module), date(2026, 10, 1))
+    step, reason = module.verdict(conditions, 7_000.0)
+
+    assert [c.state for c in conditions] == [module.OK] * 8
+    assert step == 3
+    assert reason == "3단계 전부 충족"
+
+
+def test_cash_deploy_ladder_stops_at_first_unmet_gate() -> None:
+    """2차 문항 하나가 비면 1차까지만 열리고, 3차 충족 여부는 승격 근거가 되지 못한다."""
+    module = _load_cash_deploy_module()
+    metrics = _all_pass_metrics(module)
+    metrics["below_200ma_ratio"] = 0.804  # C5 미충족
+
+    conditions = module.grade(metrics, date(2026, 10, 1))
+    step, reason = module.verdict(conditions, 7_000.0)
+
+    assert step == 1
+    assert "2차 미충족" in reason and "C5" in reason
+
+
+def test_cash_deploy_unknown_never_counts_as_pass() -> None:
+    """VKOSPI·수급은 자동 수집 경로가 없다. 미확인(❓)이 충족으로 새면 사다리가 무의미해진다."""
+    module = _load_cash_deploy_module()
+    metrics = _all_pass_metrics(module)
+    metrics["vkospi"] = None
+    metrics["net_buy_days"] = None
+
+    conditions = module.grade(metrics, date(2026, 10, 1))
+    states = {c.code: c.state for c in conditions}
+    step, _ = module.verdict(conditions, 7_000.0)
+
+    assert states["C6"] == module.UNKNOWN and states["C8"] == module.UNKNOWN
+    assert step == 1
+
+
+def test_cash_deploy_invalidation_overrides_every_condition() -> None:
+    """사이클 저점 이탈은 조건이 전부 켜져 있어도 사다리를 접는다."""
+    module = _load_cash_deploy_module()
+
+    conditions = module.grade(_all_pass_metrics(module), date(2026, 10, 1))
+    step, reason = module.verdict(conditions, module.INVALIDATION_CLOSE - 0.01)
+
+    assert step == -1
+    assert "무효화" in reason
+
+
+def test_cash_deploy_ftd_must_be_newer_than_ladder_start() -> None:
+    """사다리를 세우기 전에 찍힌 FTD(2026-08-05)는 새 신호가 아니다."""
+    module = _load_cash_deploy_module()
+    metrics = _all_pass_metrics(module)
+    metrics["last_ftd"] = "2026-08-05"
+
+    conditions = module.grade(metrics, date(2026, 10, 1))
+    c1 = next(c for c in conditions if c.code == "C1")
+
+    assert c1.state == module.NG
+    assert module.LADDER_START == "2026-09-03"
+
+
+def test_cash_deploy_hold_days_counts_only_the_current_streak() -> None:
+    """150일선을 되찾은 뒤의 연속일만 센다. 중간에 한 번 밑돌면 카운터는 0부터 다시."""
+    module = _load_cash_deploy_module()
+
+    closes = [10.0, 12.0, 9.0, 11.0, 12.0]
+    line = [10.5, 10.5, 10.5, 10.5, 10.5]
+
+    assert module.hold_days_above(closes, line) == 2
+    assert module.hold_days_above([9.0], [10.5]) == 0
+    assert module.hold_days_above([11.0], [None]) == 0
+
+
+def test_cash_deploy_thresholds_match_the_documented_ladder() -> None:
+    """SKILL.md·monthly_context에 문서화된 값과 상수가 어긋나면 채점이 조용히 달라진다."""
+    module = _load_cash_deploy_module()
+
+    assert module.INVALIDATION_CLOSE == 5593.56
+    assert module.MAX_DISTRIBUTION_DAYS == 2
+    assert module.HOLD_DAYS == 3
+    assert module.MAX_BELOW_200MA_RATIO == 0.60
+    assert module.MAX_VKOSPI == 30.0
+    assert module.MIN_NET_BUY_DAYS == 5
+    assert module.FOMC_DATE == date(2026, 9, 17)
+    assert module.TRANCHES == {1: 50_000_000, 2: 70_000_000, 3: 50_000_000}
+    assert module.RESERVE == 34_000_000

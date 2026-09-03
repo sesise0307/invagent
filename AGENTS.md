@@ -162,7 +162,25 @@ holding's drawdown from its highest close over the last 250 trading days, and
 flags the -10 / -15 / -20 / -30% bands that map to 「매매규칙 3·15」. The same run
 derives the account MDD of 「기본 원칙 13」 from the balance line of every past
 snapshot in `output/portfolio/`, noting that this peak covers only the snapshot
-window and is not adjusted for deposits or withdrawals. `--append` writes the
+window and is not adjusted for deposits or withdrawals. That rule's responses —
+clearing leverage and holding 30% cash at -10%, a five-session buying freeze and
+a rule-violation review at -15% — cannot be prepared after the band is already
+hit, so the script prints the balance that triggers each un-hit band and the
+distance left to it every day, and raises a `⚠️⚠️ 임박` warning once the account
+comes within `ACCOUNT_MDD_WARN_MARGIN_PP` (2.0 percentage points) of the next
+band; a warned day promotes 「기본 원칙 13」 to the briefing's rule reminder even
+though nothing has triggered yet. The warning's action text lives in
+`ACCOUNT_MDD_ACTION`, summarised from `context/my_rules.md`, and a test asserts
+both against the rule file so the two cannot drift apart. Per-holding bands warn
+the same way on both axes: a holding within `DRAWDOWN_WARN_MARGIN_PP` (2.0
+percentage points, tuned separately from the account margin because the band
+spacing differs) of its next band is listed under `⚠️ 임박` with the **price**
+that trips it, and the table's alert column shows the approaching band only when
+no band has actually triggered, so an approach never masks a live one. Both
+margins compare on the drawdown rounded to the displayed decimal — -12.969%
+prints as -13.0%, which reads as 2.0 points from -15%, and withholding the
+warning over the unrounded 2.031 would contradict the table; this is the same
+class of mismatch `BAND_EPS` exists to prevent. `--append` writes the
 result back into the snapshot, replacing its own section so reruns stay
 idempotent. Daily bars come from the same unauthenticated Naver `siseJson`
 endpoint as `stage-analysis`, reusing its `fetch_bars`, and ticker resolution
@@ -171,11 +189,55 @@ window and the band list are this skill's own operating choices and live as
 constants at the top of the script; the band-to-rule mapping is documented in
 `summarize-telegram/SKILL.md` step 1-3-1, and the two must change together.
 Because the -15% band is measured from the peak while 「매매규칙 6」's -15% is
-measured from average cost, the skill is required to keep the two axes apart.
+measured from average cost, the skill is required to keep the axes apart.
 Names the StockEasy search cannot resolve (a new listing, or a sheet label that
 differs from the official name) are pinned in the tracked
 `context/ticker_overrides.md` as `종목명 = <6-digit code>` lines, which the script
 consults before the API.
+
+The same script reports a **second peak axis that needs no network**: for each
+holding it takes the highest `현재가` ever recorded in a parseable snapshot under
+`output/portfolio/` and measures today's drawdown from that, against the same
+band list. The 250-day axis answers "how far has this stock fallen in the
+market", including a peak formed before the position existed; this one answers
+"how much has the position given back since I started recording it", which is
+the axis a trailing stop actually sits on — on 2026-09-03 SK하이닉스 was -45.3%
+on the market axis but only -8.4% on the record axis. Both axes are labelled
+wherever they appear and are never summed under one rule number, because the
+sheet's `현재가` is a collection-time quote rather than an official close and the
+two therefore do not reconcile arithmetically. The scan reuses `parse_holdings`
+per snapshot file and skips any file it cannot parse (an earlier hand-written
+snapshot has a different table shape), so one odd file cannot take the axis
+down. Its known limits — the peak only covers the snapshot window on disk, and a
+position sold and later rebought is not distinguished from one held throughout —
+are printed as a footnote in the section itself. Renaming the section title
+requires adding the old title to `LEGACY_SECTION_TITLES` so `--append` strips it;
+`output/` is gitignored, so already-written snapshots can only be migrated by the
+code that rewrites them.
+
+`.agents/skills/summarize-telegram/scripts/cash_deploy_check.py` grades the **cash
+deployment ladder** — the standing answer to "when do I put the cash to work",
+fixed on 2026-09-03 as eight conditions gating three tranches rather than as a
+date. The ladder itself is registered in the `매크로 흐름` section of
+`output/telegram-daily/monthly_context.md`; the script is its enforcement arm, so
+the briefing quotes its verdict instead of re-grading the conditions by eye. Index
+moving averages come from the same unauthenticated Naver `siseJson` endpoint as
+`stage-analysis` (reusing its `fetch_bars`/`sma`), and distribution days, rally
+count, the last follow-through day, and the below-200-day-average breadth ratio
+come from `fetch_market_signals.fetch_api` — neither is reimplemented. VKOSPI and
+the foreign/institutional net-buy streak have no unauthenticated source, so they
+arrive as `--vkospi` and `--net-buy-days`; without them those conditions stay `❓`
+and **`❓` is never promoted to a pass**, which is what keeps cash from leaving on
+an unverified condition. A close below the cycle low overrides every condition and
+retires the ladder into the 「기본 원칙 13」 procedure, because the ladder is an
+entry tool and not a defensive one. Thresholds are this skill's own operating
+choices, live as constants at the top of the script, and are documented with their
+rationale in `summarize-telegram/SKILL.md` step 1-1-1 — change both together, and
+`tests/test_agent_configuration.py` fails if the constants drift from that table.
+Because the verdict is recomputed daily it is written only into that day's
+briefing; the `monthly_context.md` entry carries the condition table and is
+updated only when a tranche opens, the ladder is invalidated, or the conditions
+themselves change.
 
 Canonical project skills live in `.agents/skills/`: `advice`, `analyze-stock`,
 `monthly-investment-review`, `opendart`, `stage-analysis`, and
