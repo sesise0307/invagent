@@ -788,6 +788,29 @@ def test_portfolio_parser_unescapes_and_flags_rules() -> None:
     assert "현금 비중: 5.1% (₩5,000,000)" in snapshot
 
 
+def _my_rules() -> str:
+    return (REPO_ROOT / "context" / "my_rules.md").read_text(encoding="utf-8")
+
+
+def test_split_sell_rule_does_not_contradict_the_stop_tiers() -> None:
+    """「매매규칙 5」의 즉시 전량 조건에 -15% 손절이 들어가면 「매매규칙 6」의 1차 분할과 정반대가 된다.
+
+    2026-09-02에 규칙 6이 -15% 1차 분할 / -20% 전량 두 티어로 바뀌었으므로 규칙 5의
+    즉시 전량 사유는 아이디어 훼손과 「레버리지 규칙 3」 둘만 남는다.
+    """
+    rules = _my_rules()
+    rule5 = re.search(r"^5\. \*\*분할 매도\*\*.*$", rules, re.MULTILINE)
+    assert rule5, "「매매규칙 5」를 찾지 못했다"
+    text = rule5.group(0)
+
+    immediate = text.split("즉시 전량 정리")[0]
+    assert "매매규칙 6" not in immediate, "즉시 전량 조건이 여전히 「매매규칙 6」에 걸려 있다"
+    assert "투자 아이디어가 깨졌거나" in immediate
+    assert "레버리지 규칙 3(변동성 레버리지 청산)" in immediate
+    # 손절 티어의 소유권은 규칙 6에 있다고 명시해 둔다.
+    assert "「매매규칙 6」의 -15%/-20% 손절은 그 규칙이 정한 티어" in text
+
+
 def _load_find_reports_module():
     script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "find_reports.py"
     spec = importlib.util.spec_from_file_location("find_reports", script_path)
