@@ -28,7 +28,8 @@ import time
 from pathlib import Path
 
 # 저장소 루트 기준 `output/`은 gitignore 대상이라 새 추적 경로를 만들지 않는다.
-CACHE_ROOT = Path(__file__).resolve().parents[3] / "output" / ".cache" / "http"
+# parents: [0] scripts · [1] analyze-stock · [2] skills · [3] .agents · [4] 저장소 루트.
+CACHE_ROOT = Path(__file__).resolve().parents[4] / "output" / ".cache" / "http"
 
 DEFAULT_TTL_SECONDS = 900
 ENV_ENABLED = "INVAGENT_HTTP_CACHE"

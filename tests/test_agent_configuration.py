@@ -548,6 +548,12 @@ def _load_http_cache_module():
     return module
 
 
+def test_http_cache_writes_under_the_ignored_output_dir() -> None:
+    """`output/`만 gitignore다 — 한 칸 어긋나면 캐시 바이너리가 추적 대상 경로에 쌓인다."""
+    module = _load_http_cache_module()
+    assert module.CACHE_ROOT == REPO_ROOT / "output" / ".cache" / "http"
+
+
 def test_http_cache_round_trips_within_the_ttl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """같은 URL을 짧은 간격으로 두 번 부르는 경로(analyze-stock의 info-tab 중복)를 없애는 것이 목적이다."""
     module = _load_http_cache_module()
