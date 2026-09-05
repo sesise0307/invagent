@@ -14,6 +14,7 @@ stockeasy.intellio.kr의 `/stockdata/api/v1/market/*` JSON API에서 시장 데�
 
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -137,12 +138,19 @@ def print_credit(cb: dict) -> None:
         )
 
 
-def main() -> int:
+def fetch_all() -> tuple[dict, dict]:
+    """네 엔드포인트를 동시에 받는다. 서로 독립이라 순서대로 기다릴 이유가 없다."""
     data, errors = {}, {}
-    for name in ENDPOINTS:
-        data[name], err = fetch_api(name)
-        if err:
-            errors[name] = err
+    with ThreadPoolExecutor(max_workers=len(ENDPOINTS)) as pool:
+        for name, (payload, err) in zip(ENDPOINTS, pool.map(fetch_api, ENDPOINTS)):
+            data[name] = payload
+            if err:
+                errors[name] = err
+    return data, errors
+
+
+def main() -> int:
+    data, errors = fetch_all()
 
     indices_data, bp = data["indices"], data["big_picture"]
     mm, cb = data["market_monitor"], data["credit_balance"]

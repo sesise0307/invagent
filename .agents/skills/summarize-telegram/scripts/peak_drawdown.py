@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 _SKILLS_ROOT = Path(__file__).resolve().parents[2]
@@ -62,6 +63,9 @@ ACCOUNT_MDD_BANDS = (-10.0, -15.0)              # 「기본 원칙 13」 계좌 
 # 계좌와 종목을 따로 둔 이유 = 밴드 간격이 다르다(계좌 -10/-15 vs 종목 -10/-15/-20/-30).
 ACCOUNT_MDD_WARN_MARGIN_PP = 2.0
 DRAWDOWN_WARN_MARGIN_PP = 2.0
+# 보유 종목 시세를 동시에 받는 최대 개수. 종목 수만큼 왕복이 직렬로 쌓이던 것을 덮되,
+# 네이버에 한꺼번에 몰지 않도록 상한을 둔다.
+MAX_FETCH_WORKERS = 4
 # 90,000/100,000-1 은 부동소수점에서 -9.999999999999998이 된다. 표에 -10.0%로 찍히는 값이
 # 밴드에 안 걸리는 어긋남을 막기 위한 경계 허용치.
 BAND_EPS = 1e-9
@@ -254,25 +258,30 @@ def analyze_holdings(
         }
         entry["record"] = record_drawdown(name, to_float(row.get("현재가", "")), today, history)
         code, err = resolve_code(name, overrides)
-        if not code:
+        if code:
+            entry["code"] = code
+        else:
             entry["error"] = f"티커 미해석 — {err}"
-            results.append(entry)
-            continue
-        entry["code"] = code
-
-        bars, ferr = stage_scan.fetch_bars(code, FETCH_CALENDAR_DAYS)
-        if not bars:
-            entry["error"] = f"시세 수집 실패 — {ferr or '응답 없음'}"
-            results.append(entry)
-            continue
-
-        entry.update(peak_drawdown(bars))
-        entry["band"] = band_for(entry["drawdown"])
-        entry["approach"] = approaching_band(
-            pending_bands(entry["drawdown"], entry["peak"], DRAWDOWN_BANDS),
-            DRAWDOWN_WARN_MARGIN_PP,
-        )
         results.append(entry)
+
+    # 시세는 종목끼리 독립이라 동시에 받는다. 결과는 `results`의 원래 자리에 되돌려
+    # 넣으므로 완료 순서가 출력 순서를 흔들지 않는다.
+    pending = [e for e in results if e.get("code")]
+    if pending:
+        with ThreadPoolExecutor(max_workers=min(MAX_FETCH_WORKERS, len(pending))) as pool:
+            fetched = list(
+                pool.map(lambda e: stage_scan.fetch_bars(e["code"], FETCH_CALENDAR_DAYS), pending)
+            )
+        for entry, (bars, ferr) in zip(pending, fetched):
+            if not bars:
+                entry["error"] = f"시세 수집 실패 — {ferr or '응답 없음'}"
+                continue
+            entry.update(peak_drawdown(bars))
+            entry["band"] = band_for(entry["drawdown"])
+            entry["approach"] = approaching_band(
+                pending_bands(entry["drawdown"], entry["peak"], DRAWDOWN_BANDS),
+                DRAWDOWN_WARN_MARGIN_PP,
+            )
     return results
 
 

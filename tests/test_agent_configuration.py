@@ -1966,6 +1966,69 @@ def test_account_mdd_shows_distance_to_both_bands_when_healthy(tmp_path: Path) -
     assert "계좌 MDD -15% 발동선: ₩85,000,000 (현 잔고에서 8.2%p · ₩8,200,000 남음)" in rendered
 
 
+def test_peak_drawdown_fetches_holdings_concurrently_keeping_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """보유 10종목이면 네이버 왕복 10회가 직렬로 쌓인다. 병렬로 돌리되 출력 순서는 입력 순서다."""
+    module = _load_peak_drawdown_module()
+    monkeypatch.setattr(module.si_api, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0))
+
+    import threading
+    import time
+
+    live, peak_live = 0, 0
+    lock = threading.Lock()
+
+    def slow_fetch(code, days):
+        nonlocal live, peak_live
+        with lock:
+            live += 1
+            peak_live = max(peak_live, live)
+        time.sleep(0.05)
+        with lock:
+            live -= 1
+        return [{"date": "20260903", "close": 100.0}], None
+
+    monkeypatch.setattr(module.stage_scan, "fetch_bars", slow_fetch)
+
+    holdings = [
+        {"종목": f"종목{i}", "섹터": "반도체", "현재가": "90", "수익률": "0%", "비중": "1%"}
+        for i in range(6)
+    ]
+    results = module.analyze_holdings(holdings, {}, {}, "2026-09-05")
+
+    assert [r["종목"] for r in results] == [h["종목"] for h in holdings], "출력 순서가 흐트러졌다"
+    assert peak_live > 1, "여전히 한 번에 하나씩 받고 있다"
+    assert peak_live <= module.MAX_FETCH_WORKERS
+
+
+def test_market_signals_fetch_endpoints_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
+    """4개 엔드포인트를 순서대로 기다릴 이유가 없다 — 서로 독립이다."""
+    module = _load_market_signal_module()
+
+    import threading
+    import time
+
+    live, peak_live = 0, 0
+    lock = threading.Lock()
+
+    def slow_api(name):
+        nonlocal live, peak_live
+        with lock:
+            live += 1
+            peak_live = max(peak_live, live)
+        time.sleep(0.05)
+        with lock:
+            live -= 1
+        return {"indices": []}, None
+
+    monkeypatch.setattr(module, "fetch_api", slow_api)
+    data, errors = module.fetch_all()
+
+    assert set(data) == set(module.ENDPOINTS) and not errors
+    assert peak_live > 1, "엔드포인트를 아직 직렬로 받고 있다"
+
+
 def test_account_mdd_action_text_matches_my_rules(tmp_path: Path) -> None:
     """경고에 붙는 대응 문구는 「기본 원칙 13」 원문에서 온다 — 룰이 바뀌면 같이 바뀌어야 한다."""
     module = _load_peak_drawdown_module()
