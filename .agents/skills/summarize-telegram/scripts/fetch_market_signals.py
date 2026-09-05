@@ -60,6 +60,18 @@ MARGIN_CALL_WINDOW_DAYS = 120
 MARGIN_CALL_MIN_DRAWDOWN_PCT = -10.0
 MARGIN_CALL_PEAK_WINDOW = 250
 
+# --- 지수 낙폭 사다리 -------------------------------------------------------
+# 고점 대비 -10%부터 5%마다. 분할 매수의 눈금이자, 깊은 단은 사실상 유일한 타이밍 신호다.
+# 3.3년 실측(저점 18개): 얕은 단은 저점 100거래일 이상 전에 켜져 타이밍이 되지 못하지만
+# 깊은 단은 저점에 붙는다 — 2026-07-30 저점에서 KOSPI는 -30%를 T-2, **-35%를 T-1**에,
+# KOSDAQ은 -40%를 T-2에 처음 밟았다. 단, -14% 수준에서 끝나는 얕은 저점은 깊은 단에
+# 영영 닿지 않으므로 이 신호는 **큰 폭락에서만** 타이밍 역할을 한다.
+DRAWDOWN_RUNGS = tuple(float(-x) for x in range(10, 65, 5))
+# 같은 단을 되풀이 알리지 않기 위한 쿨다운(거래일). 낙폭이 단 경계를 왕복하면 하루 이틀
+# 간격으로 같은 「신규」가 다시 뜬다 — 실측에서 KOSPI -30%가 2026-07-28·08-03·08-06 세 번
+# 발동했다. 직전 이만큼 안에 이미 밟았던 단은 새 사건으로 세지 않는다.
+RUNG_RECLAIM_DAYS = 10
+
 SIGNAL_EMOJI = {"red": "🔴", "yellow": "🟡", "green": "🟢"}
 STATUS_KO = {
     "market_in_correction": "조정장",
@@ -108,6 +120,57 @@ def index_drawdown(monitor_rows: list[dict], market: str = "KOSPI") -> float | N
         return None
     peak = max(window)
     return (window[-1] / peak - 1) * 100 if peak else None
+
+
+def drawdown_ladder(monitor_rows: list[dict], market: str) -> dict:
+    """지수의 52주 고점 대비 낙폭을 사다리 눈금으로 옮긴다.
+
+    `newly`는 **오늘 처음 밟은 단**이다. 매일 같은 단에 머무르는 것은 사건이 아니고,
+    새 단을 밟는 순간이 분할 매수의 행동 시점이다.
+    """
+    closes = [r[market] for r in monitor_rows if r.get(market)]
+    if not closes:
+        return {"drawdown": None, "breached": [], "newly": [], "next_rung": None, "next_level": None}
+
+    def dd_at(end: int) -> float | None:
+        window = closes[max(0, end - MARGIN_CALL_PEAK_WINDOW + 1) : end + 1]
+        peak = max(window) if window else None
+        return (window[-1] / peak - 1) * 100 if peak else None
+
+    today = dd_at(len(closes) - 1)
+    breached = [r for r in DRAWDOWN_RUNGS if today is not None and today <= r]
+    # 「신규」는 어제와의 비교가 아니라 **쿨다운 구간 전체**와의 비교다.
+    recent: set[float] = set()
+    for k in range(2, min(RUNG_RECLAIM_DAYS, len(closes) - 1) + 2):
+        past = dd_at(len(closes) - k)
+        if past is None:
+            continue
+        recent.update(r for r in DRAWDOWN_RUNGS if past <= r)
+    remaining = [r for r in DRAWDOWN_RUNGS if today is None or today > r]
+    next_rung = remaining[0] if remaining else None
+    peak = max(closes[-MARGIN_CALL_PEAK_WINDOW:])
+    return {
+        "drawdown": today,
+        "breached": breached,
+        "newly": [r for r in breached if r not in recent],
+        "next_rung": next_rung,
+        "next_level": peak * (1 + next_rung / 100) if next_rung is not None else None,
+    }
+
+
+def leverage_entry_window(rows: list[dict], monitor_rows: list[dict] | None = None) -> dict:
+    """「레버리지 규칙 2」 지수 레버리지 베팅 가능 구간.
+
+    낙폭이 첫 단(-10%) 아래이고 **동시에** 반대매매가 +2σ로 튄 날에만 열린다.
+    사다리를 함께 실어 보내는 이유: 구간이 열린 것과 *어느 단에서* 살지는 다른 질문이다.
+    """
+    climax = margin_call_climax(rows, monitor_rows)
+    out: dict[str, dict] = {}
+    for market in LEVERAGE_MARKETS:
+        ladder = drawdown_ladder(monitor_rows or [], market)
+        v = climax[market]
+        out[market] = {"open": bool(v["climax"]), "climax": v, "ladder": ladder}
+    return out
 
 
 def margin_call_climax(rows: list[dict], monitor_rows: list[dict] | None = None) -> dict:
@@ -176,12 +239,30 @@ def print_margin_call(rows: list[dict], monitor_rows: list[dict] | None = None) 
     for market, v in result.items():
         dd = f"{v['drawdown']:+.1f}%" if v["drawdown"] is not None else "미상"
         if v["climax"]:
-            state = "🟢 성립 — 「레버리지 규칙 3」 발동 중이어도 분할 신규 매수 가능"
+            state = "🟢 베팅 가능 구간 — 「레버리지 규칙 3」 발동 중이어도 분할 신규 매수 가능"
         elif v["spike"]:
             state = "미성립 — 반대매매는 급증했으나 낙폭 국면 조건 미달"
         else:
             state = "미성립"
         print(f"    {market}: 낙폭 {dd} → {state}")
+
+
+def print_drawdown_ladder(monitor_rows: list[dict]) -> None:
+    print(f"[지수 낙폭 사다리] 52주 고점 대비 · -10%부터 5%마다")
+    for market in LEVERAGE_MARKETS:
+        L = drawdown_ladder(monitor_rows, market)
+        if L["drawdown"] is None:
+            print(f"  {market}: 미상")
+            continue
+        marks = " ".join(f"{'✅' if r in L['breached'] else '·'}{r:.0f}%" for r in DRAWDOWN_RUNGS[:7])
+        line = f"  {market}: {L['drawdown']:+.1f}%  [{marks}]"
+        if L["next_rung"] is not None:
+            gap = L["drawdown"] - L["next_rung"]
+            line += f"  다음 {L['next_rung']:.0f}% = {L['next_level']:,.0f}p ({gap:.1f}%p 남음)"
+        print(line)
+        if L["newly"]:
+            rungs = ", ".join(f"{r:.0f}%" for r in L["newly"])
+            print(f"    ⚠️ 오늘 처음 밟은 단: {rungs} — 분할 매수 행동 시점")
 
 
 def daily_changes(rows: list[dict], market: str) -> list[tuple[str, float]]:
@@ -336,6 +417,8 @@ def main() -> int:
         print_credit(cb)
         rows = (cb.get("data") or cb.get("credit_balance") or []) if isinstance(cb, dict) else cb
         print_margin_call(rows, (mm or {}).get("data", []))
+    if mm:
+        print_drawdown_ladder(mm.get("data", []))
     # 일부만 실패한 경우: 받은 부분은 출력하고 누락 사실을 남긴다
     for name, err in errors.items():
         print(f"[누락] {name} — {err}", file=sys.stderr)

@@ -1286,6 +1286,84 @@ def test_margin_call_climax_excludes_today_from_its_own_baseline() -> None:
     assert spike["climax"] is True
 
 
+def _ladder_monitor(closes: list[float]) -> list[dict]:
+    return [{"일자": f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}", "KOSPI": c, "KOSDAQ": c}
+            for i, c in enumerate(closes)]
+
+
+def test_drawdown_ladder_reports_every_five_percent_from_ten() -> None:
+    """고점 대비 -10%부터 5%마다 단을 둔다 — 어느 단까지 밟았는지가 분할 매수의 눈금이다."""
+    module = _load_market_signal_module()
+
+    assert module.DRAWDOWN_RUNGS[:5] == (-10.0, -15.0, -20.0, -25.0, -30.0)
+    assert -35.0 in module.DRAWDOWN_RUNGS and -40.0 in module.DRAWDOWN_RUNGS
+
+    ladder = module.drawdown_ladder(_ladder_monitor([100.0] * 60 + [78.0]), "KOSPI")
+
+    assert round(ladder["drawdown"], 1) == -22.0
+    assert ladder["breached"] == [-10.0, -15.0, -20.0]
+    assert ladder["next_rung"] == -25.0
+    # 다음 단까지 지수가 얼마여야 하는지 — 미리 알아야 주문으로 옮긴다.
+    assert round(ladder["next_level"], 1) == 75.0
+
+
+def test_drawdown_ladder_flags_the_rung_first_touched_today() -> None:
+    """새로 밟은 단이 행동 시점이다. 2026-07-30 저점에서 KOSPI는 -35%를 T-1에 처음 밟았다."""
+    module = _load_market_signal_module()
+
+    # 어제 -22%(=-20% 단), 오늘 -27%(=-25% 단 신규)
+    ladder = module.drawdown_ladder(_ladder_monitor([100.0] * 60 + [78.0, 73.0]), "KOSPI")
+
+    assert ladder["newly"] == [-25.0]
+
+    # 같은 단에 머무르면 신규가 아니다.
+    same = module.drawdown_ladder(_ladder_monitor([100.0] * 60 + [78.0, 77.0]), "KOSPI")
+    assert same["newly"] == []
+
+
+def test_drawdown_ladder_does_not_re_announce_a_rung_it_just_left() -> None:
+    """경계선을 왕복하면 같은 단이 며칠 간격으로 되풀이 발동한다.
+
+    실측 재현에서 KOSPI는 2026-07-28에 -30%를 처음 밟고, 반등 뒤 08-03·08-06에 같은 단을
+    다시 「신규」로 알렸다. 분할 매수 신호가 같은 자리에서 세 번 울리면 눈금 구실을 못 한다.
+    """
+    module = _load_market_signal_module()
+
+    # -30% 밟음 → 회복 → 재이탈. 재이탈은 신규가 아니다.
+    closes = [100.0] * 60 + [69.0, 75.0, 69.5]
+    ladder = module.drawdown_ladder(_ladder_monitor(closes), "KOSPI")
+    assert -30.0 in ladder["breached"]
+    assert ladder["newly"] == [], "쿨다운 안에서 같은 단이 다시 신규로 잡혔다"
+
+    # 쿨다운을 넘겨 오래 떠 있다가 다시 내려오면 그때는 신규다.
+    long_gap = [100.0] * 60 + [69.0] + [75.0] * (module.RUNG_RECLAIM_DAYS + 1) + [69.5]
+    assert module.drawdown_ladder(_ladder_monitor(long_gap), "KOSPI")["newly"] == [-30.0]
+
+
+def test_drawdown_ladder_is_quiet_above_the_first_rung() -> None:
+    """-10%에 못 미치면 사다리는 아직 시작도 안 했다."""
+    module = _load_market_signal_module()
+    ladder = module.drawdown_ladder(_ladder_monitor([100.0] * 60 + [95.0]), "KOSPI")
+
+    assert ladder["breached"] == [] and ladder["next_rung"] == -10.0
+
+
+def test_leverage_entry_window_needs_both_the_drawdown_and_the_climax() -> None:
+    """「레버리지 규칙 2」 베팅 가능 구간 = 낙폭 -10% 이하 **그리고** 반대매매 2σ."""
+    module = _load_market_signal_module()
+    calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
+    credit = _credit_rows(calm + [2000.0])
+    deep = _deep_drawdown(credit)
+
+    window = module.leverage_entry_window(credit, deep)
+    assert window["KOSPI"]["open"] is True
+    assert window["KOSPI"]["ladder"]["breached"], "사다리 단이 함께 실려야 어디서 살지 정할 수 있다"
+
+    # 반대매매가 잠잠하면 낙폭이 깊어도 구간이 아니다.
+    quiet = _credit_rows(calm + [110.0])
+    assert module.leverage_entry_window(quiet, _deep_drawdown(quiet))["KOSPI"]["open"] is False
+
+
 def test_margin_call_climax_is_judged_per_index() -> None:
     """반대매매는 시장 전체 값이지만 낙폭 국면은 지수마다 다르다 — 레버리지 상품이 지수별이므로 따로 낸다.
 
@@ -1372,6 +1450,18 @@ def test_leverage_rule_three_constants_match_the_documented_table() -> None:
     assert f"| `VOLATILE_DAY_TRIGGER` | {module.VOLATILE_DAY_TRIGGER} |" in table
     assert "전부 양수" in table
     assert "섹터" in table
+
+
+def test_drawdown_ladder_constants_are_documented() -> None:
+    """단 간격과 쿨다운은 운영 선택이다 — 근거가 남아야 다음 사람이 바꿀 수 있다."""
+    module = _load_market_signal_module()
+    skill = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "`DRAWDOWN_RUNGS`" in skill
+    assert f"`RUNG_RECLAIM_DAYS` | {module.RUNG_RECLAIM_DAYS}" in skill
+    # 되풀이 발동 실측과 T-1 근거가 함께 남아야 한다.
+    assert "08-06" in skill and "T-1" in skill
+    assert "오늘 처음 밟은 단" in skill
 
 
 def test_margin_call_window_rationale_is_documented() -> None:
