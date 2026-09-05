@@ -264,6 +264,21 @@ briefing; the `monthly_context.md` entry carries the condition table and is
 updated only when a tranche opens, the ladder is invalidated, or the conditions
 themselves change.
 
+`.agents/skills/analyze-stock/scripts/http_cache.py` is the shared HTTP response cache the
+network-touching scripts route through — `fetch_stock_info.fetch_json`, `stage_scan.fetch_bars`
+and `fetch_market_signals.fetch_api`, which means `peak_drawdown` and `cash_deploy_check` get it
+for free through the functions they already reuse. It exists because one `analyze-stock` run
+pulls the ~128 KB `info-tab` payload twice (once for the quote, once for the stage verdict) and a
+re-run of a briefing repeats every call. **The TTL is short — 15분 by default — rather than
+daily, because `info-tab` carries 현재가**: a day-scoped entry would hand a late-afternoon re-run
+the morning's price. Entries live under the gitignored `output/.cache/http/`, keyed by URL plus
+whether a cookie was sent — never by the cookie's value, which is written nowhere — so an
+unauthenticated HTTP 401 body can never be replayed to an authenticated call. Only successful
+responses are stored, so a transient 401 or timeout does not stick for the rest of the TTL.
+`INVAGENT_HTTP_CACHE=0` disables it, `INVAGENT_HTTP_CACHE_TTL` overrides the window in seconds,
+and every script that reaches the network exposes `--no-cache`. Change the constant and the
+minutes quoted here together; a test compares them.
+
 Canonical project skills live in `.agents/skills/`: `advice`, `analyze-stock`,
 `monthly-investment-review`, `opendart`, `stage-analysis`, and
 `summarize-telegram`. Each `.claude/skills/<name>` is a symlink to the canonical

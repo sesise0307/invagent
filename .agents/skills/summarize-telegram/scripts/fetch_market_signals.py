@@ -16,6 +16,13 @@ import json
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+_STOCK_INFO_DIR = Path(__file__).resolve().parents[2] / "analyze-stock" / "scripts"
+if str(_STOCK_INFO_DIR) not in sys.path:
+    sys.path.insert(0, str(_STOCK_INFO_DIR))
+
+import http_cache  # noqa: E402  (경로 주입 후에만 import된다)
 
 PAGE_URL = "https://stockeasy.intellio.kr/market-analysis?tab=overview"
 API_BASE = "https://stockeasy.intellio.kr/stockdata/api/v1/market"
@@ -47,13 +54,24 @@ def fetch_api(name: str):
             "Referer": PAGE_URL,
         },
     )
+    # cash_deploy_check도 같은 엔드포인트를 부른다 — 브리핑 한 번에 두 번 나가던 호출이다.
+    cached = http_cache.load(url, authed=False)
+    if cached is not None:
+        try:
+            return json.loads(cached.decode("utf-8")), None
+        except ValueError:
+            pass
+
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            return json.loads(resp.read().decode("utf-8")), None
+            body = resp.read()
+        payload = json.loads(body.decode("utf-8"))
     except urllib.error.HTTPError as e:
         return None, f"HTTP {e.code}"
     except Exception as e:  # 네트워크 오류·JSON 파싱 실패 등
         return None, str(e)[:80]
+    http_cache.store(url, body, authed=False)
+    return payload, None
 
 
 def fmt_pct(x) -> str:

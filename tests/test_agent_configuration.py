@@ -539,6 +539,210 @@ def _patch_stock_info_fetch(
     return calls
 
 
+def _load_http_cache_module():
+    script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "http_cache.py"
+    spec = importlib.util.spec_from_file_location("http_cache", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_http_cache_round_trips_within_the_ttl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """같은 URL을 짧은 간격으로 두 번 부르는 경로(analyze-stock의 info-tab 중복)를 없애는 것이 목적이다."""
+    module = _load_http_cache_module()
+    monkeypatch.setattr(module, "CACHE_ROOT", tmp_path)
+
+    url = "https://example.test/stock-info/info-tab/000660"
+    assert module.load(url, authed=True) is None
+
+    module.store(url, b'{"ok": 1}', authed=True)
+    assert module.load(url, authed=True) == b'{"ok": 1}'
+
+
+def test_http_cache_expires_and_never_mixes_auth_states(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """비인증 401 본문이 인증 호출에 재생되면 쿠키를 넣어도 계속 401로 보인다."""
+    module = _load_http_cache_module()
+    monkeypatch.setattr(module, "CACHE_ROOT", tmp_path)
+    url = "https://example.test/stock-info/info-tab/000660"
+
+    module.store(url, b"anon", authed=False)
+    assert module.load(url, authed=True) is None
+    assert module.load(url, authed=False) == b"anon"
+
+    # TTL이 지나면 없는 것으로 취급한다.
+    assert module.load(url, authed=False, ttl=0) is None
+
+
+def test_http_cache_key_never_carries_the_cookie(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """캐시 경로도 파일 내용도 쿠키 값을 남기면 안 된다 — `output/`은 gitignore지만 평문 디스크다."""
+    module = _load_http_cache_module()
+    monkeypatch.setattr(module, "CACHE_ROOT", tmp_path)
+    url = "https://example.test/x"
+
+    module.store(url, b"body", authed=True)
+    written = list(tmp_path.rglob("*"))
+    blob = "".join(str(p) for p in written)
+    assert "SESSION" not in blob and "cookie" not in blob.lower()
+
+
+def test_http_cache_can_be_switched_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """재현이 필요한 순간(캐시 오염 의심)에 끌 수 있어야 한다."""
+    module = _load_http_cache_module()
+    monkeypatch.setattr(module, "CACHE_ROOT", tmp_path)
+    monkeypatch.setenv("INVAGENT_HTTP_CACHE", "0")
+
+    module.store("https://example.test/x", b"body", authed=False)
+    assert module.load("https://example.test/x", authed=False) is None
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        return False
+
+
+def test_stock_info_serves_a_repeat_call_from_the_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """한 번의 analyze-stock 실행이 info-tab(약 128KB)을 두 번 받던 경로를 없앤다."""
+    module = _load_stock_info_module()
+    monkeypatch.setattr(module.http_cache, "CACHE_ROOT", tmp_path)
+
+    calls: list[str] = []
+
+    def fake_urlopen(req, timeout=None):
+        calls.append(req.full_url)
+        return _FakeResponse(b'{"stock_code": "064290"}')
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+
+    first, err1 = module.fetch_json("/stock-info/info-tab/064290")
+    second, err2 = module.fetch_json("/stock-info/info-tab/064290")
+
+    assert (err1, err2) == (None, None)
+    assert first == second == {"stock_code": "064290"}
+    assert len(calls) == 1, "두 번째 호출이 네트워크를 다시 탔다"
+
+
+def test_stock_info_never_caches_a_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """일시적인 401·타임아웃이 TTL 동안 고착되면 쿠키를 고쳐도 계속 실패로 보인다."""
+    module = _load_stock_info_module()
+    monkeypatch.setattr(module.http_cache, "CACHE_ROOT", tmp_path)
+
+    state = {"fail": True}
+
+    def flaky_urlopen(req, timeout=None):
+        if state["fail"]:
+            raise module.urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+        return _FakeResponse(b'{"ok": 1}')
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", flaky_urlopen)
+
+    assert module.fetch_json("/stock-info/info-tab/064290") == (None, "HTTP 401")
+    state["fail"] = False
+    payload, err = module.fetch_json("/stock-info/info-tab/064290")
+    assert (payload, err) == ({"ok": 1}, None)
+
+
+def _load_stage_scan_module():
+    script_path = SKILLS_ROOT / "stage-analysis" / "scripts" / "stage_scan.py"
+    spec = importlib.util.spec_from_file_location("stage_scan_cache", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_daily_bars_and_market_signals_share_the_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """peak_drawdown은 종목마다, cash_deploy_check은 지수마다 같은 네이버 일봉을 다시 받는다."""
+    stage = _load_stage_scan_module()
+    monkeypatch.setattr(stage.http_cache, "CACHE_ROOT", tmp_path)
+
+    body = "[['날짜'],\n['20260903', 1, 2, 3, 4, 5, 0.0]]".encode("utf-8")
+    calls: list[str] = []
+
+    def fake_urlopen(req, timeout=None):
+        calls.append(req.full_url)
+        return _FakeResponse(body)
+
+    monkeypatch.setattr(stage.urllib.request, "urlopen", fake_urlopen)
+    first, err1 = stage.fetch_bars("000660", 400)
+    second, err2 = stage.fetch_bars("000660", 400)
+    assert (err1, err2) == (None, None)
+    assert first == second and len(calls) == 1
+
+    signals = _load_market_signal_module()
+    monkeypatch.setattr(signals.http_cache, "CACHE_ROOT", tmp_path)
+    sig_calls: list[str] = []
+
+    def fake_signal_urlopen(req, timeout=None):
+        sig_calls.append(req.full_url)
+        return _FakeResponse(b'{"indices": []}')
+
+    monkeypatch.setattr(signals.urllib.request, "urlopen", fake_signal_urlopen)
+    assert signals.fetch_api("indices") == ({"indices": []}, None)
+    assert signals.fetch_api("indices") == ({"indices": []}, None)
+    assert len(sig_calls) == 1
+
+
+def test_no_cache_flag_forces_a_fresh_fetch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """캐시 오염이 의심될 때 껐다 확인할 수 있어야 한다 — 네트워크를 타는 스크립트 전부에 붙인다."""
+    module = _load_stock_info_module()
+    monkeypatch.setattr(module.http_cache, "CACHE_ROOT", tmp_path)
+    monkeypatch.delenv("INVAGENT_HTTP_CACHE", raising=False)
+
+    calls: list[str] = []
+
+    def fake_urlopen(req, timeout=None):
+        calls.append(req.full_url)
+        return _FakeResponse(b'{"ok": 1}')
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+
+    module.fetch_json("/stock-info/info-tab/064290")
+    assert len(calls) == 1
+
+    module.http_cache.disable()
+    module.fetch_json("/stock-info/info-tab/064290")
+    assert len(calls) == 2, "disable() 후에도 캐시가 응답했다"
+
+    # 네트워크를 타는 스크립트 넷 모두 플래그를 노출하고 실제로 끈다.
+    for name in ("analyze-stock/scripts/fetch_stock_info.py",
+                 "stage-analysis/scripts/stage_scan.py",
+                 "summarize-telegram/scripts/peak_drawdown.py",
+                 "summarize-telegram/scripts/cash_deploy_check.py"):
+        text = (SKILLS_ROOT / name).read_text(encoding="utf-8")
+        assert "--no-cache" in text, f"{name}에 --no-cache가 없다"
+        assert "http_cache.disable()" in text, f"{name}이 플래그를 캐시에 연결하지 않았다"
+
+
+def test_http_cache_ttl_is_documented_where_it_is_explained() -> None:
+    """TTL은 시세 신선도와 맞물린 운영 선택이다 — 상수만 바꾸고 근거가 남으면 다음 사람이 못 읽는다."""
+    module = _load_http_cache_module()
+    agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    minutes = module.DEFAULT_TTL_SECONDS // 60
+    assert f"{minutes}분" in agents, "AGENTS.md의 TTL 설명이 상수와 어긋난다"
+    assert "INVAGENT_HTTP_CACHE" in agents
+    # 왜 일 단위가 아닌지가 이 설계의 핵심이다.
+    assert "현재가" in agents.split("http_cache")[1][:1200]
+
+
 def test_stock_info_endpoints_point_at_stockdata_api() -> None:
     """종목 데이터는 /stockdata/api/v1 경로에서 받는다."""
     module = _load_stock_info_module()

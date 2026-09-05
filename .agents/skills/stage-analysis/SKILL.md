@@ -20,7 +20,7 @@ description: 개별 종목이 주가 성숙 4단계(Stage Analysis) 중 어디�
 
 ```bash
 uv run python .agents/skills/stage-analysis/scripts/stage_scan.py "<종목명 또는 6자리 티커>" \
-  [--days 1100] [--project] [--no-fundamental] [--json]
+  [--days 1100] [--project] [--no-fundamental] [--json] [--no-cache]
 ```
 
 - 종료 코드: `0` 정상(부분 누락 포함) / `1` 시세 수집 실패 / `2` 종목명 후보 다수.

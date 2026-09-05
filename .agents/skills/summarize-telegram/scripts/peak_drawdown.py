@@ -48,6 +48,7 @@ for _extra in ("stage-analysis/scripts", "analyze-stock/scripts"):
 
 import fetch_stock_info as si_api  # noqa: E402  (경로 주입 후에만 import된다)
 import stage_scan  # noqa: E402
+import http_cache  # noqa: E402  (같은 경로에 있다)
 
 # --- 판정 임계값 -----------------------------------------------------------
 # 전고점 창과 밴드는 이 스킬의 운영 기준이다. 바꾸려면 SKILL.md의 밴드→룰 매핑도 함께 고친다.
@@ -568,10 +569,13 @@ def append_section(path: Path, section: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("snapshot", type=Path, help="포트폴리오 스냅샷 경로")
+    parser.add_argument("--no-cache", action="store_true", help="캐시를 쓰지 않고 매번 새로 받는다 (캐시 오염 의심 시)")
     parser.add_argument("--append", action="store_true", help="스냅샷 파일에 섹션을 덧붙인다")
     parser.add_argument("--overrides", type=Path, help="티커 override 파일 경로")
     parser.add_argument("--portfolio-dir", type=Path, help="계좌 MDD용 스냅샷 디렉토리")
     args = parser.parse_args(argv)
+    if args.no_cache:
+        http_cache.disable()
 
     try:
         text = args.snapshot.read_text(encoding="utf-8")

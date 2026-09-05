@@ -34,6 +34,7 @@ if str(_STOCK_INFO_DIR) not in sys.path:
     sys.path.insert(0, str(_STOCK_INFO_DIR))
 
 import fetch_stock_info as si_api  # noqa: E402  (경로 주입 후에만 import된다)
+import http_cache  # noqa: E402  (같은 경로에 있다)
 
 SISE_URL = "https://api.finance.naver.com/siseJson.naver"
 TIMEOUT = 20
@@ -110,17 +111,30 @@ def fetch_bars(code: str, days: int) -> tuple[list[dict], str | None]:
         f"?symbol={code}&requestType=1"
         f"&startTime={start.strftime('%Y%m%d')}&endTime={end.strftime('%Y%m%d')}&timeframe=day"
     )
+    url = SISE_URL + params
+    # peak_drawdown은 보유 종목마다, cash_deploy_check은 지수마다 이 함수를 부른다.
+    # 무인증 엔드포인트라 인증 축은 항상 anon이다.
+    cached = http_cache.load(url, authed=False)
+    if cached is not None:
+        bars = parse_sise(cached.decode("utf-8"))
+        if bars:
+            return bars, None
+
     req = urllib.request.Request(
-        SISE_URL + params,
+        url,
         headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com/"},
     )
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            return parse_sise(resp.read().decode("utf-8")), None
+            body = resp.read()
+        bars = parse_sise(body.decode("utf-8"))
     except urllib.error.HTTPError as e:
         return [], f"HTTP {e.code}"
     except Exception as e:  # 네트워크 오류·파싱 실패
         return [], str(e)[:80]
+    if bars:
+        http_cache.store(url, body, authed=False)
+    return bars, None
 
 
 # --- 가격 지표 (순수 함수) --------------------------------------------------
@@ -693,6 +707,7 @@ def print_projection(proj: dict) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Stage Analysis 단계 판정 (통합 버전)")
     parser.add_argument("query", help="종목명 또는 6자리 티커")
+    parser.add_argument("--no-cache", action="store_true", help="캐시를 쓰지 않고 매번 새로 받는다 (캐시 오염 의심 시)")
     parser.add_argument("--days", type=int, default=1100, help="일봉 조회 일수 (기본 1100 ≈ 3년)")
     parser.add_argument("--no-fundamental", action="store_true", help="영업이익 축 없이 가격만으로 판정")
     parser.add_argument(
@@ -702,6 +717,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--json", action="store_true", help="판정 결과 JSON 덤프")
     args = parser.parse_args(argv)
+    if args.no_cache:
+        http_cache.disable()
 
     stock, err, code = si_api.resolve_stock(args.query)
     if err:

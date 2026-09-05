@@ -31,6 +31,12 @@ import urllib.request
 from datetime import date
 from pathlib import Path
 
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+import http_cache  # noqa: E402  (경로 주입 후에만 import된다)
+
 API_BASE = "https://stockeasy.intellio.kr/stockdata/api/v1"
 PAGE_BASE = "https://stockeasy.intellio.kr/stock-analysis/stock-info"
 REPORTS_PAGE = "https://stockeasy.intellio.kr/stock-analysis/reports"
@@ -90,14 +96,26 @@ def fetch_json(
     }
     if cookie:
         headers["Cookie"] = cookie
+    # 같은 실행 안에서 info-tab(약 128KB)을 두 번 받는 경로가 있다 — 짧은 TTL 캐시로 덮는다.
+    cached = http_cache.load(url, authed=bool(cookie))
+    if cached is not None:
+        try:
+            return json.loads(cached.decode("utf-8")), None
+        except ValueError:
+            pass  # 손상된 항목은 그냥 다시 받는다
+
     req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            return json.loads(resp.read().decode("utf-8")), None
+            body = resp.read()
+        payload = json.loads(body.decode("utf-8"))
     except urllib.error.HTTPError as e:
         return None, f"HTTP {e.code}"
     except Exception as e:  # 네트워크 오류·JSON 파싱 실패 등
         return None, str(e)[:80]
+    # 성공한 응답만 넣는다. 실패를 캐시하면 일시적인 401이 TTL 동안 고착된다.
+    http_cache.store(url, body, authed=bool(cookie))
+    return payload, None
 
 
 # --- 값 정리 ---------------------------------------------------------------
@@ -466,6 +484,7 @@ def build_summary(stock: dict, info: dict | None, news: dict | None, reports: di
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="StockEasy 종목정보 수집")
     parser.add_argument("query", help="종목명 또는 6자리 티커")
+    parser.add_argument("--no-cache", action="store_true", help="캐시를 쓰지 않고 매번 새로 받는다 (캐시 오염 의심 시)")
     parser.add_argument("--news", type=int, default=10, help="뉴스 건수 (기본 10)")
     parser.add_argument("--reports", type=int, default=12, help="목표주가 표시 건수 (기본 12)")
     parser.add_argument("--quarters", type=int, default=4, help="확정 분기 표시 개수 (기본 4)")
@@ -482,6 +501,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--json", action="store_true", help="압축 JSON 덤프")
     args = parser.parse_args(argv)
+    if args.no_cache:
+        http_cache.disable()
 
     stock, err, code = resolve_stock(args.query)
     if err:

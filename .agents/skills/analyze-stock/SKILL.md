@@ -162,7 +162,7 @@ uv run python .agents/skills/analyze-stock/scripts/find_reports.py "<종목명>"
 
 ```bash
 uv run python .agents/skills/analyze-stock/scripts/fetch_stock_info.py "<종목명 또는 6자리 티커>" \
-  [--since <기준일>] [--news 10] [--reports 12] [--summaries 5] [--detail-chars 800]
+  [--since <기준일>] [--news 10] [--reports 12] [--summaries 5] [--detail-chars 800] [--no-cache]
 ```
 
 - 티커는 **5단계 `company`가 확정한 값을 그대로 넘긴다.** 재식별을 막는다. 5단계가 실패했으면 종목명을 넘긴다.
@@ -175,6 +175,8 @@ uv run python .agents/skills/analyze-stock/scripts/fetch_stock_info.py "<종목�
   - ⛔ `추정 E` 행은 **증권사 컨센서스이지 공시가 아니다.** DART 확정치와 같은 표·같은 행에
     나란히 놓지 않는다. 대조할 때는 「확정 vs 컨센」임을 명시한다.
 - 출처 표기: `StockEasy stock-info/<티커>` + 조회일. 스크립트 첫 줄에 URL과 조회일이 찍힌다.
+- 응답은 15분 캐시된다. 같은 실행에서 이어 도는 `stage_scan.py`가 `info-tab`을 다시 받지 않게
+  하려는 것이고, 시세가 들어 있어 TTL이 짧다. 캐시 오염이 의심되면 `--no-cache`로 다시 받는다.
 
 **스테이지 판정 (`stage-analysis` 스킬 스크립트)**
 

@@ -29,6 +29,7 @@ for _extra in ("stage-analysis/scripts", "summarize-telegram/scripts"):
 
 from fetch_market_signals import fetch_api  # noqa: E402  (경로 주입 후에만 import된다)
 from stage_scan import fetch_bars, sma  # noqa: E402
+import http_cache  # noqa: E402  (analyze-stock/scripts 경로에 있다)
 
 # --- 사다리 상수 (2026-09-03 확정) -------------------------------------------
 # 사다리를 세운 날. FTD는 이 날짜보다 뒤에 찍힌 것만 새 신호로 인정한다.
@@ -244,7 +245,12 @@ def main() -> int:
     p = argparse.ArgumentParser(description="현금 투입 사다리 채점 (2026-09-03 확정 조건)")
     p.add_argument("--vkospi", type=float, help="오늘 VKOSPI 종가 (1-2단계에서 수집한 값)")
     p.add_argument("--net-buy-days", type=int, help="외국인·기관 중 최대 연속 순매수 일수")
+    p.add_argument(
+        "--no-cache", action="store_true", help="캐시를 쓰지 않고 매번 새로 받는다 (캐시 오염 의심 시)"
+    )
     args = p.parse_args()
+    if args.no_cache:
+        http_cache.disable()
 
     metrics, notes = collect(args.vkospi, args.net_buy_days)
     conditions = grade(metrics, date.today())
