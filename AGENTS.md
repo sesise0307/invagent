@@ -288,6 +288,13 @@ Use `uv` for local development.
   anything under `.agents/skills/` or `template/`.
 - `uv run invagent fetch-messages --days 1`: manually verify message fetching.
 
+Skill scripts under `.agents/skills/**/scripts/` are invoked directly rather than through
+the package, so each one must run standalone. They are not restricted to the standard
+library: a script may depend on third-party packages as long as it stays self-contained,
+declaring them inline with `uv run --with <pkg>` (or `uvx --with <pkg>`) in the command
+the SKILL.md documents, so no repository-wide install is required to run it. Keep the
+dependency list in the script's docstring in step with the command in its SKILL.md.
+
 Analyst report PDFs are read straight through the agent's file-read tool, which
 renders the pages — no local PDF toolchain needed. Past 10 pages the read needs an
 explicit page range (`analyze-stock/SKILL.md` step 4).
