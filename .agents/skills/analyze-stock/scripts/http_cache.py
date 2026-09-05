@@ -32,18 +32,30 @@ from pathlib import Path
 CACHE_ROOT = Path(__file__).resolve().parents[4] / "output" / ".cache" / "http"
 
 DEFAULT_TTL_SECONDS = 900
+# TTL이 지난 항목도 파일로는 남는다. 하루 지난 것은 다시 쓰일 일이 없으므로 지운다.
+RETENTION_SECONDS = 86_400
 ENV_ENABLED = "INVAGENT_HTTP_CACHE"
 ENV_TTL = "INVAGENT_HTTP_CACHE_TTL"
 
 
+# `--no-cache`가 세운 플래그. 환경변수를 고치지 않는 이유: 프로세스 환경을 건드리면 같은
+# 프로세스에서 이어지는 다른 작업(테스트 포함)까지 조용히 캐시를 잃고, 그 영향이 실행 순서에
+# 따라 달라진다. 자식 프로세스에 끄기를 전달하는 쪽은 환경변수를 **넘겨서** 한다
+# (`invagent daily-prep`의 `Step.env`).
+_forced_off = False
+
+
 def enabled() -> bool:
-    """`INVAGENT_HTTP_CACHE=0`이면 캐시를 쓰지 않는다."""
+    """`INVAGENT_HTTP_CACHE=0`이거나 `disable()`을 불렀으면 캐시를 쓰지 않는다."""
+    if _forced_off:
+        return False
     return os.environ.get(ENV_ENABLED, "1").strip() not in {"0", "false", "no"}
 
 
 def disable() -> None:
     """이 프로세스에서 캐시를 끈다. 스크립트의 `--no-cache`가 부른다."""
-    os.environ[ENV_ENABLED] = "0"
+    global _forced_off
+    _forced_off = True
 
 
 def ttl_seconds() -> int:
@@ -78,10 +90,18 @@ def load(url: str, *, authed: bool, ttl: int | None = None) -> bytes | None:
         return None
 
 
+_purged = False
+
+
 def store(url: str, body: bytes, *, authed: bool) -> None:
     """성공 응답만 넣는다. 캐시 쓰기 실패는 조용히 무시한다 — 수집을 막을 이유가 없다."""
+    global _purged
     if not enabled():
         return
+    # 첫 쓰기에서 한 번만 쓸어낸다. store()마다 전수 스캔하면 종목 수만큼 반복된다.
+    if not _purged:
+        _purged = True
+        purge()
     path = cache_path(url, authed=authed)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -92,7 +112,7 @@ def store(url: str, body: bytes, *, authed: bool) -> None:
         pass
 
 
-def purge(older_than: int = 86_400) -> int:
+def purge(older_than: int = RETENTION_SECONDS) -> int:
     """오래된 항목을 지운다. 지운 개수를 반환한다."""
     now, removed = time.time(), 0
     if not CACHE_ROOT.exists():

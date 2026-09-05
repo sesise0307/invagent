@@ -136,8 +136,64 @@ def test_daily_prep_passes_optional_inputs_through():
     ladder = next(s for s in with_args if s.name == "현금 투입 사다리")
     assert "--vkospi" in ladder.command and "28.5" in ladder.command
     assert "--net-buy-days" in ladder.command and "5" in ladder.command
-    assert "--no-cache" in ladder.command
 
     without = build_steps(snapshot=None, vkospi=None, net_buy_days=None, no_cache=False)
     ladder = next(s for s in without if s.name == "현금 투입 사다리")
-    assert "--vkospi" not in ladder.command and "--no-cache" not in ladder.command
+    assert "--vkospi" not in ladder.command
+
+
+def test_daily_prep_no_cache_reaches_every_step():
+    """단계마다 `--no-cache`를 붙이면 그 플래그가 없는 스크립트(fetch_market_signals)는 조용히 캐시를 쓴다."""
+    from invagent.daily_prep import build_steps
+
+    off = build_steps(snapshot=None, vkospi=None, net_buy_days=None, no_cache=True)
+    assert off, "단계가 하나도 없다"
+    for step in off:
+        assert step.env.get("INVAGENT_HTTP_CACHE") == "0", f"{step.name}이 캐시를 계속 쓴다"
+
+    on = build_steps(snapshot=None, vkospi=None, net_buy_days=None, no_cache=False)
+    for step in on:
+        assert "INVAGENT_HTTP_CACHE" not in step.env
+
+
+def test_daily_prep_step_env_reaches_the_subprocess():
+    """Step.env가 실제로 자식 프로세스에 전달되지 않으면 위 테스트는 형식만 검사하는 셈이다."""
+    from invagent.daily_prep import Step, run_steps
+
+    result = run_steps([
+        Step(
+            "환경",
+            [sys.executable, "-c", "import os; print(os.environ.get('INVAGENT_HTTP_CACHE', 'unset'))"],
+            env={"INVAGENT_HTTP_CACHE": "0"},
+        )
+    ])[0]
+    assert result.ok and result.stdout.strip() == "0"
+
+def test_daily_prep_cli_exits_zero_even_when_a_step_fails(monkeypatch):
+    """단계 실패가 브리핑을 막지 않는다는 것이 이 명령의 계약이다 — 종료 코드로 지켜야 한다."""
+    from invagent import daily_prep
+
+    monkeypatch.setattr(
+        daily_prep, "build_steps",
+        lambda **kw: [daily_prep.Step("죽는 단계", [sys.executable, "-c", "import sys; sys.stderr.write('boom'); sys.exit(1)"])],
+    )
+
+    result = CliRunner().invoke(cli, ["daily-prep"])
+
+    assert result.exit_code == 0
+    assert "### 죽는 단계" in result.output
+    assert "수집 실패" in result.output and "boom" in result.output
+
+
+def test_daily_prep_render_keeps_partial_output_and_its_warnings():
+    """일부만 실패한 단계는 받은 출력과 누락 사유를 같이 남긴다 — 스킬의 비블로킹 규정 그대로다."""
+    from invagent.daily_prep import StepResult, render
+
+    text = render([
+        StepResult("시장 신호", True, "지수 6,687", "[누락] credit_balance — HTTP 500"),
+        StepResult("사다리", False, "", "cookie 없음"),
+    ])
+
+    assert "지수 6,687" in text
+    assert "credit_balance" in text
+    assert "(수집 실패 — cookie 없음)" in text

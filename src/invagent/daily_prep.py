@@ -11,10 +11,11 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -25,10 +26,16 @@ STEP_TIMEOUT = 180
 
 @dataclass(frozen=True)
 class Step:
-    """실행할 단계 하나. `command`는 subprocess 인자 리스트다."""
+    """실행할 단계 하나. `command`는 subprocess 인자 리스트, `env`는 덧씌울 환경변수다.
+
+    캐시 끄기를 커맨드 플래그가 아니라 환경변수로 넘기는 이유: `fetch_market_signals.py`에는
+    argparse가 없어 `--no-cache`를 받을 자리가 없다. 플래그로 하면 그 단계만 조용히 캐시를
+    계속 쓰게 되므로, 모든 단계에 똑같이 닿는 축을 쓴다.
+    """
 
     name: str
     command: list[str]
+    env: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -47,6 +54,7 @@ def _run(step: Step) -> StepResult:
             text=True,
             timeout=STEP_TIMEOUT,
             cwd=REPO_ROOT,
+            env={**os.environ, **step.env} if step.env else None,
         )
     except (OSError, subprocess.SubprocessError) as e:
         return StepResult(step.name, False, "", str(e)[:200])
@@ -69,11 +77,13 @@ def build_steps(
     no_cache: bool,
 ) -> list[Step]:
     """오늘 돌릴 단계 목록. 입력이 없는 단계는 실패가 아니라 **미실행**으로 빠진다."""
-    cache_flag = ["--no-cache"] if no_cache else []
+    # `--no-cache`는 argparse가 있는 스크립트에만 붙는다. 모든 단계에 똑같이 닿도록 환경변수로 넘긴다.
+    env = {"INVAGENT_HTTP_CACHE": "0"} if no_cache else {}
     steps = [
         Step(
             "시장 신호",
             [sys.executable, str(SCRIPTS / "summarize-telegram" / "scripts" / "fetch_market_signals.py")],
+            env=env,
         )
     ]
 
@@ -84,7 +94,7 @@ def build_steps(
         ladder += ["--vkospi", str(vkospi)]
     if net_buy_days is not None:
         ladder += ["--net-buy-days", str(net_buy_days)]
-    steps.append(Step("현금 투입 사다리", ladder + cache_flag))
+    steps.append(Step("현금 투입 사다리", ladder, env=env))
 
     if snapshot and snapshot.exists():
         steps.append(
@@ -95,8 +105,8 @@ def build_steps(
                     str(SCRIPTS / "summarize-telegram" / "scripts" / "peak_drawdown.py"),
                     str(snapshot),
                     "--append",
-                ]
-                + cache_flag,
+                ],
+                env=env,
             )
         )
     return steps

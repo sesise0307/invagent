@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import time
 import re
 import sys
 import tomllib
@@ -583,15 +585,72 @@ def test_http_cache_expires_and_never_mixes_auth_states(
 
 
 def test_http_cache_key_never_carries_the_cookie(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """캐시 경로도 파일 내용도 쿠키 값을 남기면 안 된다 — `output/`은 gitignore지만 평문 디스크다."""
+    """캐시 경로도 파일 내용도 쿠키 값을 남기면 안 된다 — `output/`은 gitignore지만 평문 디스크다.
+
+    실제 쿠키를 붙여 수집 경로를 통째로 한 번 태운 뒤, 캐시 루트 어디에도 그 값이 없는지 본다.
+    """
+    secret = "SESSIONID=super-secret-value-42"
+    module = _load_stock_info_module()
+    monkeypatch.setattr(module.http_cache, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(module.urllib.request, "urlopen",
+                        lambda req, timeout=None: _FakeResponse(b'{"ok": 1}'))
+
+    payload, err = module.fetch_json("/stock-info/info-tab/000660", cookie=secret)
+    assert (payload, err) == ({"ok": 1}, None)
+
+    written = list(tmp_path.rglob("*"))
+    assert any(p.is_file() for p in written), "캐시가 쓰이지 않아 검사가 무의미하다"
+    for path in written:
+        assert secret not in str(path)
+        if path.is_file():
+            assert secret.encode() not in path.read_bytes()
+
+
+def test_http_cache_evicts_stale_entries_once_per_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """purge()를 아무도 부르지 않으면 `output/.cache/`가 무한히 자란다.
+
+    쓸 때 한 번만 쓸어내는 이유: 전수 스캔을 store()마다 돌리면 종목 수만큼 반복된다.
+    """
     module = _load_http_cache_module()
     monkeypatch.setattr(module, "CACHE_ROOT", tmp_path)
-    url = "https://example.test/x"
 
-    module.store(url, b"body", authed=True)
-    written = list(tmp_path.rglob("*"))
-    blob = "".join(str(p) for p in written)
-    assert "SESSION" not in blob and "cookie" not in blob.lower()
+    stale = tmp_path / "aa" / "aaaa.body"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"old")
+    old_mtime = time.time() - module.RETENTION_SECONDS - 60
+    os.utime(stale, (old_mtime, old_mtime))
+
+    module.store("https://example.test/new", b"fresh", authed=False)
+
+    assert not stale.exists(), "오래된 항목이 그대로 남았다"
+    assert module.load("https://example.test/new", authed=False) == b"fresh"
+
+    # 두 번째 쓰기는 다시 전수 스캔하지 않는다 — 프로세스당 한 번이 계약이다.
+    later = tmp_path / "bb" / "bbbb.body"
+    later.parent.mkdir(parents=True)
+    later.write_bytes(b"old2")
+    os.utime(later, (old_mtime, old_mtime))
+    module.store("https://example.test/other", b"fresh2", authed=False)
+    assert later.exists()
+
+
+def test_http_cache_disable_does_not_leak_into_the_process_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--no-cache`가 프로세스 환경을 고치면 같은 프로세스의 뒤 작업까지 조용히 캐시를 잃는다.
+
+    테스트에서도 `monkeypatch.delenv(raising=False)`는 **없던 변수**를 복원하지 않으므로
+    한 테스트의 disable()이 뒤 테스트로 새어 나간다 — 통과 여부가 실행 순서에 걸린다.
+    """
+    module = _load_http_cache_module()
+    monkeypatch.delenv(module.ENV_ENABLED, raising=False)
+
+    module.disable()
+
+    assert module.enabled() is False
+    assert module.ENV_ENABLED not in os.environ, "프로세스 환경변수가 오염됐다"
 
 
 def test_http_cache_can_be_switched_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
