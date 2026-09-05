@@ -46,6 +46,13 @@ VOLATILE_DAY_TRIGGER = 3      # 이 수 이상이면 발동
 # 판정 대상은 **지수뿐**이다. 섹터 레버리지는 「레버리지 규칙 2」대로 사용자가 판단한다.
 LEVERAGE_MARKETS = ("KOSPI", "KOSDAQ")
 
+# --- 「레버리지 규칙 2」 반대매매 클라이맥스 예외 -----------------------------
+# 룰 원문: 반대매매 금액이 평소(직전 120거래일) 대비 +2σ 이상인 날은 「레버리지 규칙 3」
+# 발동 중이어도 **지수** 레버리지를 분할 신규 매수할 수 있다.
+# σ 배수(2.0)는 사용자가 정한 값이고, 창 길이는 이 스킬의 운영 선택이다 (SKILL.md 근거 참조).
+MARGIN_CALL_SIGMA = 2.0
+MARGIN_CALL_WINDOW_DAYS = 120
+
 SIGNAL_EMOJI = {"red": "🔴", "yellow": "🟡", "green": "🟢"}
 STATUS_KO = {
     "market_in_correction": "조정장",
@@ -84,6 +91,47 @@ def fetch_api(name: str):
         return None, str(e)[:80]
     http_cache.store(url, body, authed=False)
     return payload, None
+
+
+def margin_call_climax(rows: list[dict]) -> dict:
+    """「레버리지 규칙 2」의 반대매매 클라이맥스 판정.
+
+    **당일을 기준선에서 뺀다.** 오늘 값이 자기 평균·표준편차에 섞이면 값이 클수록 임계가
+    함께 올라가 정작 클라이맥스에서 신호가 무뎌진다.
+
+    판정 대상은 **지수 레버리지뿐**이다 — 섹터에는 이 예외를 적용하지 않는다.
+    """
+    values = [float(r["margin_call_amount"]) for r in rows if r.get("margin_call_amount") is not None]
+    today = values[-1] if values else None
+    baseline = values[-MARGIN_CALL_WINDOW_DAYS - 1 : -1]
+    if today is None or len(baseline) < MARGIN_CALL_WINDOW_DAYS:
+        return {"climax": False, "insufficient": True, "value": today,
+                "threshold": None, "sigma": MARGIN_CALL_SIGMA}
+    mean = sum(baseline) / len(baseline)
+    var = sum((x - mean) ** 2 for x in baseline) / len(baseline)
+    threshold = mean + MARGIN_CALL_SIGMA * (var ** 0.5)
+    return {
+        "climax": today >= threshold,
+        "insufficient": False,
+        "value": today,
+        "mean": mean,
+        "threshold": threshold,
+        "sigma": MARGIN_CALL_SIGMA,
+    }
+
+
+def print_margin_call(rows: list[dict]) -> None:
+    v = margin_call_climax(rows)
+    head = f"[레버리지 규칙 2] 반대매매 클라이맥스 (직전 {MARGIN_CALL_WINDOW_DAYS}거래일 +{MARGIN_CALL_SIGMA:g}σ · 지수 한정)"
+    if v["insufficient"]:
+        print(f"{head}\n  ❔ 판정 불가 — 기준선 표본 부족")
+        return
+    state = (
+        "🟢 성립 — 「레버리지 규칙 3」 발동 중이어도 지수 레버리지 분할 신규 매수 가능 (기존 물량 정리는 그대로)"
+        if v["climax"]
+        else "미성립"
+    )
+    print(f"{head}\n  반대매매 {v['value']:,.0f}억 / 임계 {v['threshold']:,.0f}억 (평균 {v['mean']:,.0f}억) → {state}")
 
 
 def daily_changes(rows: list[dict], market: str) -> list[tuple[str, float]]:
@@ -236,6 +284,8 @@ def main() -> int:
         print_leverage(mm.get("data", []))
     if cb:
         print_credit(cb)
+        rows = (cb.get("data") or cb.get("credit_balance") or []) if isinstance(cb, dict) else cb
+        print_margin_call(rows)
     # 일부만 실패한 경우: 받은 부분은 출력하고 누락 사실을 남긴다
     for name, err in errors.items():
         print(f"[누락] {name} — {err}", file=sys.stderr)

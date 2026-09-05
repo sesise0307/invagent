@@ -1235,6 +1235,66 @@ def _my_rules() -> str:
     return (REPO_ROOT / "context" / "my_rules.md").read_text(encoding="utf-8")
 
 
+def _credit_rows(values: list[float]) -> list[dict]:
+    return [{"date": f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}", "margin_call_amount": v}
+            for i, v in enumerate(values)]
+
+
+def test_margin_call_climax_fires_beyond_two_sigma() -> None:
+    """지수 급락의 반대매매 클라이맥스는 지수 레버리지 신규 매수가 허용되는 자리다."""
+    module = _load_market_signal_module()
+
+    calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30      # 150일 평온
+    verdict = module.margin_call_climax(_credit_rows(calm + [2000.0]))
+
+    assert verdict["climax"] is True
+    assert verdict["value"] == 2000.0
+    assert verdict["threshold"] < 2000.0
+    assert verdict["sigma"] == module.MARGIN_CALL_SIGMA
+
+
+def test_margin_call_climax_stays_quiet_on_an_ordinary_day() -> None:
+    module = _load_market_signal_module()
+    calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
+    # 기준선 평균 103.0 · σ 10.77 → 임계 124.5. 그 안쪽 값은 클라이맥스가 아니다.
+    verdict = module.margin_call_climax(_credit_rows(calm + [115.0]))
+
+    assert verdict["climax"] is False
+    assert verdict["value"] < verdict["threshold"]
+
+
+def test_margin_call_climax_excludes_today_from_its_own_baseline() -> None:
+    """오늘 값이 평균·표준편차에 섞이면 큰 값일수록 자기 임계를 끌어올려 신호가 무뎌진다."""
+    module = _load_market_signal_module()
+    calm = [100.0] * 150
+
+    spike = module.margin_call_climax(_credit_rows(calm + [500.0]))
+    # 당일을 포함했다면 σ가 0이 아니게 되어 임계가 500 근처까지 밀린다.
+    assert spike["threshold"] == 100.0
+    assert spike["climax"] is True
+
+
+def test_margin_call_climax_needs_a_full_baseline() -> None:
+    """창을 못 채우면 판정 불가다 — 짧은 표본의 σ로 레버리지 진입을 허가하지 않는다."""
+    module = _load_market_signal_module()
+    verdict = module.margin_call_climax(_credit_rows([100.0] * 10))
+
+    assert verdict["climax"] is False and verdict["insufficient"] is True
+
+
+def test_margin_call_climax_is_an_index_only_carve_out() -> None:
+    """룰 원문이 지수 한정 예외임을 못 박아야 한다 — 섹터로 새면 사용자 판단 영역을 침범한다."""
+    rules = _my_rules()
+    rule2 = [ln for ln in rules.splitlines() if ln.startswith("2. **지수·섹터 레버리지")][0]
+
+    assert "반대매매" in rule2 and "2σ" in rule2
+    assert "지수 레버리지에 한해" in rule2
+    assert "섹터" in rule2
+
+    script = (SKILLS_ROOT / "summarize-telegram" / "scripts" / "fetch_market_signals.py").read_text(encoding="utf-8")
+    assert "margin_call_climax" in script
+
+
 def test_leverage_rule_three_constants_match_the_documented_table() -> None:
     """임계값은 스킬의 운영 선택이다 — 상수만 바꾸고 근거 표가 남으면 다음 사람이 못 읽는다."""
     module = _load_market_signal_module()
@@ -1252,6 +1312,29 @@ def test_leverage_rule_three_constants_match_the_documented_table() -> None:
     assert f"| `VOLATILE_DAY_TRIGGER` | {module.VOLATILE_DAY_TRIGGER} |" in table
     assert "전부 양수" in table
     assert "섹터" in table
+
+
+def test_margin_call_window_rationale_is_documented() -> None:
+    """창 길이는 이 스킬의 운영 선택이다 — 왜 120인지가 남아야 다음 사람이 바꿀 수 있다."""
+    module = _load_market_signal_module()
+    skill = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert f"`MARGIN_CALL_WINDOW_DAYS` | {module.MARGIN_CALL_WINDOW_DAYS}" in skill
+    assert f"`MARGIN_CALL_SIGMA` | {module.MARGIN_CALL_SIGMA:g}" in skill
+    # 60일 창이 왜 안 되는지가 이 선택의 핵심이다.
+    assert "자기 σ를 부풀려" in skill
+    assert "당일을 기준선에서 제외" in skill
+
+
+def test_long_bull_candle_is_wired_into_the_entry_rules() -> None:
+    """「매매규칙 12」는 진입가를 구속한다 — 스크립트가 날짜와 종가를 주는데 스킬이 안 쓰면 소용없다."""
+    analyze = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+    stage = (SKILLS_ROOT / "stage-analysis" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "장대 양봉" in stage and "LONG_BULL_PCT" in stage
+    # analyze-stock 10단계의 매매규칙 12 항목이 스크립트 판정을 인용해야 한다.
+    block = analyze.split("「매매규칙 12」")[1][:300]
+    assert "stage_scan" in block or "장대 양봉 줄" in block
 
 
 def test_every_mechanically_checkable_rule_has_a_script() -> None:

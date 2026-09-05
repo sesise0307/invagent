@@ -379,3 +379,38 @@ def test_twenty_week_line_is_a_documented_approximation():
     skill = (REPO_ROOT / ".agents" / "skills" / "stage-analysis" / "SKILL.md").read_text(encoding="utf-8")
     assert "MA_20WEEK" in skill
     assert "근사" in skill
+
+def test_long_bull_candle_uses_the_threshold_from_my_rules():
+    """「매매규칙 12」의 '장대 양봉'은 2026-09-05에 +8% 이상으로 정의됐다. 정의는 룰 파일이 정본이다."""
+    import re
+
+    rules = (REPO_ROOT / "context" / "my_rules.md").read_text(encoding="utf-8")
+    m = re.search(r"장대 양봉[^.]*?(\d+)% 이상 상승", rules)
+    assert m, "룰 12에 장대 양봉 정의가 없다"
+    assert stage_scan.LONG_BULL_PCT == float(m.group(1))
+
+
+def test_long_bull_candle_days_are_reported_with_their_close():
+    """진입가를 장대 양봉 위에 잡지 않으려면 그 날짜와 종가를 알아야 한다."""
+    closes = [100.0] * 200 + [100.0, 109.0, 110.0, 111.0]   # +9.0% 하루
+    bars = _bars(closes)
+    price = stage_scan.analyze(bars, None, "C")["price"]
+
+    assert len(price["long_bull"]) == 1
+    day = price["long_bull"][0]
+    assert round(day["change"], 1) == 9.0
+    assert day["close"] == 109.0
+    assert day["date"]
+
+
+def test_long_bull_candle_ignores_moves_below_the_threshold_and_drops():
+    """+7.9%는 장대 양봉이 아니고, -9%는 양봉이 아니다."""
+    price = stage_scan.analyze(_bars([100.0] * 200 + [100.0, 107.9, 98.0, 99.0]), None, "C")["price"]
+    assert price["long_bull"] == []
+
+
+def test_long_bull_candle_only_looks_at_the_recent_window():
+    """반년 전 장대 양봉은 오늘의 진입가를 구속하지 않는다."""
+    closes = [100.0, 109.0] + [109.0 + i * 0.01 for i in range(220)]
+    price = stage_scan.analyze(_bars(closes), None, "C")["price"]
+    assert price["long_bull"] == []
