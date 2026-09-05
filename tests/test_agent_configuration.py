@@ -1240,12 +1240,22 @@ def _credit_rows(values: list[float]) -> list[dict]:
             for i, v in enumerate(values)]
 
 
+def _monitor_for(credit: list[dict], closes: list[float]) -> list[dict]:
+    return [{"일자": r["date"], "KOSPI": c} for r, c in zip(credit, closes)]
+
+
+def _deep_drawdown(credit: list[dict]) -> list[dict]:
+    """마지막 날이 고점 대비 -20%인 지수 경로 — 낙폭 게이트를 통과한다."""
+    return _monitor_for(credit, [100.0] * (len(credit) - 1) + [80.0])
+
+
 def test_margin_call_climax_fires_beyond_two_sigma() -> None:
     """지수 급락의 반대매매 클라이맥스는 지수 레버리지 신규 매수가 허용되는 자리다."""
     module = _load_market_signal_module()
 
     calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30      # 150일 평온
-    verdict = module.margin_call_climax(_credit_rows(calm + [2000.0]))
+    credit = _credit_rows(calm + [2000.0])
+    verdict = module.margin_call_climax(credit, _deep_drawdown(credit))
 
     assert verdict["climax"] is True
     assert verdict["value"] == 2000.0
@@ -1257,7 +1267,8 @@ def test_margin_call_climax_stays_quiet_on_an_ordinary_day() -> None:
     module = _load_market_signal_module()
     calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
     # 기준선 평균 103.0 · σ 10.77 → 임계 124.5. 그 안쪽 값은 클라이맥스가 아니다.
-    verdict = module.margin_call_climax(_credit_rows(calm + [115.0]))
+    credit = _credit_rows(calm + [115.0])
+    verdict = module.margin_call_climax(credit, _deep_drawdown(credit))
 
     assert verdict["climax"] is False
     assert verdict["value"] < verdict["threshold"]
@@ -1267,17 +1278,38 @@ def test_margin_call_climax_excludes_today_from_its_own_baseline() -> None:
     """오늘 값이 평균·표준편차에 섞이면 큰 값일수록 자기 임계를 끌어올려 신호가 무뎌진다."""
     module = _load_market_signal_module()
     calm = [100.0] * 150
+    credit = _credit_rows(calm + [500.0])
 
-    spike = module.margin_call_climax(_credit_rows(calm + [500.0]))
+    spike = module.margin_call_climax(credit, _deep_drawdown(credit))
     # 당일을 포함했다면 σ가 0이 아니게 되어 임계가 500 근처까지 밀린다.
     assert spike["threshold"] == 100.0
     assert spike["climax"] is True
 
 
+def test_margin_call_climax_requires_the_index_to_be_deep_in_drawdown() -> None:
+    """반대매매 급증만으로는 부족하다 — 2026-05-11은 지수 **신고가**에서 +2σ가 켜졌다.
+
+    사용자 조건은 "지수 급락 → 반대매매 클라이맥스"다. 급락은 그날 하락률이 아니라
+    국면(고점 대비 낙폭)으로 읽는다 — 실제 클라이맥스 2026-07-31은 그날 +18.05%였다.
+    """
+    module = _load_market_signal_module()
+    calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
+    credit = _credit_rows(calm + [2000.0])
+
+    at_high = module.margin_call_climax(credit, _monitor_for(credit, [100.0] * len(credit)))
+    assert at_high["climax"] is False
+    assert at_high["drawdown"] == 0.0
+
+    deep = module.margin_call_climax(credit, _deep_drawdown(credit))
+    assert deep["climax"] is True
+    assert deep["drawdown"] < module.MARGIN_CALL_MIN_DRAWDOWN_PCT
+
+
 def test_margin_call_climax_needs_a_full_baseline() -> None:
     """창을 못 채우면 판정 불가다 — 짧은 표본의 σ로 레버리지 진입을 허가하지 않는다."""
     module = _load_market_signal_module()
-    verdict = module.margin_call_climax(_credit_rows([100.0] * 10))
+    credit = _credit_rows([100.0] * 10)
+    verdict = module.margin_call_climax(credit, _deep_drawdown(credit))
 
     assert verdict["climax"] is False and verdict["insufficient"] is True
 
@@ -1290,6 +1322,8 @@ def test_margin_call_climax_is_an_index_only_carve_out() -> None:
     assert "반대매매" in rule2 and "2σ" in rule2
     assert "지수 레버리지에 한해" in rule2
     assert "섹터" in rule2
+    # 기존 보유 물량 처리는 사용자 판단 영역이다 — 룰이 대신 정하지 않는다.
+    assert "기존 레버리지 정리는 그대로 이행" not in rule2
 
     script = (SKILLS_ROOT / "summarize-telegram" / "scripts" / "fetch_market_signals.py").read_text(encoding="utf-8")
     assert "margin_call_climax" in script
@@ -1321,6 +1355,9 @@ def test_margin_call_window_rationale_is_documented() -> None:
 
     assert f"`MARGIN_CALL_WINDOW_DAYS` | {module.MARGIN_CALL_WINDOW_DAYS}" in skill
     assert f"`MARGIN_CALL_SIGMA` | {module.MARGIN_CALL_SIGMA:g}" in skill
+    assert f"{module.MARGIN_CALL_MIN_DRAWDOWN_PCT:g}%" in skill
+    # σ를 올리는 대안이 왜 실패했는지가 남아야 다음 사람이 되풀이하지 않는다.
+    assert "2.5σ" in skill and "+18.05%" in skill
     # 60일 창이 왜 안 되는지가 이 선택의 핵심이다.
     assert "자기 σ를 부풀려" in skill
     assert "당일을 기준선에서 제외" in skill

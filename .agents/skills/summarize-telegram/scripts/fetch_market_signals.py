@@ -52,6 +52,13 @@ LEVERAGE_MARKETS = ("KOSPI", "KOSDAQ")
 # σ 배수(2.0)는 사용자가 정한 값이고, 창 길이는 이 스킬의 운영 선택이다 (SKILL.md 근거 참조).
 MARGIN_CALL_SIGMA = 2.0
 MARGIN_CALL_WINDOW_DAYS = 120
+# 반대매매 급증만으로는 부족하다. σ를 올리는 방식은 실측에서 실패했다 — 2.5σ는 발동을 14→11건으로
+# 줄이면서 정작 2026-07-30 클라이맥스를 잘라냈다(직전 몇 달의 높은 반대매매가 기준선을 밀어올린
+# 탓). 대신 **국면**으로 거른다: 지수가 52주 고점 대비 이만큼 밀려 있어야 한다.
+# 이러면 14→6건이 되면서 07-30·07-31은 둘 다 남고, 2026-05-11(지수 신고가에서 반대매매 급증)
+# 같은 중간 구간이 빠진다.
+MARGIN_CALL_MIN_DRAWDOWN_PCT = -10.0
+MARGIN_CALL_PEAK_WINDOW = 250
 
 SIGNAL_EMOJI = {"red": "🔴", "yellow": "🟡", "green": "🟢"}
 STATUS_KO = {
@@ -93,7 +100,17 @@ def fetch_api(name: str):
     return payload, None
 
 
-def margin_call_climax(rows: list[dict]) -> dict:
+def index_drawdown(monitor_rows: list[dict], market: str = "KOSPI") -> float | None:
+    """오늘 지수의 52주(250거래일) 고점 대비 낙폭 %."""
+    closes = [r[market] for r in monitor_rows if r.get(market)]
+    window = closes[-MARGIN_CALL_PEAK_WINDOW:]
+    if not window:
+        return None
+    peak = max(window)
+    return (window[-1] / peak - 1) * 100 if peak else None
+
+
+def margin_call_climax(rows: list[dict], monitor_rows: list[dict] | None = None) -> dict:
     """「레버리지 규칙 2」의 반대매매 클라이맥스 판정.
 
     **당일을 기준선에서 뺀다.** 오늘 값이 자기 평균·표준편차에 섞이면 값이 클수록 임계가
@@ -104,34 +121,48 @@ def margin_call_climax(rows: list[dict]) -> dict:
     values = [float(r["margin_call_amount"]) for r in rows if r.get("margin_call_amount") is not None]
     today = values[-1] if values else None
     baseline = values[-MARGIN_CALL_WINDOW_DAYS - 1 : -1]
+    drawdown = index_drawdown(monitor_rows or [])
     if today is None or len(baseline) < MARGIN_CALL_WINDOW_DAYS:
-        return {"climax": False, "insufficient": True, "value": today,
-                "threshold": None, "sigma": MARGIN_CALL_SIGMA}
+        return {"climax": False, "insufficient": True, "value": today, "threshold": None,
+                "sigma": MARGIN_CALL_SIGMA, "drawdown": drawdown}
     mean = sum(baseline) / len(baseline)
     var = sum((x - mean) ** 2 for x in baseline) / len(baseline)
     threshold = mean + MARGIN_CALL_SIGMA * (var ** 0.5)
+    deep = drawdown is not None and drawdown <= MARGIN_CALL_MIN_DRAWDOWN_PCT
     return {
-        "climax": today >= threshold,
+        "climax": today >= threshold and deep,
         "insufficient": False,
         "value": today,
         "mean": mean,
         "threshold": threshold,
         "sigma": MARGIN_CALL_SIGMA,
+        "drawdown": drawdown,
+        "spike": today >= threshold,
+        "deep": deep,
     }
 
 
-def print_margin_call(rows: list[dict]) -> None:
-    v = margin_call_climax(rows)
-    head = f"[레버리지 규칙 2] 반대매매 클라이맥스 (직전 {MARGIN_CALL_WINDOW_DAYS}거래일 +{MARGIN_CALL_SIGMA:g}σ · 지수 한정)"
+def print_margin_call(rows: list[dict], monitor_rows: list[dict] | None = None) -> None:
+    v = margin_call_climax(rows, monitor_rows)
+    head = (
+        f"[레버리지 규칙 2] 반대매매 클라이맥스 "
+        f"(직전 {MARGIN_CALL_WINDOW_DAYS}거래일 +{MARGIN_CALL_SIGMA:g}σ "
+        f"· 지수 낙폭 {MARGIN_CALL_MIN_DRAWDOWN_PCT:g}% 이하 · 지수 한정)"
+    )
     if v["insufficient"]:
         print(f"{head}\n  ❔ 판정 불가 — 기준선 표본 부족")
         return
-    state = (
-        "🟢 성립 — 「레버리지 규칙 3」 발동 중이어도 지수 레버리지 분할 신규 매수 가능 (기존 물량 정리는 그대로)"
-        if v["climax"]
-        else "미성립"
+    dd = f"{v['drawdown']:+.1f}%" if v["drawdown"] is not None else "미상"
+    if v["climax"]:
+        state = "🟢 성립 — 「레버리지 규칙 3」 발동 중이어도 지수 레버리지 분할 신규 매수 가능"
+    elif v["spike"]:
+        state = f"미성립 — 반대매매는 급증했으나 지수 낙폭 {dd}가 국면 조건 미달"
+    else:
+        state = "미성립"
+    print(
+        f"{head}\n  반대매매 {v['value']:,.0f}억 / 임계 {v['threshold']:,.0f}억 "
+        f"(평균 {v['mean']:,.0f}억) · 지수 낙폭 {dd} → {state}"
     )
-    print(f"{head}\n  반대매매 {v['value']:,.0f}억 / 임계 {v['threshold']:,.0f}억 (평균 {v['mean']:,.0f}억) → {state}")
 
 
 def daily_changes(rows: list[dict], market: str) -> list[tuple[str, float]]:
@@ -285,7 +316,7 @@ def main() -> int:
     if cb:
         print_credit(cb)
         rows = (cb.get("data") or cb.get("credit_balance") or []) if isinstance(cb, dict) else cb
-        print_margin_call(rows)
+        print_margin_call(rows, (mm or {}).get("data", []))
     # 일부만 실패한 경우: 받은 부분은 출력하고 누락 사실을 남긴다
     for name, err in errors.items():
         print(f"[누락] {name} — {err}", file=sys.stderr)
