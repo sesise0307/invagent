@@ -534,3 +534,58 @@ def test_format_messages_markdown_failed_image_has_no_marker():
 
     assert "> [이미지 저장 실패: disk full]" in formatted
     assert PENDING_IMAGE_MARKER not in formatted
+
+@pytest.mark.asyncio
+async def test_message_fetcher_extracts_links_concurrently(monkeypatch):
+    """링크 추출이 메시지마다 직렬이면 하드 타임아웃이 메시지 수만큼 쌓인다.
+
+    1,500건을 따라잡는 날 이 루프가 실행 시간을 통째로 지배한다. 동시에 돌리되
+    출력 순서는 메시지 순서 그대로여야 한다 — 브리핑이 시간순으로 읽히기 때문이다.
+    """
+    import asyncio
+    import time
+
+    config = Config(api_id=123, api_hash="h", session_path="/tmp/s", output_dir="/tmp/o")
+    fetcher = MessageFetcher(config, TelegramClientManager())
+
+    live = peak_live = 0
+
+    async def slow_extract(text):
+        nonlocal live, peak_live
+        live += 1
+        peak_live = max(peak_live, live)
+        await asyncio.sleep(0.05)
+        live -= 1
+        return {"contents": {f"https://e.test/{text}": f"body-{text}"}}
+
+    monkeypatch.setattr(fetcher.link_extractor, "extract_and_fetch", slow_extract)
+    monkeypatch.setattr(fetcher.link_extractor, "remove_telegram_urls", lambda t: t)
+
+    msgs = []
+    for i in range(8):
+        m = AsyncMock()
+        m.media = None
+        m.id = i
+        m.date = datetime.now(timezone.utc)
+        m.text = f"m{i}"
+        m.forward = None
+        msgs.append(m)
+
+    with patch.object(fetcher.client_manager, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_get_client.return_value = mock_client
+
+        async def async_gen(*args, **kwargs):
+            for m in msgs:
+                yield m
+
+        mock_client.iter_messages = async_gen
+
+        started = time.monotonic()
+        messages = await fetcher.fetch_saved_messages(days=1, fetch_links=True)
+        elapsed = time.monotonic() - started
+
+    assert [m["text"] for m in messages] == [f"m{i}" for i in range(8)], "출력 순서가 흐트러졌다"
+    assert messages[3]["links_content"].endswith("body-m3")
+    assert peak_live > 1, "링크를 아직 한 건씩 받고 있다"
+    assert elapsed < 8 * 0.05, "직렬 실행 시간이 그대로 나온다"

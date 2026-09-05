@@ -5,6 +5,7 @@
 링크 내용과 첨부 이미지를 수집한 후 포맷팅할 수 있습니다.
 """
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -22,6 +23,10 @@ from invagent.telegram.link_extractor import LinkExtractor
 IMAGE_MIME_PREFIX = "image/"
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_IMAGES_PER_RUN = 60
+# 링크 본문을 동시에 받는 메시지 수. 1건이 최대 `hard_timeout`(기본 30초)을 쓰므로
+# 직렬로는 메시지 수만큼 그 시간이 쌓인다. 상한을 두는 이유는 링크 추출기가 메시지 *안의*
+# URL을 이미 동시에 받기 때문에, 여기에 곱해진 만큼 동시 연결이 늘기 때문이다.
+MAX_CONCURRENT_LINK_MESSAGES = 5
 
 # raw 마크다운에 남는 판독 대기 마커. summarize-telegram 스킬 1-4단계가 이 문자열을
 # 찾아 판독 결과로 치환하므로 코드와 SKILL.md 양쪽의 계약이다. 한쪽만 바꾸면 스킬이
@@ -137,19 +142,32 @@ class MessageFetcher:
                 msg_dict["images"].append(saved)
                 downloaded_images += consumed
 
-            # 링크 내용 추출
-            if fetch_links:
-                result = await self.link_extractor.extract_and_fetch(text)
-                links_contents = []
-                for url, content in result.get("contents", {}).items():
-                    if content:
-                        links_contents.append(f"URL: {url}\n{content}")
-
-                msg_dict["links_content"] = "\n\n".join(links_contents)
-
             messages.append(msg_dict)
 
+        if fetch_links:
+            await self._attach_link_contents(messages)
+
         return messages
+
+    async def _attach_link_contents(self, messages: list[dict]) -> None:
+        """메시지별 링크 본문을 동시에 받아 각자의 자리에 채운다.
+
+        메시지끼리는 독립이라 순서대로 기다릴 이유가 없다. 결과는 원래 dict에 직접 쓰므로
+        완료 순서가 브리핑의 시간순 배열을 흔들지 않는다.
+        """
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_LINK_MESSAGES)
+
+        async def fill(msg_dict: dict) -> None:
+            async with semaphore:
+                result = await self.link_extractor.extract_and_fetch(msg_dict["text"])
+            links_contents = [
+                f"URL: {url}\n{content}"
+                for url, content in result.get("contents", {}).items()
+                if content
+            ]
+            msg_dict["links_content"] = "\n\n".join(links_contents)
+
+        await asyncio.gather(*(fill(m) for m in messages))
 
     async def _download_image(
         self, client, message, media_dir: Path, downloaded_so_far: int

@@ -169,7 +169,13 @@ caption and context marked `(이미지 미확인)`. A message carrying only an i
 and no caption is now kept; it used to be dropped whole at the fetch loop's
 empty-text check, which is why chart captures never reached a briefing.
 `MAX_IMAGE_BYTES` and `MAX_IMAGES_PER_RUN` cap what one run can spend on disk and
-on reading, and live as constants at the top of the fetch module.
+on reading, and live as constants at the top of the fetch module. Link bodies are
+fetched for up to `MAX_CONCURRENT_LINK_MESSAGES` messages at once rather than one message at a
+time: a single message can burn the extractor's `hard_timeout`, so a serial loop multiplies that
+by the message count on a catch-up run. Results are written back into each message's own dict, so
+completion order cannot reorder a briefing that is meant to read chronologically. Image downloads
+stay serial on purpose — they share one MTProto connection, where concurrency buys little, and the
+per-run budget is counted in message order, which a race would make non-deterministic.
 
 The Telegram daily briefing also reads the user's live holdings from the Google
 Sheets file `주식 포트폴리오` (sheet `포트폴리오`) through the Google Drive MCP
