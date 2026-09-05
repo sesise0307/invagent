@@ -111,7 +111,11 @@ def index_drawdown(monitor_rows: list[dict], market: str = "KOSPI") -> float | N
 
 
 def margin_call_climax(rows: list[dict], monitor_rows: list[dict] | None = None) -> dict:
-    """「레버리지 규칙 2」의 반대매매 클라이맥스 판정.
+    """「레버리지 규칙 2」의 반대매매 클라이맥스를 **지수별로** 판정한다.
+
+    반대매매 금액은 시장 전체 하나뿐이라 급증 여부(`spike`)는 두 축에 같은 값이 실리지만,
+    낙폭 국면은 지수마다 다르다. 레버리지 상품이 지수별이므로 판정도 지수별로 낸다 —
+    실측(2025-01~2026-09)에서 KOSPI 게이트 8건, KOSDAQ 게이트 9건이고 겹치는 날은 3일뿐이다.
 
     **당일을 기준선에서 뺀다.** 오늘 값이 자기 평균·표준편차에 섞이면 값이 클수록 임계가
     함께 올라가 정작 클라이맥스에서 신호가 무뎌진다.
@@ -121,48 +125,63 @@ def margin_call_climax(rows: list[dict], monitor_rows: list[dict] | None = None)
     values = [float(r["margin_call_amount"]) for r in rows if r.get("margin_call_amount") is not None]
     today = values[-1] if values else None
     baseline = values[-MARGIN_CALL_WINDOW_DAYS - 1 : -1]
-    drawdown = index_drawdown(monitor_rows or [])
+    monitor_rows = monitor_rows or []
+
     if today is None or len(baseline) < MARGIN_CALL_WINDOW_DAYS:
-        return {"climax": False, "insufficient": True, "value": today, "threshold": None,
-                "sigma": MARGIN_CALL_SIGMA, "drawdown": drawdown}
+        return {
+            market: {"climax": False, "insufficient": True, "value": today, "threshold": None,
+                     "sigma": MARGIN_CALL_SIGMA, "drawdown": index_drawdown(monitor_rows, market),
+                     "spike": False, "deep": False}
+            for market in LEVERAGE_MARKETS
+        }
+
     mean = sum(baseline) / len(baseline)
     var = sum((x - mean) ** 2 for x in baseline) / len(baseline)
     threshold = mean + MARGIN_CALL_SIGMA * (var ** 0.5)
-    deep = drawdown is not None and drawdown <= MARGIN_CALL_MIN_DRAWDOWN_PCT
-    return {
-        "climax": today >= threshold and deep,
-        "insufficient": False,
-        "value": today,
-        "mean": mean,
-        "threshold": threshold,
-        "sigma": MARGIN_CALL_SIGMA,
-        "drawdown": drawdown,
-        "spike": today >= threshold,
-        "deep": deep,
-    }
+    spike = today >= threshold
+
+    out: dict[str, dict] = {}
+    for market in LEVERAGE_MARKETS:
+        drawdown = index_drawdown(monitor_rows, market)
+        deep = drawdown is not None and drawdown <= MARGIN_CALL_MIN_DRAWDOWN_PCT
+        out[market] = {
+            "climax": spike and deep,
+            "insufficient": False,
+            "value": today,
+            "mean": mean,
+            "threshold": threshold,
+            "sigma": MARGIN_CALL_SIGMA,
+            "drawdown": drawdown,
+            "spike": spike,
+            "deep": deep,
+        }
+    return out
 
 
 def print_margin_call(rows: list[dict], monitor_rows: list[dict] | None = None) -> None:
-    v = margin_call_climax(rows, monitor_rows)
-    head = (
+    result = margin_call_climax(rows, monitor_rows)
+    print(
         f"[레버리지 규칙 2] 반대매매 클라이맥스 "
         f"(직전 {MARGIN_CALL_WINDOW_DAYS}거래일 +{MARGIN_CALL_SIGMA:g}σ "
         f"· 지수 낙폭 {MARGIN_CALL_MIN_DRAWDOWN_PCT:g}% 이하 · 지수 한정)"
     )
-    if v["insufficient"]:
-        print(f"{head}\n  ❔ 판정 불가 — 기준선 표본 부족")
+    first = result[LEVERAGE_MARKETS[0]]
+    if first["insufficient"]:
+        print("  ❔ 판정 불가 — 기준선 표본 부족")
         return
-    dd = f"{v['drawdown']:+.1f}%" if v["drawdown"] is not None else "미상"
-    if v["climax"]:
-        state = "🟢 성립 — 「레버리지 규칙 3」 발동 중이어도 지수 레버리지 분할 신규 매수 가능"
-    elif v["spike"]:
-        state = f"미성립 — 반대매매는 급증했으나 지수 낙폭 {dd}가 국면 조건 미달"
-    else:
-        state = "미성립"
     print(
-        f"{head}\n  반대매매 {v['value']:,.0f}억 / 임계 {v['threshold']:,.0f}억 "
-        f"(평균 {v['mean']:,.0f}억) · 지수 낙폭 {dd} → {state}"
+        f"  반대매매 {first['value']:,.0f}억 / 임계 {first['threshold']:,.0f}억 "
+        f"(평균 {first['mean']:,.0f}억) → 급증 {'예' if first['spike'] else '아니오'}"
     )
+    for market, v in result.items():
+        dd = f"{v['drawdown']:+.1f}%" if v["drawdown"] is not None else "미상"
+        if v["climax"]:
+            state = "🟢 성립 — 「레버리지 규칙 3」 발동 중이어도 분할 신규 매수 가능"
+        elif v["spike"]:
+            state = "미성립 — 반대매매는 급증했으나 낙폭 국면 조건 미달"
+        else:
+            state = "미성립"
+        print(f"    {market}: 낙폭 {dd} → {state}")
 
 
 def daily_changes(rows: list[dict], market: str) -> list[tuple[str, float]]:

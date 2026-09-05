@@ -1241,7 +1241,7 @@ def _credit_rows(values: list[float]) -> list[dict]:
 
 
 def _monitor_for(credit: list[dict], closes: list[float]) -> list[dict]:
-    return [{"일자": r["date"], "KOSPI": c} for r, c in zip(credit, closes)]
+    return [{"일자": r["date"], "KOSPI": c, "KOSDAQ": c} for r, c in zip(credit, closes)]
 
 
 def _deep_drawdown(credit: list[dict]) -> list[dict]:
@@ -1255,7 +1255,7 @@ def test_margin_call_climax_fires_beyond_two_sigma() -> None:
 
     calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30      # 150일 평온
     credit = _credit_rows(calm + [2000.0])
-    verdict = module.margin_call_climax(credit, _deep_drawdown(credit))
+    verdict = module.margin_call_climax(credit, _deep_drawdown(credit))["KOSPI"]
 
     assert verdict["climax"] is True
     assert verdict["value"] == 2000.0
@@ -1268,7 +1268,7 @@ def test_margin_call_climax_stays_quiet_on_an_ordinary_day() -> None:
     calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
     # 기준선 평균 103.0 · σ 10.77 → 임계 124.5. 그 안쪽 값은 클라이맥스가 아니다.
     credit = _credit_rows(calm + [115.0])
-    verdict = module.margin_call_climax(credit, _deep_drawdown(credit))
+    verdict = module.margin_call_climax(credit, _deep_drawdown(credit))["KOSPI"]
 
     assert verdict["climax"] is False
     assert verdict["value"] < verdict["threshold"]
@@ -1280,10 +1280,36 @@ def test_margin_call_climax_excludes_today_from_its_own_baseline() -> None:
     calm = [100.0] * 150
     credit = _credit_rows(calm + [500.0])
 
-    spike = module.margin_call_climax(credit, _deep_drawdown(credit))
+    spike = module.margin_call_climax(credit, _deep_drawdown(credit))["KOSPI"]
     # 당일을 포함했다면 σ가 0이 아니게 되어 임계가 500 근처까지 밀린다.
     assert spike["threshold"] == 100.0
     assert spike["climax"] is True
+
+
+def test_margin_call_climax_is_judged_per_index() -> None:
+    """반대매매는 시장 전체 값이지만 낙폭 국면은 지수마다 다르다 — 레버리지 상품이 지수별이므로 따로 낸다.
+
+    실측(2025-01~2026-09): 같은 반대매매 시리즈에 KOSPI 게이트는 8건, KOSDAQ 게이트는 9건이
+    걸리고 겹치는 날은 3일뿐이다.
+    """
+    module = _load_market_signal_module()
+    calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
+    credit = _credit_rows(calm + [2000.0])
+    n = len(credit)
+    # KOSPI만 깊게 밀린 경로
+    monitor = [
+        {"일자": r["date"], "KOSPI": k, "KOSDAQ": q}
+        for r, k, q in zip(credit, [100.0] * (n - 1) + [80.0], [100.0] * n)
+    ]
+
+    result = module.margin_call_climax(credit, monitor)
+
+    assert set(result) == set(module.LEVERAGE_MARKETS)
+    assert result["KOSPI"]["climax"] is True
+    assert result["KOSDAQ"]["climax"] is False
+    # 급증 자체는 시장 공통이므로 두 축에 같은 값이 실린다.
+    assert result["KOSPI"]["value"] == result["KOSDAQ"]["value"] == 2000.0
+    assert result["KOSPI"]["spike"] is result["KOSDAQ"]["spike"] is True
 
 
 def test_margin_call_climax_requires_the_index_to_be_deep_in_drawdown() -> None:
@@ -1296,11 +1322,11 @@ def test_margin_call_climax_requires_the_index_to_be_deep_in_drawdown() -> None:
     calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
     credit = _credit_rows(calm + [2000.0])
 
-    at_high = module.margin_call_climax(credit, _monitor_for(credit, [100.0] * len(credit)))
+    at_high = module.margin_call_climax(credit, _monitor_for(credit, [100.0] * len(credit)))["KOSPI"]
     assert at_high["climax"] is False
     assert at_high["drawdown"] == 0.0
 
-    deep = module.margin_call_climax(credit, _deep_drawdown(credit))
+    deep = module.margin_call_climax(credit, _deep_drawdown(credit))["KOSPI"]
     assert deep["climax"] is True
     assert deep["drawdown"] < module.MARGIN_CALL_MIN_DRAWDOWN_PCT
 
@@ -1309,7 +1335,7 @@ def test_margin_call_climax_needs_a_full_baseline() -> None:
     """창을 못 채우면 판정 불가다 — 짧은 표본의 σ로 레버리지 진입을 허가하지 않는다."""
     module = _load_market_signal_module()
     credit = _credit_rows([100.0] * 10)
-    verdict = module.margin_call_climax(credit, _deep_drawdown(credit))
+    verdict = module.margin_call_climax(credit, _deep_drawdown(credit))["KOSPI"]
 
     assert verdict["climax"] is False and verdict["insufficient"] is True
 
