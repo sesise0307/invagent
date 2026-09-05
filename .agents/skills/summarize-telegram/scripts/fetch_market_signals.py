@@ -35,6 +35,17 @@ ENDPOINTS = {
 }
 TIMEOUT = 20
 
+# --- 「레버리지 규칙 3(변동성 레버리지 청산)」 판정 상수 -------------------------
+# 룰 원문: "지수가 ±5% 이상 변동하는 날이 최근 10거래일 이내에 3일 이상 나타나면 레버리지
+# 투자는 모두 정리하고 신규로 진입하지도 않는다. (음의 복리 효과 방지) 상승 방향으로 일관적인
+# 변동은 예외로 한다."
+# 아래는 룰이 수치로 정하지 않은 부분에 대한 이 스킬의 운영 선택이다 (SKILL.md와 함께 고친다).
+VOLATILE_DAY_PCT = 5.0        # 전일 종가 대비 종가 등락률. 장중 고저 폭은 쓰지 않는다
+VOLATILE_WINDOW_DAYS = 10     # 거래일 기준. 휴장일은 행 자체가 없어 자동으로 빠진다
+VOLATILE_DAY_TRIGGER = 3      # 이 수 이상이면 발동
+# 판정 대상은 **지수뿐**이다. 섹터 레버리지는 「레버리지 규칙 2」대로 사용자가 판단한다.
+LEVERAGE_MARKETS = ("KOSPI", "KOSDAQ")
+
 SIGNAL_EMOJI = {"red": "🔴", "yellow": "🟡", "green": "🟢"}
 STATUS_KO = {
     "market_in_correction": "조정장",
@@ -73,6 +84,60 @@ def fetch_api(name: str):
         return None, str(e)[:80]
     http_cache.store(url, body, authed=False)
     return payload, None
+
+
+def daily_changes(rows: list[dict], market: str) -> list[tuple[str, float]]:
+    """market-monitor 종가 열 → (일자, 전일 대비 등락률%) 리스트."""
+    series = [(r["일자"], r[market]) for r in rows if r.get(market)]
+    return [
+        (day, (close / prev - 1) * 100)
+        for (_, prev), (day, close) in zip(series, series[1:])
+        if prev
+    ]
+
+
+def leverage_liquidation(rows: list[dict]) -> dict:
+    """「레버리지 규칙 3」을 지수별로 판정한다.
+
+    market-monitor는 KOSPI·KOSDAQ 종가를 1년치 넘게 주므로 추가 호출 없이 계산된다.
+    지수별로 따로 내는 이유: 레버리지 상품이 지수별로 다르다. **섹터 레버리지는 판정하지
+    않는다** — 「레버리지 규칙 2」의 방향성·업황 확인은 사용자 몫이다.
+    """
+    out: dict[str, dict] = {}
+    for market in LEVERAGE_MARKETS:
+        changes = daily_changes(rows, market)
+        window = changes[-VOLATILE_WINDOW_DAYS:]
+        days = [(d, v) for d, v in window if abs(v) >= VOLATILE_DAY_PCT]
+        insufficient = len(window) < VOLATILE_WINDOW_DAYS
+        # 예외는 해당 변동일이 **전부 상승**일 때만이다. 하락이 하나라도 섞이면
+        # 룰이 막으려는 음의 복리가 성립하므로 예외를 주지 않는다.
+        exempt = bool(days) and all(v > 0 for _, v in days)
+        fired = (
+            not insufficient and len(days) >= VOLATILE_DAY_TRIGGER and not exempt
+        )
+        out[market] = {
+            "fired": fired,
+            "exempt": exempt and len(days) >= VOLATILE_DAY_TRIGGER,
+            "insufficient": insufficient,
+            "count": len(days),
+            "days": days,
+        }
+    return out
+
+
+def print_leverage(rows: list[dict]) -> None:
+    print("[레버리지 규칙 3] 지수 ±5% 변동일 (최근 10거래일 · 섹터는 판정 대상 아님)")
+    for market, v in leverage_liquidation(rows).items():
+        detail = ", ".join(f"{d}({x:+.2f}%)" for d, x in v["days"]) or "없음"
+        if v["insufficient"]:
+            state = "❔ 판정 불가 — 일봉 부족"
+        elif v["fired"]:
+            state = "⛔ 발동 — 레버리지 전량 정리 · 신규 진입 금지"
+        elif v["exempt"]:
+            state = "✅ 예외 — 변동일이 전부 상승 방향"
+        else:
+            state = "✅ 미발동"
+        print(f"  {market}: {v['count']}일 [{detail}] → {state}")
 
 
 def fmt_pct(x) -> str:
@@ -168,6 +233,7 @@ def main() -> int:
         print_big_picture(bp)
     if mm:
         print_breadth(mm)
+        print_leverage(mm.get("data", []))
     if cb:
         print_credit(cb)
     # 일부만 실패한 경우: 받은 부분은 출력하고 누락 사실을 남긴다

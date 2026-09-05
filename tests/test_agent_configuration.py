@@ -330,6 +330,82 @@ def test_market_signal_main_renders_api_payload(
     assert "30.9%" in out
 
 
+def _monitor_rows(kospi: list[float], kosdaq: list[float] | None = None) -> list[dict]:
+    kosdaq = kosdaq or [1000.0] * len(kospi)
+    return [
+        {"일자": f"2026-09-{i + 1:02d}", "KOSPI": k, "KOSDAQ": q}
+        for i, (k, q) in enumerate(zip(kospi, kosdaq))
+    ]
+
+
+def test_leverage_rule_three_fires_on_three_volatile_days_in_ten() -> None:
+    """「레버리지 규칙 3」은 하드 트리거인데 지금까지 아무도 계산하지 않고 모델이 눈대중했다."""
+    module = _load_market_signal_module()
+
+    # 10개 변화 중 ±5%가 정확히 3일 (-6.00 / -5.82 / -5.03)
+    closes = [100.0, 94.0, 94.5, 89.0, 89.5, 85.0, 85.5, 86.0, 86.5, 87.0, 87.5]
+    verdict = module.leverage_liquidation(_monitor_rows(closes))["KOSPI"]
+
+    assert verdict["fired"] is True
+    assert verdict["count"] == 3
+    assert len(verdict["days"]) == 3
+
+
+def test_leverage_rule_three_stays_quiet_below_the_threshold() -> None:
+    """2일이면 발동하지 않는다 — 룰이 요구하는 것은 3일 이상이다."""
+    module = _load_market_signal_module()
+
+    # ±5%가 2일뿐 (-6.00 / -5.82)
+    closes = [100.0, 94.0, 94.5, 89.0, 89.5, 90.0, 90.5, 91.0, 91.5, 92.0, 92.5]
+    verdict = module.leverage_liquidation(_monitor_rows(closes))["KOSPI"]
+
+    assert verdict["fired"] is False
+    assert verdict["count"] == 2
+
+
+def test_leverage_rule_three_exempts_a_run_that_is_all_upward() -> None:
+    """룰의 예외는 '상승 방향으로 일관적인 변동'이다 — 음의 복리는 방향이 섞일 때 생긴다."""
+    module = _load_market_signal_module()
+
+    # ±5% 3일이 전부 상승 (+6.00 / +6.13 / +6.22)
+    closes = [100.0, 106.0, 112.5, 119.5, 120.0, 120.5, 121.0, 121.5, 122.0, 122.5, 123.0]
+    verdict = module.leverage_liquidation(_monitor_rows(closes))["KOSPI"]
+
+    assert verdict["count"] == 3
+    assert verdict["fired"] is False
+    assert verdict["exempt"] is True
+
+    # 하락이 하나라도 섞이면 예외가 깨진다.
+    # 같은 3일인데 마지막이 하락 (+6.00 / +6.13 / -5.78)
+    mixed = [100.0, 106.0, 112.5, 106.0, 106.5, 107.0, 107.5, 108.0, 108.5, 109.0, 109.5]
+    broken = module.leverage_liquidation(_monitor_rows(mixed))["KOSPI"]
+    assert broken["count"] == 3 and broken["fired"] is True and broken["exempt"] is False
+
+
+def test_leverage_rule_three_judges_each_index_separately_and_no_sectors() -> None:
+    """레버리지 상품은 지수별로 다르다. 섹터 레버리지는 「레버리지 규칙 2」대로 사용자 판단이다."""
+    module = _load_market_signal_module()
+
+    calm = [100.0] * 11
+    wild = [100.0, 94.0, 94.5, 89.0, 89.5, 85.0, 85.5, 86.0, 86.5, 87.0, 87.5]
+    result = module.leverage_liquidation(_monitor_rows(calm, wild))
+
+    assert set(result) == {"KOSPI", "KOSDAQ"}
+    assert result["KOSPI"]["fired"] is False
+    assert result["KOSDAQ"]["fired"] is True
+
+    script = (SKILLS_ROOT / "summarize-telegram" / "scripts" / "fetch_market_signals.py").read_text(encoding="utf-8")
+    assert "섹터" in script, "판정 범위가 지수뿐이라는 사실이 스크립트에 남아야 한다"
+
+
+def test_leverage_rule_three_needs_a_full_window() -> None:
+    """행이 모자라면 '판정 불가'다 — 짧은 창을 채운 셈 치고 발동시키지 않는다."""
+    module = _load_market_signal_module()
+
+    verdict = module.leverage_liquidation(_monitor_rows([100.0, 94.0, 99.0]))["KOSPI"]
+    assert verdict["fired"] is False and verdict["insufficient"] is True
+
+
 def test_market_signal_main_reports_api_failure(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1157,6 +1233,53 @@ def test_portfolio_weight_cap_is_the_valuation_axis() -> None:
 
 def _my_rules() -> str:
     return (REPO_ROOT / "context" / "my_rules.md").read_text(encoding="utf-8")
+
+
+def test_leverage_rule_three_constants_match_the_documented_table() -> None:
+    """임계값은 스킬의 운영 선택이다 — 상수만 바꾸고 근거 표가 남으면 다음 사람이 못 읽는다."""
+    module = _load_market_signal_module()
+    skill = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+    rules = _my_rules()
+
+    # 룰 원문이 준 수치는 원문에서 다시 읽어 대조한다.
+    assert f"±{module.VOLATILE_DAY_PCT:.0f}% 이상 변동" in rules
+    assert f"최근 {module.VOLATILE_WINDOW_DAYS}거래일" in rules
+    assert f"{module.VOLATILE_DAY_TRIGGER}일 이상" in rules
+
+    table = skill.split("「레버리지 규칙 3」 판정도")[1][:1600]
+    assert f"| `VOLATILE_DAY_PCT` | {module.VOLATILE_DAY_PCT}%" in table
+    assert f"| `VOLATILE_WINDOW_DAYS` | {module.VOLATILE_WINDOW_DAYS} |" in table
+    assert f"| `VOLATILE_DAY_TRIGGER` | {module.VOLATILE_DAY_TRIGGER} |" in table
+    assert "전부 양수" in table
+    assert "섹터" in table
+
+
+def test_every_mechanically_checkable_rule_has_a_script() -> None:
+    """룰이 수치로 규정한 조건은 모델이 눈대중하지 않는다 — 스크립트가 확정한다."""
+    checks = {
+        "레버리지 규칙 3": ("summarize-telegram/scripts/fetch_market_signals.py", "leverage_liquidation"),
+        "기술적 분석 규칙 1": ("stage-analysis/scripts/stage_scan.py", "MA_20WEEK"),
+        "기본 원칙 13": ("summarize-telegram/scripts/peak_drawdown.py", "ACCOUNT_MDD_BANDS"),
+        "매매규칙 6": ("summarize-telegram/scripts/extract_portfolio.py", "STOP_FULL_PCT"),
+    }
+    for rule, (path, symbol) in checks.items():
+        text = (SKILLS_ROOT / path).read_text(encoding="utf-8")
+        assert symbol in text, f"{rule}을 계산하는 주체가 없다 ({path})"
+
+
+def test_leverage_and_short_term_rules_are_wired_into_advice() -> None:
+    """인용된 적 없는 룰은 조언에 절대 나타나지 않는다 — 있으나 마나 한 룰이 된다."""
+    advice = (SKILLS_ROOT / "advice" / "SKILL.md").read_text(encoding="utf-8")
+
+    # 「레버리지 규칙 1」 개별 종목 레버리지 금지 — 2·3만 인용되고 1만 빠져 있었다.
+    assert "레버리지 규칙 1" in advice
+    # 「기본 원칙 11」 단기 투자 금지 — 이벤트 매매(「매매규칙 14」)와 같은 자리에 온다.
+    assert "기본 원칙 11" in advice
+
+    briefing = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+    # 브리핑의 레버리지 리마인드는 스크립트 판정을 인용한다.
+    assert "레버리지 규칙 3" in briefing
+    assert "fetch_market_signals" in briefing
 
 
 def test_rule_check_blocks_convert_every_line_my_rules_asks_for() -> None:

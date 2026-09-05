@@ -44,6 +44,7 @@ TIMEOUT = 20
 # 않는다. 아래 값은 이 스킬이 정한 운영 기준이다. 바꾸려면 SKILL.md의 근거도 함께 고친다.
 MA_DAYS = 150            # 통합 버전 기준선. 200일선은 참고로 병기만 한다 (리포트 p.17~18).
 MA_REF_DAYS = 200        # 미너비니 원본 기준선 — 참고 표시용
+MA_20WEEK = 100          # 「기술적 분석 규칙 1」의 주봉 20주선을 일봉으로 근사 (5거래일 × 20주)
 SLOPE_WINDOW = 20        # 기울기 측정 구간 (거래일)
 SLOPE_FLAT_PCT = 1.5     # ±1.5%/20일 이내면 "평탄"
 POSITION_WINDOW = 20     # 주가-이평선 위치 판정 구간 (거래일)
@@ -574,6 +575,11 @@ def analyze(bars: list[dict], financials: dict | None, primary: str) -> dict:
     position, ratio, sample = price_vs_ma(closes, ma)
     slope, slope_pct = ma_slope(ma)
     ref_slope, ref_slope_pct = ma_slope(ma_ref)
+    # 「기술적 분석 규칙 1」이 요구하는 주봉 20주선. 일봉 100일선으로 근사한다
+    # (`cash_deploy_check`가 지수에 쓰는 것과 같은 5×20 근사).
+    ma_20w = sma(closes, MA_20WEEK)
+    ma20w_slope, ma20w_slope_pct = ma_slope(ma_20w)
+    ma20w_position, ma20w_ratio, _ = price_vs_ma(closes, ma_20w)
     pivot_highs, pivot_lows = swing_pivots(bars)
     swing = swing_trend(pivot_highs, pivot_lows)
     band, band_ratio = band_position(bars)
@@ -593,6 +599,11 @@ def analyze(bars: list[dict], financials: dict | None, primary: str) -> dict:
         "long_trend_up": long_trend_up,
         "ma": ma[-1],
         "ma_ref": ma_ref[-1],
+        "ma20w": ma_20w[-1],
+        "ma20w_slope": ma20w_slope,
+        "ma20w_slope_pct": ma20w_slope_pct,
+        "ma20w_position": ma20w_position,
+        "ma20w_ratio": ma20w_ratio,
         "close": closes[-1],
         "pivot_highs": pivot_highs[-2:],
         "pivot_lows": pivot_lows[-2:],
@@ -636,6 +647,13 @@ def print_result(name: str, code: str, result: dict, sources: list[str]) -> None
     print(
         f"  {MA_DAYS}일선 기울기: {p['slope']} ({_pct(p['slope_pct'])} / {SLOPE_WINDOW}일)"
         f" · 참고 {MA_REF_DAYS}일선: {p['ref_slope']} ({_pct(p['ref_slope_pct'])})"
+    )
+    gap20w = (p["close"] / p["ma20w"] - 1) * 100 if p["ma20w"] else None
+    print(
+        f"  20주선(≈{MA_20WEEK}일선, 「기술적 분석 규칙 1」): "
+        + (f"{p['ma20w']:,.0f}원 ({_pct(gap20w)})" if p["ma20w"] else "-")
+        + f" · 방향 {p['ma20w_slope']} ({_pct(p['ma20w_slope_pct'])} / {SLOPE_WINDOW}일)"
+        f" · 주가 {p['ma20w_position']}"
     )
     highs = " → ".join(f"{h['price']:,.0f}" for h in p["pivot_highs"]) or "-"
     lows = " → ".join(f"{l['price']:,.0f}" for l in p["pivot_lows"]) or "-"

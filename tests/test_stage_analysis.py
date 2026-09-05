@@ -355,3 +355,27 @@ def test_analyze_reports_the_moving_average_pair() -> None:
     assert result["price"]["ma"] is not None
     assert result["price"]["ma_ref"] is not None
     assert result["price"]["close"] > result["price"]["ma"]
+
+def test_twenty_week_line_is_reported_for_the_stock_itself():
+    """「기술적 분석 규칙 1」은 종목별 주봉 20주선을 요구하는데 아무도 계산하지 않았다.
+
+    `advice` 룰 체크와 `analyze-stock` 10단계에 출력 슬롯은 있는데 그 숫자를 만드는 주체가
+    없어 모델이 150일선으로 대신 읽거나 눈대중했다.
+    """
+    rising = [100.0 + i for i in range(400)]
+    price = stage_scan.analyze(_bars(rising), None, "C")["price"]
+
+    assert price["ma20w"] is not None
+    assert price["ma20w_slope"] == "상승"
+    assert price["ma20w_position"] in {"위", "아래", "오르내림"}
+    # 20주선은 150일선과 다른 선이다 — 같은 값을 되풀이하면 룰이 요구한 축이 아니다.
+    assert price["ma20w"] != price["ma"]
+
+
+def test_twenty_week_line_is_a_documented_approximation():
+    """일봉으로 주봉 20주선을 근사한다는 사실과 그 배수(5×20)가 문서에 남아야 한다."""
+    assert stage_scan.MA_20WEEK == 100
+
+    skill = (REPO_ROOT / ".agents" / "skills" / "stage-analysis" / "SKILL.md").read_text(encoding="utf-8")
+    assert "MA_20WEEK" in skill
+    assert "근사" in skill
