@@ -20,13 +20,18 @@ from pathlib import Path
 # 「포트폴리오」 시트 다음 시트(매매기록)의 헤더 표식 — 여기서부터는 버린다
 NEXT_SHEET_MARKER = "최초 투자"
 
-# context/my_rules.md 임계값
-STOP_LOSS_PCT = -15.0  # 매매 규칙 6: -15% 손절
-TRIM_PCT = -8.0  # 매매 규칙 7: -8% 비중 축소 고려
-PROFIT_CUSHION_PCT = 24.0  # 매매 규칙 11: 24~30% 수익 시 1/3 익절
-MAX_WEIGHT_PCT = 30.0  # 매매 규칙 9: 한 종목 비중 30% 상한
-WEIGHT_WARN_PCT = 25.0  # 상한 근접 경고선
-MIN_HOLDINGS = 5  # 매매 규칙 9: 5~12종목
+# context/my_rules.md 임계값 — 룰 원문이 정본이다.
+# `tests/test_agent_configuration.py::test_portfolio_thresholds_match_my_rules`가
+# 룰 파일에서 숫자를 파싱해 아래 상수와 대조한다. 룰이 바뀌면 그 테스트가 먼저 깨진다.
+STOP_LOSS_PCT = -15.0  # 매매규칙 6: -15% 1차 분할 매도
+STOP_FULL_PCT = -20.0  # 매매규칙 6: -20% 전량 매도
+TRIM_PCT = -10.0  # 매매규칙 7: -10% 비중 축소 고려
+PROFIT_CUSHION_PCT = 24.0  # 매매규칙 11: 24~30% 수익 시 보유량 10~30% 익절
+# 매매규칙 9는 두 축을 나눈다. 아래는 **평가 비중** 축(주가 상승분 허용, 최대 35%)이다.
+# 매수원금 비중 상한(= 2% ÷ 계획 손절률)은 스냅샷이 아니라 진입 판단에서 계산한다.
+MAX_WEIGHT_PCT = 35.0
+WEIGHT_WARN_PCT = 30.0  # 상한 근접 경고선
+MIN_HOLDINGS = 5  # 매매규칙 9: 5~12종목
 MAX_HOLDINGS = 12
 
 CASH_SECTOR = "현금"
@@ -150,16 +155,23 @@ def rule_findings(holdings: list[dict]) -> list[str]:
             if h["수익률_v"] is not None and pred(h["수익률_v"])
         ]
 
-    stop_loss = names(lambda v: v <= STOP_LOSS_PCT)
+    # 「매매규칙 6」은 두 티어다. 깊은 티어가 얕은 티어를 흡수해 한 종목이 두 줄에 겹치지 않는다.
+    full_exit = names(lambda v: v <= STOP_FULL_PCT)
     findings.append(
-        f"- 매매규칙 6(-15% 손절): {', '.join(stop_loss)} ← **위반**" if stop_loss
-        else "- 매매규칙 6(-15% 손절): 해당 없음"
+        f"- 매매규칙 6(-20% 전량 매도): {', '.join(full_exit)} ← **위반**" if full_exit
+        else "- 매매규칙 6(-20% 전량 매도): 해당 없음"
+    )
+
+    tier1 = names(lambda v: STOP_LOSS_PCT >= v > STOP_FULL_PCT)
+    findings.append(
+        f"- 매매규칙 6(-15% 1차 분할 매도): {', '.join(tier1)} ← **위반**" if tier1
+        else "- 매매규칙 6(-15% 1차 분할 매도): 해당 없음"
     )
 
     trim = names(lambda v: TRIM_PCT >= v > STOP_LOSS_PCT)
     findings.append(
-        f"- 매매규칙 7(-8% 비중 축소 고려): {', '.join(trim)}" if trim
-        else "- 매매규칙 7(-8% 비중 축소 고려): 해당 없음"
+        f"- 매매규칙 7(-10% 비중 축소 고려): {', '.join(trim)}" if trim
+        else "- 매매규칙 7(-10% 비중 축소 고려): 해당 없음"
     )
 
     cushion = names(lambda v: v >= PROFIT_CUSHION_PCT)
@@ -177,11 +189,11 @@ def rule_findings(holdings: list[dict]) -> list[str]:
         return ", ".join(f"{h['종목']} {h['비중']}" for h in rows)
 
     if over:
-        findings.append(f"- 매매규칙 9(비중 30% 상한): {weight_desc(over)} ← **위반**")
+        findings.append(f"- 매매규칙 9(평가 비중 35% 상한): {weight_desc(over)} ← **위반**")
     elif near:
-        findings.append(f"- 매매규칙 9(비중 30% 상한): {weight_desc(near)} ← 근접")
+        findings.append(f"- 매매규칙 9(평가 비중 35% 상한): {weight_desc(near)} ← 근접")
     else:
-        findings.append("- 매매규칙 9(비중 30% 상한): 해당 없음")
+        findings.append("- 매매규칙 9(평가 비중 35% 상한): 해당 없음")
 
     count = len(positions)
     if count > MAX_HOLDINGS:

@@ -111,12 +111,17 @@ def test_analyze_stock_downside_drives_stop_and_position_cap() -> None:
     """손익비 분모가 상수 15%면 중심 기대수익의 재진술이 된다 — 실측 하방을 쓴다."""
     content = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
 
-    assert "실효 손절폭  = max(하방, 15%)" in content
+    # 「매매규칙 6」의 최종 이탈선은 -20%다. 15%를 하한으로 쓰면 1회 최대 손실이
+    # 계좌의 2.67%가 되어 「기본 원칙 4」 2%룰을 넘긴다.
+    assert "실효 손절폭  = max(하방, 20%)" in content
     assert "손익비      = 중심 기대수익 / 실효 손절폭" in content
     # 「기본 원칙 2」 단서(하방 막힘 시 30%)가 판정선에 들어와야 한다.
     assert "중심 30~50% & 하방 ≤ 0%" in content
-    # 2%룰과 「매매규칙 9」 30% 상한 중 어느 쪽이 구속하는지 계산으로 갈린다.
-    assert "포지션 상한 = min(2% / 실효 손절폭, 30%)" in content
+    # 「매매규칙 9」는 두 축이다. 진입 크기를 정하는 것은 매수원금 축뿐이고,
+    # 평가 비중 35%는 진입 후 주가 상승분에 걸리는 별개 상한이다.
+    assert "매수원금 비중 상한 = 2% / 실효 손절폭" in content
+    assert "평가 비중 상한 = 35%" in content
+    assert "min(2% / 실효 손절폭, 30%)" not in content
 
 
 def test_analyze_stock_wires_detected_signals_to_user_rules() -> None:
@@ -779,17 +784,143 @@ def test_portfolio_parser_unescapes_and_flags_rules() -> None:
     assert "-16.48%" in snapshot and "\\-16.48%" not in snapshot
     assert "| _현금 | 현금 |" in snapshot
 
-    assert "매매규칙 6(-15% 손절): 베타파마 -16.48% (비중 9.8%) ← **위반**" in snapshot
-    assert "매매규칙 7(-8% 비중 축소 고려): 감마엔터 -9.20% (비중 2.7%)" in snapshot
+    assert "매매규칙 6(-20% 전량 매도): 해당 없음" in snapshot
+    assert "매매규칙 6(-15% 1차 분할 매도): 베타파마 -16.48% (비중 9.8%) ← **위반**" in snapshot
+    # -9.20%는 아직 「매매규칙 7」의 -10% 선에 닿지 않았다.
+    assert "매매규칙 7(-10% 비중 축소 고려): 해당 없음" in snapshot
     assert "매매규칙 11(24~30%↑ 익절 쿠션): 알파전자 +108.36% (비중 26.3%)" in snapshot
-    assert "매매규칙 9(비중 30% 상한): 알파전자 26.3% ← 근접" in snapshot
+    assert "매매규칙 9(평가 비중 35% 상한): 해당 없음" in snapshot
     # 현금은 종목 수·룰 판정에서 제외
     assert "매매규칙 9(종목 수 5~12): 3종목 ← **미달**" in snapshot
     assert "현금 비중: 5.1% (₩5,000,000)" in snapshot
 
 
+STOP_TIER_DUMP = """|  |  |  |  |  |  |  |  |  |  |  |  |
+| :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| 구분 |  계좌 | 섹터 | 종목 | 보유 | 평단 | 현재가 | 매수금액 | 평가금액 | 수익률 | 손익 | 비중 |
+| B | 삼성 | 반도체 | 앱실론 | 10 | ₩10,000 | ₩7,800 | ₩100,000 | ₩78,000 | \\-22.00% | \\-₩22,000 | 12.0% | |
+| B | 삼성 | 바이오 | 제타 | 10 | ₩10,000 | ₩8,400 | ₩100,000 | ₩84,000 | \\-16.00% | \\-₩16,000 | 11.0% | |
+| B | 삼성 | 소비재 | 에타 | 10 | ₩10,000 | ₩8,900 | ₩100,000 | ₩89,000 | \\-11.00% | \\-₩11,000 | 10.0% | |
+| B | 삼성 | 화학 | 세타 | 10 | ₩10,000 | ₩9,500 | ₩100,000 | ₩95,000 | \\-5.00% | \\-₩5,000 | 9.0% | |
+
+|  |  |
+| :-: | :-: |
+| 종목 | 최초 투자 |
+"""
+
+
+def test_portfolio_grades_stop_loss_in_two_tiers() -> None:
+    """「매매규칙 6」은 -15% 1차 분할 + -20% 전량 두 티어다. 깊은 티어가 얕은 티어를 흡수한다."""
+    module = _load_portfolio_module()
+    snapshot = module.build_snapshot(STOP_TIER_DUMP, "2026-09-05")
+
+    assert "매매규칙 6(-20% 전량 매도): 앱실론 -22.00% (비중 12.0%) ← **위반**" in snapshot
+    assert "매매규칙 6(-15% 1차 분할 매도): 제타 -16.00% (비중 11.0%) ← **위반**" in snapshot
+    # -22%는 전량 티어에만 잡힌다 — 한 종목이 두 줄에 겹쳐 세어지지 않는다.
+    assert "매매규칙 6(-15% 1차 분할 매도): 앱실론" not in snapshot
+    # -11%는 축소 고려, -5%는 아무 데도 안 걸린다.
+    assert "매매규칙 7(-10% 비중 축소 고려): 에타 -11.00% (비중 10.0%)" in snapshot
+    assert "세타" not in snapshot.split("## 룰 자동 판정")[1]
+
+
+WEIGHT_DUMP = """|  |  |  |  |  |  |  |  |  |  |  |  |
+| :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| 구분 |  계좌 | 섹터 | 종목 | 보유 | 평단 | 현재가 | 매수금액 | 평가금액 | 수익률 | 손익 | 비중 |
+| B | 삼성 | 반도체 | 이오타 | 10 | ₩10,000 | ₩12,000 | ₩100,000 | ₩120,000 | 20.00% | ₩20,000 | 36.0% | |
+| B | 삼성 | 바이오 | 카파 | 10 | ₩10,000 | ₩11,000 | ₩100,000 | ₩110,000 | 10.00% | ₩10,000 | 31.0% | |
+
+|  |  |
+| :-: | :-: |
+| 종목 | 최초 투자 |
+"""
+
+
+def test_portfolio_weight_cap_is_the_valuation_axis() -> None:
+    """「매매규칙 9」의 35%는 **평가 비중** 상한이다. 매수원금 비중 상한(2%÷손절률)과 다른 축이라 라벨로 갈라 쓴다."""
+    module = _load_portfolio_module()
+    snapshot = module.build_snapshot(WEIGHT_DUMP, "2026-09-05")
+
+    assert "매매규칙 9(평가 비중 35% 상한): 이오타 36.0% ← **위반**" in snapshot
+    # 시트의 비중은 평가 비중이므로 매수원금 축 룰을 여기에 인용하지 않는다.
+    assert "매수원금" not in snapshot.split("## 룰 자동 판정")[1]
+
+
 def _my_rules() -> str:
     return (REPO_ROOT / "context" / "my_rules.md").read_text(encoding="utf-8")
+
+
+def test_rule_check_blocks_convert_every_line_my_rules_asks_for() -> None:
+    """`my_rules.md`「적용 방법」은 -10/-15/-20/24/30 선을 전부 가격으로 환산하라고 요구한다.
+
+    advice 룰 체크 블록과 보고서 템플릿이 그 목록을 빠짐없이 담아야 한다.
+    """
+    rules = _my_rules()
+    assert "-10%/-15%/-20%/24%/30% 선을 구체적 가격으로 환산" in rules
+
+    advice = (SKILLS_ROOT / "advice" / "SKILL.md").read_text(encoding="utf-8")
+    block = advice.split("🛡️ 룰 체크")[1].split("---")[0]
+    assert "「매매규칙 7」 -10%" in block
+    assert "「매매규칙 6」 -15%" in block
+    assert "「매매규칙 6」 -20%" in block
+    assert "매수원금 비중 상한 = 2% ÷ 실효 손절폭" in block
+    assert "평가 비중 상한 35%" in block
+    assert "-8%" not in block
+
+    template = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
+    assert "실효 손절폭 max(하방, 20%)" in template
+    assert "매수원금 비중 상한" in template
+    assert "min(2%÷" not in template
+
+
+def test_no_file_presents_minus_fifteen_as_the_whole_of_rule_six() -> None:
+    """「매매규칙 6」을 인용하면서 -15%만 적으면 -20% 전량 매도 티어가 통째로 사라진다."""
+    rules = _my_rules()
+    assert "-15%, -20% 손절" in rules, "룰 6의 제목이 두 티어를 담고 있어야 한다"
+
+    bad = []
+    for path in sorted(SKILLS_ROOT.rglob("*")) + sorted((REPO_ROOT / "template").rglob("*.md")):
+        if path.suffix not in {".md", ".py"} or "__pycache__" in path.parts:
+            continue
+        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "매매규칙 6" not in line:
+                continue
+            # 티어를 명시한 줄(-15% = 1차 분할)과 축을 구분하는 줄은 정상이다.
+            allowed = ("-20%", "1차 분할", "평단", "고점")
+            if "-15%" in line and not any(tok in line for tok in allowed):
+                bad.append(f"{path.relative_to(REPO_ROOT)}:{i}")
+    assert not bad, "「매매규칙 6」을 -15% 단독으로 인용한 곳: " + ", ".join(bad)
+
+
+def test_master_versus_rule_table_sizes_off_the_terminal_stop() -> None:
+    """손절폭 2배를 사이징으로 상쇄한다는 논리는 분모가 최종 이탈선(-20%)일 때만 성립한다."""
+    advice = (SKILLS_ROOT / "advice" / "SKILL.md").read_text(encoding="utf-8")
+    row = [ln for ln in advice.splitlines() if ln.startswith("| 손절폭 |")]
+    assert row, "대가↔룰 표의 손절폭 행을 찾지 못했다"
+    text = row[0]
+
+    assert "-20%" in text, "1차 분할만 적고 최종 이탈선을 빼면 리스크 총량이 과소평가된다"
+    assert "10%" in text
+    assert "13.3%" not in text
+
+
+def test_no_skill_still_cites_the_retired_minus_eight_percent_line() -> None:
+    """「매매규칙 7」은 2026-09-02에 -10%가 됐다. -8%를 인용하는 곳이 남으면 안 된다."""
+    targets = [
+        SKILLS_ROOT / "advice" / "SKILL.md",
+        SKILLS_ROOT / "advice" / "references" / "trend_following.md",
+        SKILLS_ROOT / "summarize-telegram" / "SKILL.md",
+        SKILLS_ROOT / "summarize-telegram" / "scripts" / "extract_portfolio.py",
+        REPO_ROOT / "template" / "stock_analysis.md",
+        REPO_ROOT / "template" / "telegram_daily.md",
+    ]
+    for path in targets:
+        text = path.read_text(encoding="utf-8")
+        assert "매매규칙 7" not in text or "-8%" not in text, f"{path.name}에 -8% 인용이 남아 있다"
+
+    # 브리핑 룰 리마인드도 두 손절 티어를 모두 안내해야 한다.
+    briefing = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+    assert "매매규칙 7 (-10%" in briefing
+    assert "-20% 전량" in briefing
 
 
 def test_split_sell_rule_does_not_contradict_the_stop_tiers() -> None:
@@ -809,6 +940,33 @@ def test_split_sell_rule_does_not_contradict_the_stop_tiers() -> None:
     assert "레버리지 규칙 3(변동성 레버리지 청산)" in immediate
     # 손절 티어의 소유권은 규칙 6에 있다고 명시해 둔다.
     assert "「매매규칙 6」의 -15%/-20% 손절은 그 규칙이 정한 티어" in text
+
+
+def test_portfolio_thresholds_match_my_rules() -> None:
+    """임계값 정본은 `context/my_rules.md`다. 룰 숫자가 바뀌면 이 테스트가 먼저 깨진다.
+
+    2026-09-02 「매매규칙 6·7」이 바뀌었는데 스크립트가 옛 -8%·단일 -15%에 머문 적이 있다.
+    상수를 문자열로 못 박지 않고 룰 원문에서 파싱해 대조한다.
+    """
+    module = _load_portfolio_module()
+    rules = _my_rules()
+
+    trim = re.search(r"^7\. \*\*(-\d+)% 비중 축소\*\*", rules, re.MULTILINE)
+    stop = re.search(r"^6\. \*\*(-\d+)%, (-\d+)% 손절\*\*", rules, re.MULTILINE)
+    cushion = re.search(r"수익이 (\d+)-(\d+)% 정도 발생하면", rules)
+    weight = re.search(r"최대 (\d+)%를 넘지 않도록", rules)
+    holdings = re.search(r"종목 수는 (\d+)~(\d+)종목", rules)
+    assert trim and stop and cushion and weight and holdings, "룰 원문 형식이 바뀌었다"
+
+    assert module.TRIM_PCT == float(trim.group(1))
+    assert module.STOP_LOSS_PCT == float(stop.group(1))
+    assert module.STOP_FULL_PCT == float(stop.group(2))
+    assert module.PROFIT_CUSHION_PCT == float(cushion.group(1))
+    assert module.MAX_WEIGHT_PCT == float(weight.group(1))
+    assert (module.MIN_HOLDINGS, module.MAX_HOLDINGS) == (
+        int(holdings.group(1)),
+        int(holdings.group(2)),
+    )
 
 
 def _load_find_reports_module():
