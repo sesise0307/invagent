@@ -153,6 +153,35 @@ def test_analyze_stock_checks_overhang_before_entry() -> None:
     assert "`미수집`은 `해당 없음`이 아니다" in skill
 
 
+def test_analyze_stock_gates_entry_on_the_scripted_stage() -> None:
+    """오버행만 게이트고 스테이지는 3관점 중 1표에 그치면, 3·4단계 종목이 기대수익만으로 🟢를 받는다."""
+    skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+    stage = (SKILLS_ROOT / "stage-analysis" / "SKILL.md").read_text(encoding="utf-8")
+
+    # stage-analysis가 3단계를 신규 매수 금지로 규정하므로 analyze-stock도 같은 강도여야 한다.
+    assert "3단계 | 신규 매수 금지" in stage
+    assert "스테이지 게이트" in skill
+    # 오버행 게이트와 같은 형식 — 두 단계 모두 강등 + 뒤집을 근거 요구.
+    gate = skill.split("스테이지 게이트")[1].split("오버행 게이트")[0]
+    assert "`3단계`" in gate and "🟡" in gate
+    assert "`4단계`" in gate and "🔴" in gate
+    assert "stage_scan" in gate
+    assert "기대수익이 크다는 것은 뒤집을 근거가 아니다" in gate
+
+
+def test_analyze_stock_keeps_the_20week_rule_advisory() -> None:
+    """「기술적 분석 규칙 1」은 단독 절대 조건이 아니라고 못 박는다 — 스킬이 이를 진입 금지로 격상하면 안 된다."""
+    rules = _my_rules()
+    assert "단독으로 매수·매도를 결정하는 절대 조건으로 삼지 않는다" in rules
+    assert "20주선 아래에서도 분할 진입할 수 있다" in rules
+
+    skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+    line = [ln for ln in skill.splitlines() if "주봉 20주선 방향" in ln]
+    assert line, "10단계 20주선 항목을 찾지 못했다"
+    assert "신규 진입 보류" not in "\n".join(line)
+    assert "보수적" in skill.split("주봉 20주선 방향")[1][:400]
+
+
 def test_stock_analysis_template_has_overhang_section() -> None:
     """§6-A가 오버행 점검의 출력 정본이고 12섹션 구조를 깨지 않는다."""
     template = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
@@ -870,6 +899,20 @@ def test_rule_check_blocks_convert_every_line_my_rules_asks_for() -> None:
     assert "실효 손절폭 max(하방, 20%)" in template
     assert "매수원금 비중 상한" in template
     assert "min(2%÷" not in template
+
+
+def test_advice_resolves_rule_versus_rule_conflicts() -> None:
+    """급락장에선 「매매규칙 6」 손절 예외(팔지 마라)와 「기본 원칙 13」(줄여라)이 동시에 켜진다.
+
+    advice가 대가↔룰 충돌만 정리하고 룰↔룰 충돌을 비워 두면 매번 재논쟁이 난다.
+    """
+    advice = (SKILLS_ROOT / "advice" / "SKILL.md").read_text(encoding="utf-8")
+    table = advice.split("대가 기준 vs 사용자 룰 충돌 처리")[1].split("## 중요한 원칙")[0]
+
+    assert "룰 ↔ 룰 충돌" in table
+    assert "기본 원칙 13" in table and "매매규칙 6" in table
+    # 계좌 레벨 룰이 종목 레벨 예외보다 위다.
+    assert "계좌 레벨" in table
 
 
 def test_no_file_presents_minus_fifteen_as_the_whole_of_rule_six() -> None:
