@@ -731,6 +731,18 @@ def test_no_cache_flag_forces_a_fresh_fetch(
         assert "http_cache.disable()" in text, f"{name}이 플래그를 캐시에 연결하지 않았다"
 
 
+def test_briefing_prep_steps_have_one_entry_point() -> None:
+    """1-1·1-1-1·1-3-1은 서로 독립인데 각각 별도 bash 왕복으로 돌았다."""
+    skill = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "uv run invagent daily-prep" in skill
+    # 개별 명령은 지우지 않는다 — 한 단계만 다시 돌릴 때 쓰고, 해석 기준의 정본이다.
+    for script in ("fetch_market_signals.py", "cash_deploy_check.py", "peak_drawdown.py"):
+        assert script in skill
+    # 스냅샷이 없으면 낙폭 단계는 실패가 아니라 미실행이라는 점이 문서에 있어야 한다.
+    assert "그 파일이 이미 있을 때만" in skill
+
+
 def test_http_cache_ttl_is_documented_where_it_is_explained() -> None:
     """TTL은 시세 신선도와 맞물린 운영 선택이다 — 상수만 바꾸고 근거가 남으면 다음 사람이 못 읽는다."""
     module = _load_http_cache_module()

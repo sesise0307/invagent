@@ -133,6 +133,16 @@ funding method leaves the value leg of 「기본 원칙 5(교집합)」 empty. T
 lives in `analyze-stock/SKILL.md` step 5-1; the output layout lives in
 `template/stock_analysis.md` §6-A.
 
+`uv run invagent daily-prep` (`src/invagent/daily_prep.py`) is the single entry point for the
+briefing's independent prep steps — market signals, the cash-deployment ladder, and, when today's
+snapshot already exists, the peak-drawdown scan. They do not depend on each other, so they run
+concurrently and print as one block in a fixed order instead of costing a separate command each.
+Every step stays non-blocking exactly as its SKILL.md section requires: a failed step leaves its
+section with a reason and the command still exits 0. `--snapshot` runs the drawdown step only if
+that file is already there, so a first run skips it (the snapshot is created later, in step 1-3)
+and a same-day re-run picks it up. The per-step commands stay documented in the skill for
+re-running one step alone, and each section remains the authority on how to read its output.
+
 The `summarize-telegram` skill owns everything under `output/telegram-daily/`.
 `uv run invagent fetch-messages` writes the raw export to
 `raw/<yyyy-mm-dd>_raw.md`; the finished briefing goes to
@@ -308,6 +318,7 @@ Use `uv` for local development.
   skill-script behavior, and the credential/absolute-path guard after editing
   anything under `.agents/skills/` or `template/`.
 - `uv run invagent fetch-messages --days 1`: manually verify message fetching.
+- `uv run invagent daily-prep`: run the briefing's independent prep steps at once.
 
 Skill scripts under `.agents/skills/**/scripts/` are invoked directly rather than through
 the package, so each one must run standalone. They are not restricted to the standard
