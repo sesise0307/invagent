@@ -28,7 +28,7 @@ MAX_IMAGES_PER_RUN = 60
 # URL을 이미 동시에 받기 때문에, 여기에 곱해진 만큼 동시 연결이 늘기 때문이다.
 MAX_CONCURRENT_LINK_MESSAGES = 5
 
-# raw 마크다운에 남는 판독 대기 마커. summarize-telegram 스킬 1-4단계가 이 문자열을
+# raw 마크다운에 남는 판독 대기 마커. daily-digest 스킬 1-4단계가 이 문자열을
 # 찾아 판독 결과로 치환하므로 코드와 SKILL.md 양쪽의 계약이다. 한쪽만 바꾸면 스킬이
 # 이미지를 하나도 못 찾는다.
 PENDING_IMAGE_MARKER = "[분석 대기]"

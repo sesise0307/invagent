@@ -89,11 +89,11 @@ In both clients, list available skills and confirm these seven project skills:
 
 - `advice`
 - `analyze-stock`
+- `daily-digest`
 - `market-data`
 - `monthly-investment-review`
 - `opendart`
 - `stage-analysis`
-- `summarize-telegram`
 
 Run repository checks with:
 

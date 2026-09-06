@@ -1,4 +1,0 @@
-interface:
-  display_name: "Telegram Investment Briefing"
-  short_description: "Create a daily briefing from saved messages"
-  default_prompt: "Use $summarize-telegram to create today’s investment briefing."

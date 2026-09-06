@@ -1,0 +1,4 @@
+interface:
+  display_name: "Daily Digest"
+  short_description: "Build today's investment briefing from every daily input"
+  default_prompt: "Use $daily-digest to create today’s investment briefing."

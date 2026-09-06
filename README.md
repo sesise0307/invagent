@@ -100,7 +100,7 @@ in `.agents/skills/`; `.claude/skills/` holds symlinks to them.
 | `analyze-stock` | Full single-stock workup — local analyst PDFs, DART report deltas, web news, past briefings, portfolio fit — into one rolling report per stock under `output/reports/종목/`. Target price is always a range. |
 | `stage-analysis` | Decides which of the four price-maturity stages a stock is in, from the 150-day moving average and operating-profit growth. Deterministic: a script fixes the stage, the model only interprets it. |
 | `advice` | Investor-perspective advice (value, trend, macro, second-level thinking) checked against the user's own rules. |
-| `summarize-telegram` | Daily briefing: fetch, classify by sector/theme, extract signals, roll into the accumulated theme archive. |
+| `daily-digest` | One briefing a day out of every daily input — saved Telegram messages, market signals, the cash-deployment ladder, the portfolio snapshot, drawdowns — classified by sector/theme and rolled into the accumulated archive. |
 | `opendart` | Korean disclosure lookups (financials, ownership, dividends, filings) through the OpenDART MCP server. |
 | `monthly-investment-review` | Reads the Notion investment journal for a month and writes back the retrospective. |
 | `market-data` | Not a workflow — the reference the others cite. Which source serves which value, how to refresh the StockEasy cookie, how the cache behaves, how ticker overrides work. Read it when data is missing rather than tracing the scripts. |

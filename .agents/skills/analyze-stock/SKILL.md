@@ -235,7 +235,7 @@ uv run python .agents/skills/analyze-stock/scripts/find_mentions.py "<종목명>
 ```
 
 - 스크립트는 **위치만 알려준다. 본문은 원본을 직접 읽어라.** 출력의 `경로:줄번호`를 쓴다.
-  1. `monthly_context.md`는 **항상 전체를 읽는다** (`summarize-telegram` 읽기 프로토콜).
+  1. `monthly_context.md`는 **항상 전체를 읽는다** (`daily-digest` 읽기 프로토콜).
   2. 로케이터가 가리키는 테마 파일 중 **이 종목과 직접 겹치는 것만** 연다. 전부 열면 컨텍스트가 마른다.
   3. 일일 브리핑은 `head` 매치 건부터 연다. `body` 매치는 스치듯 언급이라 건수만 참고한다.
   4. ⛔ 로케이터 발췌만 보고 결론 쓰지 말 것. 잘린 텍스트다.
@@ -260,7 +260,7 @@ uv run python .agents/skills/analyze-stock/scripts/find_mentions.py "<종목명>
    ```
    응답이 과대해 덤프 경로가 반환되는 것은 **정상 경로다.** 그 경로를 기존 스크립트에 넘긴다.
    ```bash
-   uv run python .agents/skills/summarize-telegram/scripts/extract_portfolio.py <덤프 경로> --out output/portfolio/$(date +%Y-%m-%d).md
+   uv run python .agents/skills/daily-digest/scripts/extract_portfolio.py <덤프 경로> --out output/portfolio/$(date +%Y-%m-%d).md
    ```
 3. 비교 산출물:
    - 섹터 중복도 — 이미 같은 매크로 베팅을 하고 있는가

@@ -1,12 +1,12 @@
 ---
 name: market-data
-description: 외부 데이터를 어디서 어떻게 가져오는지에 대한 단일 참조. 시세·멀티플·컨센서스·일봉·시장 지표·텔레그램 저장 메시지·구글 시트 포트폴리오·DART 공시를 각각 어느 경로로 수집하는지, 인증(STOCKEASY_COOKIE)은 어떻게 갱신하는지, 응답 캐시는 어떻게 동작하는지를 규정한다. 다음 상황에서 트리거하라 - "이 데이터 어디서 가져와?", "시세 어떻게 받아와", "쿠키 만료됐대", "STOCKEASY_COOKIE 갱신", "401 뜨는데", "캐시 껐다 켜기", "일봉 어디서 받아", "포트폴리오 어떻게 읽어와", "수집이 실패했는데 계속 진행해도 돼?" 다른 스킬(`analyze-stock`·`stage-analysis`·`summarize-telegram`·`advice`)은 수집 방법을 다시 설명하지 않고 이 파일을 참조한다. 판정과 해석은 각 스킬의 몫이다.
+description: 외부 데이터를 어디서 어떻게 가져오는지에 대한 단일 참조. 시세·멀티플·컨센서스·일봉·시장 지표·텔레그램 저장 메시지·구글 시트 포트폴리오·DART 공시를 각각 어느 경로로 수집하는지, 인증(STOCKEASY_COOKIE)은 어떻게 갱신하는지, 응답 캐시는 어떻게 동작하는지를 규정한다. 다음 상황에서 트리거하라 - "이 데이터 어디서 가져와?", "시세 어떻게 받아와", "쿠키 만료됐대", "STOCKEASY_COOKIE 갱신", "401 뜨는데", "캐시 껐다 켜기", "일봉 어디서 받아", "포트폴리오 어떻게 읽어와", "수집이 실패했는데 계속 진행해도 돼?" 다른 스킬(`analyze-stock`·`stage-analysis`·`daily-digest`·`advice`)은 수집 방법을 다시 설명하지 않고 이 파일을 참조한다. 판정과 해석은 각 스킬의 몫이다.
 ---
 
 # Market Data — 외부 데이터 수집 단일 참조
 
 이 스킬은 **어디서 무엇을 어떻게 가져오는가**만 규정한다. 가져온 값으로 무엇을 판단할지는
-`analyze-stock`(종목), `stage-analysis`(국면), `summarize-telegram`(브리핑), `advice`(대가 관점),
+`analyze-stock`(종목), `stage-analysis`(국면), `daily-digest`(브리핑), `advice`(대가 관점),
 `opendart`(공시)의 몫이다.
 
 ## 공통 원칙
@@ -28,12 +28,12 @@ description: 외부 데이터를 어디서 어떻게 가져오는지에 대한 �
 | 종목 뉴스 | 같음 (`news/by-stock-code`) | 필요 |
 | 종목명·티커 해석 | `invagent.datafeed.tickers` (오버라이드 우선) | 검색만 무인증 |
 | 일봉 OHLCV | `invagent.datafeed.naver` (`api.finance.naver.com/siseJson.naver`) | 불필요 |
-| 시장 지표(지수·빅픽처·breadth·신용잔고) | `invagent.datafeed.stockeasy.fetch_market_json` → `summarize-telegram/scripts/fetch_market_signals.py` | 불필요 |
+| 시장 지표(지수·빅픽처·breadth·신용잔고) | `invagent.datafeed.stockeasy.fetch_market_json` → `daily-digest/scripts/fetch_market_signals.py` | 불필요 |
 | 텔레그램 저장 메시지·첨부 이미지·링크 본문 | `uv run invagent fetch-messages` | 텔레그램 세션 |
-| 보유 포트폴리오 | Google Drive MCP → `summarize-telegram/scripts/extract_portfolio.py` | MCP |
+| 보유 포트폴리오 | Google Drive MCP → `daily-digest/scripts/extract_portfolio.py` | MCP |
 | 공시·재무·지분·배당 | `opendart` 스킬 (MCP 전용) | MCP |
 | 월간 투자일지 | Notion MCP (`monthly-investment-review`) | MCP |
-| VKOSPI | investing.com WebFetch (`summarize-telegram` 1-2단계) | 없음 |
+| VKOSPI | investing.com WebFetch (`daily-digest` 1-2단계) | 없음 |
 
 ### 종목 데이터 (StockEasy)
 
@@ -49,7 +49,7 @@ uv run python .agents/skills/analyze-stock/scripts/fetch_stock_info.py "<종목�
 
 ```bash
 uv run python .agents/skills/stage-analysis/scripts/stage_scan.py "<종목명 또는 티커>" [--no-cache]
-uv run python .agents/skills/summarize-telegram/scripts/fetch_market_signals.py
+uv run python .agents/skills/daily-digest/scripts/fetch_market_signals.py
 uv run invagent daily-prep   # 시장 신호 + 현금 사다리 + 전고점 낙폭을 한 번에
 ```
 
@@ -71,7 +71,7 @@ uv run invagent fetch-messages --days 1
 ```
 
 원본은 `output/telegram-daily/raw/<날짜>_raw.md`, 첨부 이미지는 `output/telegram-daily/media/<날짜>/`.
-이미지는 받아만 두고 읽지 않는다 — 읽는 것은 `summarize-telegram` 1-4단계의 일이다.
+이미지는 받아만 두고 읽지 않는다 — 읽는 것은 `daily-digest` 1-4단계의 일이다.
 링크 본문 수집은 신뢰할 수 없는 입력을 다루므로 `src/invagent/telegram/link_extractor.py`의
 SSRF 방어(스킴 제한, 비공개 대역 거부, 홉마다 재검증, 응답 크기·시간 상한)를 통과한다.
 
@@ -81,7 +81,7 @@ Drive MCP로 `주식 포트폴리오` 파일(시트 `포트폴리오`)을 찾아
 파일 ID는 어느 문서에도 하드코딩하지 않는다.
 
 ```bash
-uv run python .agents/skills/summarize-telegram/scripts/extract_portfolio.py <덤프 경로> \
+uv run python .agents/skills/daily-digest/scripts/extract_portfolio.py <덤프 경로> \
   --out output/portfolio/$(date +%Y-%m-%d).md
 ```
 

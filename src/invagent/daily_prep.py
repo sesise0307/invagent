@@ -1,6 +1,6 @@
 """브리핑 준비 단계를 한 번에 돌리는 오케스트레이터.
 
-`summarize-telegram` 스킬의 1-1(시장 신호) · 1-1-1(현금 투입 사다리) · 1-3-1(전고점 낙폭)은
+`daily-digest` 스킬의 1-1(시장 신호) · 1-1-1(현금 투입 사다리) · 1-3-1(전고점 낙폭)은
 서로 독립인데도 각각 별도 명령으로 순서대로 돌았다. 세 단계는 모두 네트워크를 타므로 대기
 시간이 그대로 더해지고, 모델이 매번 결과를 받아 다음 명령을 내느라 왕복도 세 번 든다.
 
@@ -82,12 +82,12 @@ def build_steps(
     steps = [
         Step(
             "시장 신호",
-            [sys.executable, str(SCRIPTS / "summarize-telegram" / "scripts" / "fetch_market_signals.py")],
+            [sys.executable, str(SCRIPTS / "daily-digest" / "scripts" / "fetch_market_signals.py")],
             env=env,
         )
     ]
 
-    ladder = [sys.executable, str(SCRIPTS / "summarize-telegram" / "scripts" / "cash_deploy_check.py")]
+    ladder = [sys.executable, str(SCRIPTS / "daily-digest" / "scripts" / "cash_deploy_check.py")]
     # VKOSPI·수급 일수는 무인증 수집 경로가 없어 인자로만 들어온다. 안 주면 붙이지 않는다 —
     # 해당 문항은 ❓로 남고, ❓는 절대 충족으로 승격되지 않는다.
     if vkospi is not None:
@@ -102,7 +102,7 @@ def build_steps(
                 "전고점 낙폭",
                 [
                     sys.executable,
-                    str(SCRIPTS / "summarize-telegram" / "scripts" / "peak_drawdown.py"),
+                    str(SCRIPTS / "daily-digest" / "scripts" / "peak_drawdown.py"),
                     str(snapshot),
                     "--append",
                 ],

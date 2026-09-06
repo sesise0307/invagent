@@ -21,11 +21,11 @@ SKILLS_ROOT = REPO_ROOT / ".agents" / "skills"
 SKILL_NAMES = (
     "advice",
     "analyze-stock",
+    "daily-digest",
     "market-data",
     "monthly-investment-review",
     "opendart",
     "stage-analysis",
-    "summarize-telegram",
 )
 
 
@@ -246,7 +246,7 @@ def test_project_codex_config_is_credential_free() -> None:
 
 
 def _load_market_signal_module():
-    script_path = SKILLS_ROOT / "summarize-telegram" / "scripts" / "fetch_market_signals.py"
+    script_path = SKILLS_ROOT / "daily-digest" / "scripts" / "fetch_market_signals.py"
     spec = importlib.util.spec_from_file_location("fetch_market_signals", script_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -397,7 +397,7 @@ def test_leverage_rule_three_judges_each_index_separately_and_no_sectors() -> No
     assert result["KOSPI"]["fired"] is False
     assert result["KOSDAQ"]["fired"] is True
 
-    script = (SKILLS_ROOT / "summarize-telegram" / "scripts" / "fetch_market_signals.py").read_text(encoding="utf-8")
+    script = (SKILLS_ROOT / "daily-digest" / "scripts" / "fetch_market_signals.py").read_text(encoding="utf-8")
     assert "섹터" in script, "판정 범위가 지수뿐이라는 사실이 스크립트에 남아야 한다"
 
 
@@ -878,8 +878,8 @@ def test_no_cache_flag_forces_a_fresh_fetch(
     # 네트워크를 타는 스크립트 넷 모두 플래그를 노출하고 실제로 끈다.
     for name in ("analyze-stock/scripts/fetch_stock_info.py",
                  "stage-analysis/scripts/stage_scan.py",
-                 "summarize-telegram/scripts/peak_drawdown.py",
-                 "summarize-telegram/scripts/cash_deploy_check.py"):
+                 "daily-digest/scripts/peak_drawdown.py",
+                 "daily-digest/scripts/cash_deploy_check.py"):
         text = (SKILLS_ROOT / name).read_text(encoding="utf-8")
         assert "--no-cache" in text, f"{name}에 --no-cache가 없다"
         assert "http_cache.disable()" in text, f"{name}이 플래그를 캐시에 연결하지 않았다"
@@ -887,7 +887,7 @@ def test_no_cache_flag_forces_a_fresh_fetch(
 
 def test_briefing_prep_steps_have_one_entry_point() -> None:
     """1-1·1-1-1·1-3-1은 서로 독립인데 각각 별도 bash 왕복으로 돌았다."""
-    skill = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "uv run invagent daily-prep" in skill
     # 개별 명령은 지우지 않는다 — 한 단계만 다시 돌릴 때 쓰고, 해석 기준의 정본이다.
@@ -1158,7 +1158,7 @@ PORTFOLIO_DUMP = """|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
 
 
 def _load_portfolio_module():
-    script_path = SKILLS_ROOT / "summarize-telegram" / "scripts" / "extract_portfolio.py"
+    script_path = SKILLS_ROOT / "daily-digest" / "scripts" / "extract_portfolio.py"
     spec = importlib.util.spec_from_file_location("extract_portfolio", script_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -1447,14 +1447,14 @@ def test_margin_call_climax_is_an_index_only_carve_out() -> None:
     # 기존 보유 물량 처리는 사용자 판단 영역이다 — 룰이 대신 정하지 않는다.
     assert "기존 레버리지 정리는 그대로 이행" not in rule2
 
-    script = (SKILLS_ROOT / "summarize-telegram" / "scripts" / "fetch_market_signals.py").read_text(encoding="utf-8")
+    script = (SKILLS_ROOT / "daily-digest" / "scripts" / "fetch_market_signals.py").read_text(encoding="utf-8")
     assert "margin_call_climax" in script
 
 
 def test_leverage_rule_three_constants_match_the_documented_table() -> None:
     """임계값은 스킬의 운영 선택이다 — 상수만 바꾸고 근거 표가 남으면 다음 사람이 못 읽는다."""
     module = _load_market_signal_module()
-    skill = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
     rules = _my_rules()
 
     # 룰 원문이 준 수치는 원문에서 다시 읽어 대조한다.
@@ -1473,7 +1473,7 @@ def test_leverage_rule_three_constants_match_the_documented_table() -> None:
 def test_drawdown_ladder_constants_are_documented() -> None:
     """단 간격과 쿨다운은 운영 선택이다 — 근거가 남아야 다음 사람이 바꿀 수 있다."""
     module = _load_market_signal_module()
-    skill = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "`DRAWDOWN_RUNGS`" in skill
     assert f"`RUNG_RECLAIM_DAYS` | {module.RUNG_RECLAIM_DAYS}" in skill
@@ -1485,7 +1485,7 @@ def test_drawdown_ladder_constants_are_documented() -> None:
 def test_margin_call_window_rationale_is_documented() -> None:
     """창 길이는 이 스킬의 운영 선택이다 — 왜 120인지가 남아야 다음 사람이 바꿀 수 있다."""
     module = _load_market_signal_module()
-    skill = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
 
     assert f"`MARGIN_CALL_WINDOW_DAYS` | {module.MARGIN_CALL_WINDOW_DAYS}" in skill
     assert f"`MARGIN_CALL_SIGMA` | {module.MARGIN_CALL_SIGMA:g}" in skill
@@ -1591,7 +1591,7 @@ def test_collection_mechanics_are_documented_in_one_skill() -> None:
     assert "DevTools" in reference and "STOCKEASY_COOKIE" in reference
     assert "INVAGENT_HTTP_CACHE" in reference
 
-    for name in ("analyze-stock", "stage-analysis", "summarize-telegram", "advice"):
+    for name in ("analyze-stock", "stage-analysis", "daily-digest", "advice"):
         skill = (SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8")
         assert "market-data" in skill, f"{name}이 수집 정본을 참조하지 않는다"
         assert "DevTools" not in skill, f"{name}이 쿠키 갱신 절차를 복제하고 있다"
@@ -1609,7 +1609,7 @@ def test_ticker_overrides_are_consulted_from_one_place() -> None:
     stage = (SKILLS_ROOT / "stage-analysis" / "scripts" / "stage_scan.py").read_text(
         encoding="utf-8"
     )
-    peak = (SKILLS_ROOT / "summarize-telegram" / "scripts" / "peak_drawdown.py").read_text(
+    peak = (SKILLS_ROOT / "daily-digest" / "scripts" / "peak_drawdown.py").read_text(
         encoding="utf-8"
     )
 
@@ -1621,10 +1621,10 @@ def test_ticker_overrides_are_consulted_from_one_place() -> None:
 def test_every_mechanically_checkable_rule_has_a_script() -> None:
     """룰이 수치로 규정한 조건은 모델이 눈대중하지 않는다 — 스크립트가 확정한다."""
     checks = {
-        "레버리지 규칙 3": ("summarize-telegram/scripts/fetch_market_signals.py", "leverage_liquidation"),
+        "레버리지 규칙 3": ("daily-digest/scripts/fetch_market_signals.py", "leverage_liquidation"),
         "기술적 분석 규칙 1": ("stage-analysis/scripts/stage_scan.py", "MA_20WEEK"),
-        "기본 원칙 13": ("summarize-telegram/scripts/peak_drawdown.py", "ACCOUNT_MDD_BANDS"),
-        "매매규칙 6": ("summarize-telegram/scripts/extract_portfolio.py", "STOP_FULL_PCT"),
+        "기본 원칙 13": ("daily-digest/scripts/peak_drawdown.py", "ACCOUNT_MDD_BANDS"),
+        "매매규칙 6": ("daily-digest/scripts/extract_portfolio.py", "STOP_FULL_PCT"),
     }
     for rule, (path, symbol) in checks.items():
         text = (SKILLS_ROOT / path).read_text(encoding="utf-8")
@@ -1640,7 +1640,7 @@ def test_leverage_and_short_term_rules_are_wired_into_advice() -> None:
     # 「기본 원칙 11」 단기 투자 금지 — 이벤트 매매(「매매규칙 14」)와 같은 자리에 온다.
     assert "기본 원칙 11" in advice
 
-    briefing = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+    briefing = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
     # 브리핑의 레버리지 리마인드는 스크립트 판정을 인용한다.
     assert "레버리지 규칙 3" in briefing
     assert "fetch_market_signals" in briefing
@@ -1719,8 +1719,8 @@ def test_no_skill_still_cites_the_retired_minus_eight_percent_line() -> None:
     targets = [
         SKILLS_ROOT / "advice" / "SKILL.md",
         SKILLS_ROOT / "advice" / "references" / "trend_following.md",
-        SKILLS_ROOT / "summarize-telegram" / "SKILL.md",
-        SKILLS_ROOT / "summarize-telegram" / "scripts" / "extract_portfolio.py",
+        SKILLS_ROOT / "daily-digest" / "SKILL.md",
+        SKILLS_ROOT / "daily-digest" / "scripts" / "extract_portfolio.py",
         REPO_ROOT / "template" / "stock_analysis.md",
         REPO_ROOT / "template" / "telegram_daily.md",
     ]
@@ -1729,7 +1729,7 @@ def test_no_skill_still_cites_the_retired_minus_eight_percent_line() -> None:
         assert "매매규칙 7" not in text or "-8%" not in text, f"{path.name}에 -8% 인용이 남아 있다"
 
     # 브리핑 룰 리마인드도 두 손절 티어를 모두 안내해야 한다.
-    briefing = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+    briefing = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
     assert "매매규칙 7 (-10%" in briefing
     assert "-20% 전량" in briefing
 
@@ -2216,7 +2216,7 @@ PEAK_SNAPSHOT = """# 포트폴리오 스냅샷 — 2026-08-28
 
 
 def _load_peak_drawdown_module():
-    script_path = SKILLS_ROOT / "summarize-telegram" / "scripts" / "peak_drawdown.py"
+    script_path = SKILLS_ROOT / "daily-digest" / "scripts" / "peak_drawdown.py"
     spec = importlib.util.spec_from_file_location("peak_drawdown", script_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -2646,8 +2646,8 @@ def test_peak_drawdown_exits_1_on_unparsable_snapshot(
     assert "스냅샷 파싱 실패" in capsys.readouterr().err
 
 
-def test_summarize_telegram_documents_peak_drawdown_step() -> None:
-    skill = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+def test_daily_digest_documents_peak_drawdown_step() -> None:
+    skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "### 1-3-1단계: 전고점 낙폭·계좌 MDD 판정" in skill
     assert "peak_drawdown.py" in skill
@@ -2666,8 +2666,8 @@ def test_summarize_telegram_documents_peak_drawdown_step() -> None:
     assert "어느 축에서 걸렸는지를 반드시 밝힌다" in skill
 
 
-def test_summarize_telegram_documents_image_reading_step() -> None:
-    skill = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+def test_daily_digest_documents_image_reading_step() -> None:
+    skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "### 1-4단계: 이미지 판독 (OCR·차트 해석)" in skill
     # 이미지는 fetch 단계가 내려받고 판독은 에이전트가 파일 읽기 툴로 한다
@@ -2694,7 +2694,7 @@ def test_image_pending_marker_matches_the_fetcher_constant() -> None:
     """
     from invagent.telegram.fetch import PENDING_IMAGE_MARKER
 
-    skill = (SKILLS_ROOT / "summarize-telegram" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
 
     assert PENDING_IMAGE_MARKER == "[분석 대기]"
     # grep 명령에 이스케이프된 형태로, 멱등성 설명에 그대로 등장한다
@@ -2869,7 +2869,7 @@ def test_append_section_removes_legacy_title(tmp_path: Path) -> None:
 
 
 def _load_cash_deploy_module():
-    script_path = SKILLS_ROOT / "summarize-telegram" / "scripts" / "cash_deploy_check.py"
+    script_path = SKILLS_ROOT / "daily-digest" / "scripts" / "cash_deploy_check.py"
     spec = importlib.util.spec_from_file_location("cash_deploy_check", script_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

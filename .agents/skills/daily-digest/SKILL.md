@@ -1,12 +1,16 @@
 ---
-name: summarize-telegram
-description: 텔레그램 저장 메시지를 가져와 섹터/종목별로 분류하고 핵심 인사이트를 추출한 뒤 투자 조언과 함께 일일 브리핑 파일을 생성한다. "텔레그램 요약", "오늘 메시지 정리", "데일리 브리핑 만들어줘", "오늘 저장한 메시지 분석", "telegram daily" 등을 요청할 때 반드시 이 스킬을 사용하라.
+name: daily-digest
+description: 하루치 투자 입력을 한 편의 브리핑으로 묶는 스킬. 텔레그램 저장 메시지뿐 아니라 시장 신호·현금 투입 사다리·보유 포트폴리오 스냅샷·전고점 낙폭·계좌 MDD까지 모아 섹터/종목별로 분류하고, 투자 조언과 룰 점검을 붙여 일일 브리핑 파일을 만든다. "데일리 브리핑 만들어줘", "오늘 브리핑", "텔레그램 요약", "오늘 메시지 정리", "오늘 저장한 메시지 분석", "오늘 시장 어땠어 정리해줘", "daily digest", "telegram daily" 등을 요청할 때 반드시 이 스킬을 사용하라. 개별 종목을 끝까지 파는 요청은 `analyze-stock`이다.
 ---
 
-# 텔레그램 데일리 브리핑 스킬
+# 데일리 브리핑 스킬
 
-텔레그램 '저장한 메시지'의 raw 데이터를 읽고, 섹터/종목별로 분류 후 핵심 인사이트를 추출한다.
-`advice` 스킬의 세 가지 관점(가치투자/차트/매크로)을 통합해 투자 조언까지 포함한 일일 브리핑을 생성한다.
+하루치 입력을 한 편으로 묶는다. 텔레그램 '저장한 메시지'가 출발점이지만 그것만은 아니다 —
+시장 신호, 현금 투입 사다리 채점, 보유 포트폴리오 스냅샷, 전고점 낙폭과 계좌 MDD까지 같은
+브리핑 안에서 만난다. 그래서 이름이 `daily-digest`다.
+
+섹터/종목별로 분류 후 핵심 인사이트를 추출하고, `advice` 스킬의 세 가지 관점
+(가치투자/차트/매크로)을 통합해 투자 조언까지 포함한 일일 브리핑을 생성한다.
 
 ## 기본 동작 모드
 
@@ -58,7 +62,7 @@ uv run invagent daily-prep \
 StockEasy 시장 분석 페이지에서 시장 신호를 수집한다:
 
 ```bash
-uv run python .agents/skills/summarize-telegram/scripts/fetch_market_signals.py
+uv run python .agents/skills/daily-digest/scripts/fetch_market_signals.py
 ```
 
 출력 내용 (신호등, 오닐 빅픽처, 지수, breadth, 신용/수급)을 해석해 브리핑 템플릿 최상단
@@ -135,7 +139,7 @@ T-2 예측은 원리적으로 불가능하다 — 저점의 상당수가 T-2→T
 사다리는 사용자가 확보한 현금을 언제 쓸지를 조건으로 고정한 것이고, 이 단계는 그 집행부다.
 
 ```bash
-uv run python .agents/skills/summarize-telegram/scripts/cash_deploy_check.py \
+uv run python .agents/skills/daily-digest/scripts/cash_deploy_check.py \
     --vkospi <1-2단계 값> --net-buy-days <외국인·기관 중 최대 연속 순매수 일수>
 ```
 
@@ -225,7 +229,7 @@ URL: `https://www.investing.com/indices/kospi-volatility`
    실패로 판정해 중단하지 말고 그 경로를 다음 단계에 넘긴다.
 4. **파싱·저장**:
    ```bash
-   uv run python .agents/skills/summarize-telegram/scripts/extract_portfolio.py \
+   uv run python .agents/skills/daily-digest/scripts/extract_portfolio.py \
        <덤프 경로> --out output/portfolio/$(date +%Y-%m-%d).md
    ```
    스크립트가 첫 시트(「포트폴리오」)의 보유 표·섹터 집계만 잘라내고,
@@ -244,7 +248,7 @@ URL: `https://www.investing.com/indices/kospi-volatility`
 1-3단계 스냅샷이 있으면 이어서 실행한다. 스냅샷이 없으면 이 단계를 건너뛴다.
 
 ```bash
-uv run python .agents/skills/summarize-telegram/scripts/peak_drawdown.py \
+uv run python .agents/skills/daily-digest/scripts/peak_drawdown.py \
     output/portfolio/$(date +%Y-%m-%d).md --append
 ```
 
@@ -656,7 +660,7 @@ find output/telegram-daily/media \
 액면분할이나 이관을 매도로 기록하게 된다.
 
 ```bash
-uv run python .agents/skills/summarize-telegram/scripts/portfolio_diff.py \
+uv run python .agents/skills/daily-digest/scripts/portfolio_diff.py \
   output/portfolio/<어제>.md output/portfolio/<오늘>.md \
   [--events <이벤트.json>] [--run-manifest <매니페스트.json>] [--json]
 ```

@@ -2,7 +2,7 @@
 
 This repository contains a personal investment-decision support package. Use the
 project skills for investment advice, single-stock analysis, price-stage
-judgement, Telegram briefings, monthly Notion reviews, and OpenDART research
+judgement, the daily briefing, monthly Notion reviews, and OpenDART research
 instead of recreating those workflows in a prompt. When the question is where a
 piece of external data comes from — an endpoint, a credential, the response cache —
 read the `market-data` skill rather than tracing the scripts.
@@ -172,8 +172,12 @@ that file is already there, so a first run skips it (the snapshot is created lat
 and a same-day re-run picks it up. The per-step commands stay documented in the skill for
 re-running one step alone, and each section remains the authority on how to read its output.
 
-The `summarize-telegram` skill owns everything under `output/telegram-daily/`.
-`uv run invagent fetch-messages` writes the raw export to
+The `daily-digest` skill builds one briefing a day out of every daily input —
+saved Telegram messages, market signals, the cash-deployment ladder, the
+portfolio snapshot, peak drawdown and account MDD — which is why it is not named
+after Telegram. It owns everything under `output/telegram-daily/`; that path is
+unchanged, because it holds an accumulated archive that `analyze-stock` searches
+by name. `uv run invagent fetch-messages` writes the raw export to
 `raw/<yyyy-mm-dd>_raw.md`; the finished briefing goes to
 `<yyyy-mm>/<yyyy-mm-dd>.md`, the rolling cross-day index to
 `monthly_context.md`, and the full text of each running theme to
@@ -183,7 +187,7 @@ The `summarize-telegram` skill owns everything under `output/telegram-daily/`.
 from scratch. At the end of a run the skill deletes every raw file except today's
 and every dated media directory except today's (`raw/` and `media/` only,
 `-maxdepth 1`); nothing outside those two directories is ever deleted. Market
-indices come from `.agents/skills/summarize-telegram/scripts/fetch_market_signals.py`,
+indices come from `.agents/skills/daily-digest/scripts/fetch_market_signals.py`,
 which reads the StockEasy market endpoints through `invagent.datafeed.stockeasy`; the module owns
 the rule verdicts (leverage rule 3, the drawdown ladder, the margin-call climax), not the fetch.
 
@@ -198,7 +202,7 @@ with the transcribed text and, for a chart, its axes, series, and turning points
 There is no local OCR toolchain and no new runtime dependency; a chart is
 interpreted rather than transcribed, which a text-only OCR pass cannot do. The
 marker string is a contract between `PENDING_IMAGE_MARKER` in
-`src/invagent/telegram/fetch.py` and the grep in `summarize-telegram/SKILL.md`
+`src/invagent/telegram/fetch.py` and the grep in `daily-digest/SKILL.md`
 step 1-4 — change both together, and a test asserts they match, because a
 one-sided edit makes the skill find nothing and skip silently. That grep needs
 `-a`: raw exports contain NUL bytes whenever a fetched link returned a binary
@@ -220,14 +224,14 @@ per-run budget is counted in message order, which a race would make non-determin
 The Telegram daily briefing also reads the user's live holdings from the Google
 Sheets file `주식 포트폴리오` (sheet `포트폴리오`) through the Google Drive MCP
 connector, parses it with
-`.agents/skills/summarize-telegram/scripts/extract_portfolio.py`, and stores the
+`.agents/skills/daily-digest/scripts/extract_portfolio.py`, and stores the
 snapshot in `output/portfolio/<yyyy-mm-dd>.md`. `analyze-stock` and `advice` read
 the latest snapshot instead of re-fetching the sheet. `output/` is gitignored, so
 portfolio data never enters the repository.
 
 `extract_portfolio.py` grades holdings on the **average-cost** axis only, so a
 position that ran up and then rolled over stays silent while it is still in
-profit. `.agents/skills/summarize-telegram/scripts/peak_drawdown.py` adds the
+profit. `.agents/skills/daily-digest/scripts/peak_drawdown.py` adds the
 **peak** axis: it reads the snapshot that script just wrote, computes each
 holding's drawdown from its highest close over the last 250 trading days, and
 flags the -10 / -15 / -20 / -30% bands that map to 「매매규칙 3·15」. The same run
@@ -259,7 +263,7 @@ goes through `invagent.datafeed.tickers` — neither is reimplemented, and neith
 into the other's script directory any more. The peak
 window and the band list are this skill's own operating choices and live as
 constants at the top of the script; the band-to-rule mapping is documented in
-`summarize-telegram/SKILL.md` step 1-3-1, and the two must change together.
+`daily-digest/SKILL.md` step 1-3-1, and the two must change together.
 Because the -15% band is measured from the peak while 「매매규칙 6」's -15% is
 measured from average cost, the skill is required to keep the axes apart.
 Names the StockEasy search cannot resolve (a new listing, or a sheet label that
@@ -287,7 +291,7 @@ requires adding the old title to `LEGACY_SECTION_TITLES` so `--append` strips it
 `output/` is gitignored, so already-written snapshots can only be migrated by the
 code that rewrites them.
 
-`.agents/skills/summarize-telegram/scripts/cash_deploy_check.py` grades the **cash
+`.agents/skills/daily-digest/scripts/cash_deploy_check.py` grades the **cash
 deployment ladder** — the standing answer to "when do I put the cash to work",
 fixed on 2026-09-03 as eight conditions gating three tranches rather than as a
 date. The ladder itself is registered in the `매크로 흐름` section of
@@ -306,7 +310,7 @@ an unverified condition. A close below the cycle low overrides every condition a
 retires the ladder into the 「기본 원칙 13」 procedure, because the ladder is an
 entry tool and not a defensive one. Thresholds are this skill's own operating
 choices, live as constants at the top of the script, and are documented with their
-rationale in `summarize-telegram/SKILL.md` step 1-1-1 — change both together, and
+rationale in `daily-digest/SKILL.md` step 1-1-1 — change both together, and
 `tests/test_agent_configuration.py` fails if the constants drift from that table.
 Because the verdict is recomputed daily it is written only into that day's
 briefing; the `monthly_context.md` entry carries the condition table and is
@@ -331,8 +335,8 @@ rather than a flag. Change the
 constant and the minutes quoted here together; a test compares them.
 
 Canonical project skills live in `.agents/skills/`: `advice`, `analyze-stock`,
-`market-data`, `monthly-investment-review`, `opendart`, `stage-analysis`, and
-`summarize-telegram`. Each `.claude/skills/<name>` is a symlink to the canonical
+`daily-digest`, `market-data`, `monthly-investment-review`, `opendart`, and
+`stage-analysis`. Each `.claude/skills/<name>` is a symlink to the canonical
 directory — edit the canonical files only. Client-side setup that cannot live in
 the repository (Codex plugins, the local OpenDART MCP server, Notion) is
 documented in `docs/agent-setup.md`; keep its skill list in sync when adding a

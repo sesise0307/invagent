@@ -35,7 +35,7 @@ class Config:
     def telegram_media_dir(self, date_str: str) -> Path:
         """Return the directory holding downloaded media for one export date.
 
-        Sibling of the raw export directory so the summarize-telegram cleanup
+        Sibling of the raw export directory so the daily-digest cleanup
         step can retire both on the same schedule.
         """
         return self.output_dir / "telegram-daily/media" / date_str
