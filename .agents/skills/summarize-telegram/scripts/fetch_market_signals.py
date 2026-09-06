@@ -92,29 +92,46 @@ def fetch_api(name: str):
             "Referer": PAGE_URL,
         },
     )
-    # cash_deploy_check도 같은 엔드포인트를 부른다 — 브리핑 한 번에 두 번 나가던 호출이다.
-    cached = http_cache.load(url, authed=False)
-    if cached is not None:
-        try:
-            return json.loads(cached.decode("utf-8")), None
-        except ValueError:
-            pass
+    def request_body() -> bytes:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            return resp.read()
 
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            body = resp.read()
-        payload = json.loads(body.decode("utf-8"))
+        body, cache_hit = http_cache.get_or_fetch(url, authed=False, fetcher=request_body)
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except ValueError:
+            if not cache_hit:
+                raise
+            http_cache.invalidate(url, authed=False)
+            body, _ = http_cache.get_or_fetch(url, authed=False, fetcher=request_body)
+            payload = json.loads(body.decode("utf-8"))
     except urllib.error.HTTPError as e:
         return None, f"HTTP {e.code}"
     except Exception as e:  # 네트워크 오류·JSON 파싱 실패 등
         return None, str(e)[:80]
-    http_cache.store(url, body, authed=False)
     return payload, None
 
 
-def index_drawdown(monitor_rows: list[dict], market: str = "KOSPI") -> float | None:
+def _row_date(row: dict) -> str | None:
+    raw = row.get("date") or row.get("일자")
+    text = str(raw or "").strip()
+    if len(text) == 8 and text.isdigit():
+        return f"{text[:4]}-{text[4:6]}-{text[6:]}"
+    return text[:10] if len(text) >= 10 else None
+
+
+def _through(rows: list[dict], asof: str | None) -> list[dict]:
+    if not asof:
+        return rows
+    return [row for row in rows if (_row_date(row) or "") <= asof]
+
+
+def index_drawdown(
+    monitor_rows: list[dict], market: str = "KOSPI", asof: str | None = None
+) -> float | None:
     """오늘 지수의 52주(250거래일) 고점 대비 낙폭 %."""
-    closes = [r[market] for r in monitor_rows if r.get(market)]
+    closes = [r[market] for r in _through(monitor_rows, asof) if r.get(market)]
     window = closes[-MARGIN_CALL_PEAK_WINDOW:]
     if not window:
         return None
@@ -122,13 +139,13 @@ def index_drawdown(monitor_rows: list[dict], market: str = "KOSPI") -> float | N
     return (window[-1] / peak - 1) * 100 if peak else None
 
 
-def drawdown_ladder(monitor_rows: list[dict], market: str) -> dict:
+def drawdown_ladder(monitor_rows: list[dict], market: str, asof: str | None = None) -> dict:
     """지수의 52주 고점 대비 낙폭을 사다리 눈금으로 옮긴다.
 
     `newly`는 **오늘 처음 밟은 단**이다. 매일 같은 단에 머무르는 것은 사건이 아니고,
     새 단을 밟는 순간이 분할 매수의 행동 시점이다.
     """
-    closes = [r[market] for r in monitor_rows if r.get(market)]
+    closes = [r[market] for r in _through(monitor_rows, asof) if r.get(market)]
     if not closes:
         return {"drawdown": None, "breached": [], "newly": [], "next_rung": None, "next_level": None}
 

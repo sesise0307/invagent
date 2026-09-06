@@ -36,8 +36,12 @@
 from __future__ import annotations
 
 import argparse
+import inspect
+import json
+import os
 import re
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -268,10 +272,16 @@ def analyze_holdings(
     # 넣으므로 완료 순서가 출력 순서를 흔들지 않는다.
     pending = [e for e in results if e.get("code")]
     if pending:
+        def fetch(entry: dict):
+            params = inspect.signature(stage_scan.fetch_bars).parameters
+            if "asof" in params:
+                return stage_scan.fetch_bars(
+                    entry["code"], FETCH_CALENDAR_DAYS, asof=today or None
+                )
+            return stage_scan.fetch_bars(entry["code"], FETCH_CALENDAR_DAYS)
+
         with ThreadPoolExecutor(max_workers=min(MAX_FETCH_WORKERS, len(pending))) as pool:
-            fetched = list(
-                pool.map(lambda e: stage_scan.fetch_bars(e["code"], FETCH_CALENDAR_DAYS), pending)
-            )
+            fetched = list(pool.map(fetch, pending))
         for entry, (bars, ferr) in zip(pending, fetched):
             if not bars:
                 entry["error"] = f"시세 수집 실패 — {ferr or '응답 없음'}"
@@ -292,6 +302,8 @@ def account_mdd(snapshot_dir: Path, today_balance: float | None, today: str) -> 
     """과거 스냅샷들의 잔고 최고치 대비 오늘 잔고의 MDD."""
     history: list[tuple[str, float]] = []
     for path in sorted(snapshot_dir.glob("*.md")):
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", path.stem) or path.stem > today:
+            continue
         balance = parse_balance(path.read_text(encoding="utf-8"))
         if balance:
             history.append((path.stem, balance))
@@ -299,6 +311,17 @@ def account_mdd(snapshot_dir: Path, today_balance: float | None, today: str) -> 
         history = [(d, b) for d, b in history if d != today] + [(today, today_balance)]
     if not history:
         return {"error": "잔고 이력 없음"}
+
+    history.sort()
+    running_peak = 0.0
+    first_breaches: dict[str, str] = {}
+    for sample_date, balance in history:
+        running_peak = max(running_peak, balance)
+        sample_mdd = (balance / running_peak - 1) * 100 if running_peak else 0.0
+        for band in ACCOUNT_MDD_BANDS:
+            key = f"{band:.0f}"
+            if sample_mdd <= band + BAND_EPS and key not in first_breaches:
+                first_breaches[key] = sample_date
 
     peak_date, peak = max(history, key=lambda item: item[1])
     current = today_balance or history[-1][1]
@@ -322,6 +345,7 @@ def account_mdd(snapshot_dir: Path, today_balance: float | None, today: str) -> 
         "approaching": approaching,
         "samples": len(history),
         "from": history[0][0],
+        "first_breaches": first_breaches,
         "error": None,
     }
 
@@ -329,7 +353,9 @@ def account_mdd(snapshot_dir: Path, today_balance: float | None, today: str) -> 
 # --- 계좌 기록 고점 낙폭 ----------------------------------------------------
 
 
-def load_record_history(snapshot_dir: Path) -> tuple[dict[str, list[tuple[str, float]]], dict]:
+def load_record_history(
+    snapshot_dir: Path, asof: str | None = None
+) -> tuple[dict[str, list[tuple[str, float]]], dict]:
     """스냅샷 이력 전체 → 종목명별 (일자, 현재가) 리스트 + 구간 메타.
 
     `## 보유` 표를 파싱할 수 없는 스냅샷(손으로 쓴 파일 등)은 조용히 건너뛴다.
@@ -337,6 +363,11 @@ def load_record_history(snapshot_dir: Path) -> tuple[dict[str, list[tuple[str, f
     """
     history: dict[str, list[tuple[str, float]]] = {}
     files = sorted(snapshot_dir.glob("*.md")) if snapshot_dir.is_dir() else []
+    files = [
+        path for path in files
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", path.stem)
+        and (asof is None or path.stem <= asof)
+    ]
     valid_dates: list[str] = []
     for path in files:
         try:
@@ -370,7 +401,7 @@ def record_drawdown(
     오늘 일자 항목은 디스크 값을 버리고 호출자가 넘긴 값으로 덮어쓴다(`account_mdd`와 같은 규약).
     고점·현재가 모두 시트 수집가라 축 내부적으로는 같은 기준끼리 비교된다.
     """
-    samples = [(d, p) for d, p in history.get(name, []) if d != today]
+    samples = [(d, p) for d, p in history.get(name, []) if d <= today and d != today]
     if today_price:
         samples.append((today, today_price))
     if not samples:
@@ -391,6 +422,108 @@ def record_drawdown(
         "samples": len(samples),
         "error": None,
     }
+
+
+# --- 지속 상태 ------------------------------------------------------------
+
+
+def load_state(path: Path | None) -> dict:
+    """이전 MDD 상태를 읽는다. 명시한 파일이 없으면 새 상태를 반환한다."""
+    if path is None or not path.exists():
+        return {"schema_version": 1, "account_mdd": {}}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("schema_version") != 1:
+        raise ValueError("지원하지 않는 MDD 상태 형식")
+    data.setdefault("account_mdd", {})
+    return data
+
+
+def save_state(path: Path, state: dict) -> None:
+    """MDD 상태를 같은 디렉토리의 임시 파일을 거쳐 원자적으로 저장한다."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = (json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
+
+
+def update_mdd_state(
+    account: dict,
+    previous: dict,
+    asof: str,
+    session_dates: list[str],
+    *,
+    review_completed: bool = False,
+    resume_authorized: bool = False,
+) -> dict:
+    """최초 MDD 발동일과 매수 중단 상태를 유지한다.
+
+    -10% 해제 조건은 규칙에 없으므로 자동 해제하지 않는다. 재개는 사용자 입력으로만 기록한다.
+    -15%는 최초 발동일부터 거래일 5개와 복기 완료를 각각 기록하되 재개를 추론하지 않는다.
+    """
+    previous_asof = previous.get("account_mdd", {}).get("asof")
+    if previous_asof and previous_asof > asof:
+        return json.loads(json.dumps(previous))
+    state = json.loads(json.dumps(previous))
+    state["schema_version"] = 1
+    item = state.setdefault("account_mdd", {})
+    band = account.get("band") if not account.get("error") else None
+    first_breaches = account.get("first_breaches", {})
+    if (first_breaches.get("-10") or (band is not None and band <= -10.0)) and not item.get("first_10_breach_date"):
+        item["first_10_breach_date"] = first_breaches.get("-10", asof)
+    if (first_breaches.get("-15") or (band is not None and band <= -15.0)) and not item.get("first_15_breach_date"):
+        item["first_15_breach_date"] = first_breaches.get("-15", asof)
+    if review_completed:
+        item["review_completed"] = True
+        item["review_completed_at"] = asof
+    else:
+        item.setdefault("review_completed", False)
+    if resume_authorized:
+        item["resume_authorized"] = True
+        item["resume_authorized_at"] = asof
+    else:
+        item.setdefault("resume_authorized", False)
+
+    first_15 = item.get("first_15_breach_date")
+    sessions = sorted({d for d in session_dates if first_15 and first_15 <= d <= asof})
+    if first_15 and session_dates:
+        item["five_session_count"] = min(len(sessions), 5)
+        item["five_session_complete"] = len(sessions) >= 5
+    elif first_15:
+        item["five_session_count"] = None
+        item["five_session_complete"] = False
+    else:
+        item["five_session_count"] = 0
+        item["five_session_complete"] = False
+    item["pause_active"] = bool(item.get("first_10_breach_date") and not item["resume_authorized"])
+    item["release_policy"] = "manual_user_resume_required"
+    item["asof"] = asof
+    return state
+
+
+def load_session_dates(path: Path | None, asof: str) -> list[str]:
+    """검증된 거래 세션 목록을 읽는다. 파일이 없으면 계산하지 않는다."""
+    if path is None:
+        return []
+    raw = path.read_text(encoding="utf-8")
+    try:
+        loaded = json.loads(raw)
+        values = loaded.get("sessions", []) if isinstance(loaded, dict) else loaded
+    except json.JSONDecodeError:
+        values = [line.strip() for line in raw.splitlines() if line.strip()]
+    if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+        raise ValueError("거래 세션 파일은 날짜 문자열 목록이어야 한다")
+    invalid = [value for value in values if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value)]
+    if invalid:
+        raise ValueError(f"잘못된 거래 세션 날짜: {invalid[0]}")
+    return sorted({value for value in values if value <= asof})
 
 
 # --- 렌더링 ----------------------------------------------------------------
@@ -433,7 +566,12 @@ def approach_line(axis: str, items: list[tuple[str, dict, dict]]) -> str | None:
     return f"- ⚠️ 임박({axis}): {desc}"
 
 
-def render(results: list[dict], account: dict, record_meta: dict | None = None) -> str:
+def render(
+    results: list[dict],
+    account: dict,
+    record_meta: dict | None = None,
+    state: dict | None = None,
+) -> str:
     meta = record_meta or {}
     lines = [
         SECTION_TITLE,
@@ -529,13 +667,13 @@ def render(results: list[dict], account: dict, record_meta: dict | None = None) 
     if account.get("error"):
         lines.append(f"- 계좌 MDD(「기본 원칙 13」): 계산 불가 — {account['error']}")
     else:
-        state = (
+        state_label = (
             f"← **발동 ({account['band']:.0f}%)**" if account["band"] is not None else "→ 미발동"
         )
         lines.append(
             f"- 계좌 MDD(「기본 원칙 13」): 잔고 {won(account['current'])} · "
             f"스냅샷 고점 {won(account['peak'])}({account['peak_date']}) · "
-            f"{account['mdd']:+.1f}% {state}"
+            f"{account['mdd']:+.1f}% {state_label}"
         )
 
         near = account.get("approaching")
@@ -555,6 +693,21 @@ def render(results: list[dict], account: dict, record_meta: dict | None = None) 
         lines.append(
             f"- (주의) 계좌 고점은 스냅샷 보유 구간({account['from']}~, {account['samples']}개) "
             "기준이며 입출금을 보정하지 않는다."
+        )
+    persisted = (state or {}).get("account_mdd", {}) if isinstance(state, dict) else {}
+    if persisted.get("first_10_breach_date"):
+        pause = "유지" if persisted.get("pause_active") else "사용자 재개 승인 기록"
+        lines.append(
+            f"- 계좌 MDD 지속 상태: -10% 최초 발동 {persisted['first_10_breach_date']} · "
+            f"신규 매수 중단 {pause}. 자동 해제 기준은 정하지 않는다."
+        )
+    if persisted.get("first_15_breach_date"):
+        count = persisted.get("five_session_count")
+        count_text = f"{count}/5" if count is not None else "미확인(거래 세션 입력 없음)"
+        lines.append(
+            f"- -15% 최초 발동 {persisted['first_15_breach_date']} · 5거래일 "
+            f"{count_text} · 복기 완료 "
+            f"{'확인' if persisted.get('review_completed') else '미확인'} · 재개는 사용자 명시가 필요하다."
         )
     return "\n".join(lines) + "\n"
 
@@ -582,6 +735,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--append", action="store_true", help="스냅샷 파일에 섹션을 덧붙인다")
     parser.add_argument("--overrides", type=Path, help="티커 override 파일 경로")
     parser.add_argument("--portfolio-dir", type=Path, help="계좌 MDD용 스냅샷 디렉토리")
+    parser.add_argument("--state-file", type=Path, help="MDD 최초 발동일과 재개 상태 JSON")
+    parser.add_argument("--sessions", type=Path, help="검증된 거래일 날짜 목록(JSON 또는 한 줄 한 날짜)")
+    parser.add_argument("--review-completed", action="store_true", help="-15% 발동 후 복기 완료를 명시한다")
+    parser.add_argument("--resume-authorized", action="store_true", help="사용자가 신규 매수 재개를 명시했다")
+    parser.add_argument("--json", action="store_true", help="렌더링 대신 구조화 JSON을 출력한다")
     args = parser.parse_args(argv)
     if args.no_cache:
         http_cache.disable()
@@ -594,17 +752,46 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     snapshot_dir = args.portfolio_dir or args.snapshot.parent
-    history, history_meta = load_record_history(snapshot_dir)
+    history, history_meta = load_record_history(snapshot_dir, args.snapshot.stem)
     results = analyze_holdings(
         holdings, load_overrides(args.overrides), history, args.snapshot.stem
     )
     account = account_mdd(snapshot_dir, parse_balance(text), args.snapshot.stem)
-    section = render(results, account, history_meta)
+    try:
+        state_path = args.state_file or snapshot_dir / ".peak_drawdown_state.json"
+        previous_state = load_state(state_path)
+        # Historical replays must not inherit a state written for a later day.
+        if previous_state.get("account_mdd", {}).get("asof", "") > args.snapshot.stem:
+            previous_state = {"schema_version": 1, "account_mdd": {}}
+        state = update_mdd_state(
+            account,
+            previous_state,
+            args.snapshot.stem,
+            load_session_dates(args.sessions, args.snapshot.stem),
+            review_completed=args.review_completed,
+            resume_authorized=args.resume_authorized,
+        )
+        if state != previous_state and args.snapshot.stem >= previous_state.get("account_mdd", {}).get("asof", args.snapshot.stem):
+            save_state(state_path, state)
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"ERROR: MDD 상태 처리 실패 — {e}", file=sys.stderr)
+        return 1
+    section = render(results, account, history_meta, state)
 
     if args.append:
         append_section(args.snapshot, section)
         print(f"추가: {args.snapshot}", file=sys.stderr)
-    print(section, end="")
+    if args.json:
+        print(json.dumps({
+            "asof": args.snapshot.stem,
+            "holdings": results,
+            "account": account,
+            "record_history": history_meta,
+            "state": state,
+            "rendered": section,
+        }, ensure_ascii=False, indent=2))
+    else:
+        print(section, end="")
     return 0
 
 

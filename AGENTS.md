@@ -110,7 +110,7 @@ and report recency, then EPS revision direction). Range width and the two
 dispersion ratios are reported alongside the targets and drive the confidence
 grade. The verdict is tied to `context/my_rules.md`: the centre against the
 50~100% expectation of 「기본 원칙 2」 including its 30% capped-downside proviso,
-and the low point against the -15% stop of 「매매규칙 6」, which together set the
+and the low point against the -20% final stop of 「매매규칙 6」, which together set the
 effective stop width used for the reward/risk ratio and the 「기본 원칙 4」 2%-rule
 position cap. The calculation rules live in `analyze-stock/SKILL.md` step 9; the
 output layout lives in `template/stock_analysis.md` §5.

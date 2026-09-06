@@ -24,8 +24,16 @@ from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Callable, Iterator
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback; production runs on macOS/Linux.
+    fcntl = None
 
 # 저장소 루트 기준 `output/`은 gitignore 대상이라 새 추적 경로를 만들지 않는다.
 # parents: [0] scripts · [1] analyze-stock · [2] skills · [3] .agents · [4] 저장소 루트.
@@ -73,6 +81,11 @@ def cache_path(url: str, *, authed: bool) -> Path:
     return CACHE_ROOT / digest[:2] / f"{digest}.body"
 
 
+def lock_path(url: str, *, authed: bool) -> Path:
+    """캐시 키별 잠금 파일. URL과 쿠키 값은 경로에 남지 않는다."""
+    return cache_path(url, authed=authed).with_suffix(".lock")
+
+
 def load(url: str, *, authed: bool, ttl: int | None = None) -> bytes | None:
     """TTL 안의 응답 본문. 없거나 만료면 None."""
     if not enabled():
@@ -90,6 +103,14 @@ def load(url: str, *, authed: bool, ttl: int | None = None) -> bytes | None:
         return None
 
 
+def invalidate(url: str, *, authed: bool) -> None:
+    """손상된 항목 하나를 제거한다."""
+    try:
+        cache_path(url, authed=authed).unlink()
+    except OSError:
+        pass
+
+
 _purged = False
 
 
@@ -105,11 +126,66 @@ def store(url: str, body: bytes, *, authed: bool) -> None:
     path = cache_path(url, authed=authed)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_bytes(body)
-        tmp.replace(path)
+        # 같은 키를 여러 프로세스가 저장해도 임시 파일 이름이 겹치지 않는다.
+        fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.stem}.", suffix=".tmp", dir=path.parent)
+        tmp = Path(raw_tmp)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(body)
+                handle.flush()
+                os.fsync(handle.fileno())
+            tmp.replace(path)
+        finally:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
     except OSError:
         pass
+
+
+@contextmanager
+def _key_lock(url: str, *, authed: bool) -> Iterator[None]:
+    """같은 URL의 cold-cache 호출을 프로세스 사이에서 직렬화한다."""
+    if not enabled() or fcntl is None:
+        yield
+        return
+    path = lock_path(url, authed=authed)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = path.open("a+b")
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    except OSError:
+        # 캐시는 보조 계층이다. 잠금 파일 실패가 수집을 막으면 안 된다.
+        yield
+        return
+    try:
+        yield
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
+def get_or_fetch(url: str, *, authed: bool, fetcher: Callable[[], bytes]) -> tuple[bytes, bool]:
+    """캐시 본문 또는 `fetcher` 결과와 cache-hit 여부를 반환한다.
+
+    잠금 획득 뒤 다시 읽어 같은 cold-cache URL을 기다리던 프로세스가 네트워크를
+    중복 호출하지 않게 한다. `fetcher` 예외와 실패 응답은 저장하지 않는다.
+    """
+    cached = load(url, authed=authed)
+    if cached is not None:
+        return cached, True
+    if not enabled():
+        return fetcher(), False
+    with _key_lock(url, authed=authed):
+        cached = load(url, authed=authed)
+        if cached is not None:
+            return cached, True
+        body = fetcher()
+        store(url, body, authed=authed)
+        return body, False
 
 
 def purge(older_than: int = RETENTION_SECONDS) -> int:

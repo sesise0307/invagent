@@ -28,7 +28,9 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, timezone
+from math import isfinite
 from pathlib import Path
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent)
@@ -97,24 +99,25 @@ def fetch_json(
     if cookie:
         headers["Cookie"] = cookie
     # 같은 실행 안에서 info-tab(약 128KB)을 두 번 받는 경로가 있다 — 짧은 TTL 캐시로 덮는다.
-    cached = http_cache.load(url, authed=bool(cookie))
-    if cached is not None:
-        try:
-            return json.loads(cached.decode("utf-8")), None
-        except ValueError:
-            pass  # 손상된 항목은 그냥 다시 받는다
-
     req = urllib.request.Request(url, headers=headers)
-    try:
+    def request_body() -> bytes:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            body = resp.read()
-        payload = json.loads(body.decode("utf-8"))
+            return resp.read()
+
+    try:
+        body, cache_hit = http_cache.get_or_fetch(url, authed=bool(cookie), fetcher=request_body)
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except ValueError:
+            if not cache_hit:
+                raise
+            http_cache.invalidate(url, authed=bool(cookie))
+            body, _ = http_cache.get_or_fetch(url, authed=bool(cookie), fetcher=request_body)
+            payload = json.loads(body.decode("utf-8"))
     except urllib.error.HTTPError as e:
         return None, f"HTTP {e.code}"
     except Exception as e:  # 네트워크 오류·JSON 파싱 실패 등
         return None, str(e)[:80]
-    # 성공한 응답만 넣는다. 실패를 캐시하면 일시적인 401이 TTL 동안 고착된다.
-    http_cache.store(url, body, authed=bool(cookie))
     return payload, None
 
 
@@ -279,6 +282,72 @@ def print_grades(inv: dict | None) -> None:
             print(f"  - {cat.get('category_name')}: {' · '.join(metrics)}")
 
 
+def numeric_target(value) -> float | None:
+    """유효한 양의 목표가만 반환한다. NR·문자열 상태·NaN은 제외한다."""
+    if isinstance(value, bool) or value in (None, "", "-"):
+        return None
+    try:
+        target = float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+    return target if isfinite(target) and target > 0 else None
+
+
+def build_consensus_summary(history: list, current_price: float | None = None) -> dict:
+    """증권사별 최신 보고서를 먼저 고른 뒤 숫자 목표가만 집계한다.
+
+    최신이 NR이면 같은 증권사의 옛 목표가를 되살리지 않는다. 제외된 최신 보고서도
+    날짜와 상태를 남겨 valuation 자동화가 컨센서스 범위를 재사용할 수 있게 한다.
+    """
+    rows = sorted(history or [], key=lambda r: r.get("report_date") or "", reverse=True)
+    latest: dict[str, dict] = {}
+    for row in rows:
+        broker = str(row.get("securities_company") or "미상")
+        latest.setdefault(broker, row)
+
+    included: list[dict] = []
+    excluded: list[dict] = []
+    for broker, row in latest.items():
+        target = numeric_target(row.get("target_price"))
+        if target is None:
+            excluded.append(
+                {
+                    "broker": broker,
+                    "report_date": row.get("report_date"),
+                    "opinion": row.get("investment_opinion"),
+                    "target_status": str(row.get("target_price") or "NR/미제시"),
+                }
+            )
+            continue
+        included.append(
+            {
+                "broker": broker,
+                "report_date": row.get("report_date"),
+                "target_price": target,
+                "target_price_change": row.get("target_price_change"),
+            }
+        )
+
+    targets = [row["target_price"] for row in included]
+    summary = {
+        "method": "latest_report_per_broker_then_numeric_target",
+        "coverage_brokers": len(latest),
+        "included_brokers": len(included),
+        "included": included,
+        "excluded_latest": excluded,
+        "average": sum(targets) / len(targets) if targets else None,
+        "minimum": min(targets) if targets else None,
+        "maximum": max(targets) if targets else None,
+        "upgrades": sum(1 for row in included if row.get("target_price_change") == "상향"),
+        "downgrades": sum(1 for row in included if row.get("target_price_change") == "하향"),
+    }
+    if current_price and summary["average"] is not None:
+        summary["upside_percent"] = (summary["average"] - current_price) / current_price * 100
+    else:
+        summary["upside_percent"] = None
+    return summary
+
+
 def print_target_prices(history: list, current_price: float | None, limit: int, since: str | None) -> None:
     rows = sorted(history or [], key=lambda r: r.get("report_date") or "", reverse=True)
     print(f"[증권사별 목표주가] 총 {len(rows)}건" + (f" (최근 {limit}건 표시)" if len(rows) > limit else ""))
@@ -288,41 +357,51 @@ def print_target_prices(history: list, current_price: float | None, limit: int, 
     print("  | 발간일 | 증권사 | 애널리스트 | 의견 | 목표가 | 변동 | 당시주가 | 괴리율 | 리포트 |")
     print("  |---|---|---|---|---|---|---|---|---|")
     for r in rows[:limit]:
-        tp = r.get("target_price")
-        cp = r.get("current_price")
+        tp = numeric_target(r.get("target_price"))
+        cp = numeric_target(r.get("current_price"))
         up = r.get("upside_potential")
         new_mark = " 🆕" if since and (r.get("report_date") or "") > since else ""
         print(
             f"  | {r.get('report_date') or '-'}{new_mark} | {r.get('securities_company') or '-'} | "
             f"{r.get('author') or '-'} | {r.get('investment_opinion') or '-'} | "
-            f"{format(tp, ',') + '원' if tp else '-'} | {r.get('target_price_change') or '-'} | "
-            f"{format(cp, ',') + '원' if cp else '-'} | "
+            f"{format(tp, ',.0f') + '원' if tp else '-'} | {r.get('target_price_change') or '-'} | "
+            f"{format(cp, ',.0f') + '원' if cp else '-'} | "
             f"{format(up, '+.1f') + '%' if up is not None else '-'} | {r.get('title') or '-'} |"
         )
 
-    rated = [r for r in rows if r.get("target_price")]
-    if not rated:
+    consensus = build_consensus_summary(rows, current_price)
+    current = consensus["included"]
+    if not current:
         print("[컨센 요약] 목표가 제시 리포트 없음 (전부 Not Rated)")
+        for row in consensus["excluded_latest"]:
+            print(
+                f"  ↳ 제외: {row['broker']} 최신 {row['report_date'] or '-'} · "
+                f"{row['opinion'] or '의견 없음'} · {row['target_status']}"
+            )
         return
-    # 9단계 blend 입력은 "지금의 컨센"이다. 한 증권사가 1년에 6번 쓰면 6번 세어지고
-    # 하향 이전의 옛 목표가가 평균을 끌어올리므로, 증권사별 최신 1건만 남겨 집계한다.
-    # rows는 이미 발간일 내림차순이라 먼저 만나는 것이 그 증권사의 최신분이다.
-    latest: dict = {}
-    for r in rated:
-        latest.setdefault(r.get("securities_company"), r)
-    current = list(latest.values())
-
-    targets = [r["target_price"] for r in current]
-    avg = sum(targets) / len(targets)
-    ups = sum(1 for r in current if r.get("target_price_change") == "상향")
-    downs = sum(1 for r in current if r.get("target_price_change") == "하향")
-    upside = f" · 현재가 대비 {(avg - current_price) / current_price * 100:+.1f}%" if current_price else ""
-    print(
-        f"[컨센 요약] 평균 목표가 {avg:,.0f}원 (최고 {max(targets):,.0f} / 최저 {min(targets):,.0f}) · "
-        f"커버 {len(current)}사 / 목표가 제시 {len(rated)}건 · 상향 {ups} / 하향 {downs}{upside}"
+    avg = consensus["average"]
+    upside = (
+        f" · 현재가 대비 {consensus['upside_percent']:+.1f}%"
+        if consensus["upside_percent"] is not None
+        else ""
     )
+    print(
+        f"[컨센 요약] 평균 목표가 {avg:,.0f}원 "
+        f"(최고 {consensus['maximum']:,.0f} / 최저 {consensus['minimum']:,.0f}) · "
+        f"커버 {consensus['included_brokers']}사 / 목표가 제시 {len([numeric_target(row.get('target_price')) for row in rows if numeric_target(row.get('target_price')) is not None])}건 · "
+        f"최신 보고서 {consensus['coverage_brokers']}사 중 유효 목표가 "
+        f"{consensus['included_brokers']}사 · 상향 {consensus['upgrades']} / "
+        f"하향 {consensus['downgrades']}{upside}"
+    )
+    for row in consensus["excluded_latest"]:
+        print(
+            f"  ↳ 제외: {row['broker']} 최신 {row['report_date'] or '-'} · "
+            f"{row['opinion'] or '의견 없음'} · {row['target_status']}"
+        )
+    rated = [numeric_target(row.get("target_price")) for row in rows]
+    rated = [target for target in rated if target is not None]
     if len(rated) > len(current):
-        hist = [r["target_price"] for r in rated]
+        hist = rated
         hist_avg = sum(hist) / len(hist)
         print(
             f"  ↳ 기준 = 증권사별 최신 1건. 전체 이력 {len(rated)}건 단순평균은 "
@@ -427,13 +506,13 @@ def print_reports(reports: dict | None, limit: int, detail_chars: int) -> None:
         print("  (없음)")
         return
     for r in items[:limit]:
-        tp = r.get("target_price")
+        tp = numeric_target(r.get("target_price"))
         head = (
             f"  - {r.get('report_date') or '-'} [{r.get('securities_company') or '-'}] "
             f"{r.get('author') or '-'} · {r.get('investment_opinion') or '의견 없음'}"
         )
         if tp:
-            head += f" 목표가 {tp:,}원"
+            head += f" 목표가 {tp:,.0f}원"
             if r.get("target_price_change"):
                 head += f"({r['target_price_change']})"
         print(f"{head} — {r.get('title') or '-'}")
@@ -448,10 +527,14 @@ def print_reports(reports: dict | None, limit: int, detail_chars: int) -> None:
 
 
 def print_news(news: dict | None, since: str | None) -> None:
-    items = (news or {}).get("items") or []
+    all_items = (news or {}).get("items") or []
+    items = all_items
     if since:
         items = [n for n in items if (n.get("published_at") or "")[:10] >= since]
-    print(f"[뉴스] {len(items)}건" + (f" (기준일 {since} 이후)" if since else ""))
+    if since:
+        print(f"[뉴스] {len(items)}건 (기준일 {since} 이후) · API 최근 {len(all_items)}건 중 필터")
+    else:
+        print(f"[뉴스] API 최근 {len(items)}건")
     for n in items:
         published = (n.get("published_at") or "")[:10] or "-"
         print(f"  - {published} [{n.get('source') or '-'}] {n.get('title')}")
@@ -461,24 +544,102 @@ def print_news(news: dict | None, since: str | None) -> None:
 # --- main ------------------------------------------------------------------
 
 
-def build_summary(stock: dict, info: dict | None, news: dict | None, reports: dict | None = None) -> dict:
+def news_coverage(news: dict | None, requested_limit: int, since: str | None) -> dict:
+    """지원이 확인되지 않은 페이지네이션을 가정하지 않고 조회 범위를 표시한다."""
+    items = (news or {}).get("items") or []
+    return {
+        "scope": "latest_n_items",
+        "requested_limit": requested_limit,
+        "returned_count": len(items),
+        "since": since,
+        # since 증분은 최근 N건 창 밖에 빠진 기사가 없는지 증명할 수 없다.
+        "complete": since is None,
+        "label": (
+            f"API 최근 {len(items)}건 중 {since} 이후"
+            if since
+            else f"API 최근 {len(items)}건"
+        ),
+    }
+
+
+def build_summary(
+    stock: dict,
+    info: dict | None,
+    news: dict | None,
+    reports: dict | None = None,
+    *,
+    news_limit: int = 10,
+    since: str | None = None,
+) -> dict:
     """--json 출력용 압축 dict. 차트 계열은 버린다."""
     info = info or {}
     return {
         "stock_code": stock.get("stock_code"),
         "stock_name": stock.get("stock_name"),
-        "fetched_at": date.today().isoformat(),
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
         "stock_info": info.get("stock_info"),
         "primary_fs_type": info.get("primary_fs_type"),
         "sector_info": info.get("sector_info"),
         "rs_data": info.get("rs_data"),
         "investment": info.get("investment"),
         "target_price_history": info.get("target_price_history"),
+        "consensus": build_consensus_summary(
+            info.get("target_price_history") or [],
+            unsigned((info.get("stock_info") or {}).get("cur_prc")),
+        ),
         "financials": info.get("financials"),
         "eps_changes": info.get("eps_changes"),
         "news": (news or {}).get("items"),
+        "news_coverage": news_coverage(news, news_limit, since),
         "reports": (reports or {}).get("items"),
     }
+
+
+def collect_stock_payloads(
+    ticker: str,
+    *,
+    news_limit: int,
+    summaries: int,
+    since: str | None,
+    cookie: str | None,
+) -> tuple[dict | None, dict | None, dict | None, dict[str, str]]:
+    """식별이 끝난 종목의 독립 API를 최대 3개 worker로 동시에 수집한다."""
+    referer = f"{PAGE_BASE}/{ticker}"
+    jobs: dict[str, tuple[str, dict | None, str]] = {
+        "info_tab": (ENDPOINTS["info_tab"].format(code=ticker), None, referer),
+    }
+    if news_limit:
+        jobs["news"] = (
+            ENDPOINTS["news"].format(code=ticker),
+            {"limit": news_limit},
+            referer,
+        )
+    errors: dict[str, str] = {}
+    if summaries:
+        if cookie:
+            params = {"stock_code": ticker, "page": 1, "page_size": max(summaries, 10)}
+            if since:
+                params["date_from"] = since
+            jobs["reports"] = (ENDPOINTS["reports"], params, REPORTS_PAGE)
+        else:
+            errors["reports"] = f"{COOKIE_ENV} 미설정 — .env에 브라우저 Cookie 헤더를 넣어야 한다"
+
+    payloads: dict[str, dict | None] = {"info_tab": None, "news": None, "reports": None}
+
+    def fetch_job(job: tuple[str, dict | None, str]):
+        path, params, job_referer = job
+        return fetch_json(path, params, referer=job_referer, cookie=cookie)
+
+    with ThreadPoolExecutor(max_workers=min(3, len(jobs))) as pool:
+        futures = {name: pool.submit(fetch_job, job) for name, job in jobs.items()}
+        for name, future in futures.items():
+            payload, err = future.result()
+            payloads[name] = payload
+            if err:
+                if name == "reports" and err == "HTTP 401":
+                    err += " (쿠키 만료·무효 — .env 갱신 필요)"
+                errors[name] = err
+    return payloads["info_tab"], payloads["news"], payloads["reports"], errors
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -510,43 +671,17 @@ def main(argv: list[str] | None = None) -> int:
         return code
 
     ticker = stock["stock_code"]
-    referer = f"{PAGE_BASE}/{ticker}"
-    errors = {}
     # 2026-08 이후 info-tab·news도 로그인 세션을 요구한다(비인증 호출은 HTTP 401).
     # 쿠키는 한 번만 읽어 세 엔드포인트에 함께 넘긴다. 없으면 종전대로 비인증으로 시도한다.
     cookie = load_cookie()
 
-    info, e = fetch_json(
-        ENDPOINTS["info_tab"].format(code=ticker), referer=referer, cookie=cookie
+    info, news, reports, errors = collect_stock_payloads(
+        ticker,
+        news_limit=args.news,
+        summaries=args.summaries,
+        since=args.since,
+        cookie=cookie,
     )
-    if e:
-        errors["info_tab"] = e
-    news = None
-    if args.news:
-        news, e = fetch_json(
-            ENDPOINTS["news"].format(code=ticker),
-            {"limit": args.news},
-            referer=referer,
-            cookie=cookie,
-        )
-        if e:
-            errors["news"] = e
-
-    # 리포트 요약은 로그인 세션이 반드시 필요하다. 쿠키가 없으면 그 섹션만 비운다 (비블로킹).
-    reports = None
-    if args.summaries:
-        if not cookie:
-            errors["reports"] = f"{COOKIE_ENV} 미설정 — .env에 브라우저 Cookie 헤더를 넣어야 한다"
-        else:
-            params = {"stock_code": ticker, "page": 1, "page_size": max(args.summaries, 10)}
-            if args.since:
-                params["date_from"] = args.since
-            reports, e = fetch_json(
-                ENDPOINTS["reports"], params, referer=REPORTS_PAGE, cookie=cookie
-            )
-            if e:
-                hint = " (쿠키 만료·무효 — .env 갱신 필요)" if e == "HTTP 401" else ""
-                errors["reports"] = f"{e}{hint}"
 
     if not info:
         detail = ", ".join(f"{k}={v}" for k, v in errors.items()) or "빈 응답"
@@ -565,7 +700,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(
             json.dumps(
-                build_summary({**stock, "stock_name": name}, info, news, reports),
+                build_summary(
+                    {**stock, "stock_name": name},
+                    info,
+                    news,
+                    reports,
+                    news_limit=args.news,
+                    since=args.since,
+                ),
                 ensure_ascii=False,
             )
         )

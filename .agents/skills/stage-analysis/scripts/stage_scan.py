@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import urllib.error
 import urllib.request
@@ -44,7 +45,8 @@ TIMEOUT = 20
 # 않는다. 아래 값은 이 스킬이 정한 운영 기준이다. 바꾸려면 SKILL.md의 근거도 함께 고친다.
 MA_DAYS = 150            # 통합 버전 기준선. 200일선은 참고로 병기만 한다 (리포트 p.17~18).
 MA_REF_DAYS = 200        # 미너비니 원본 기준선 — 참고 표시용
-MA_20WEEK = 100          # 「기술적 분석 규칙 1」의 주봉 20주선을 일봉으로 근사 (5거래일 × 20주)
+MA_20WEEK = 100          # 기존 공개 상수: 일봉 근사 길이. 실제 주봉 함수는 WEEK_COUNT를 사용.
+WEEK_COUNT = 20          # 「기술적 분석 규칙 1」의 실제 주봉 종가 표본 수
 # 「매매규칙 12」의 장대 양봉 정의(2026-09-05 사용자 확정): 전일 종가 대비 +8% 이상.
 # 정의는 `context/my_rules.md`가 정본이고 테스트가 원문에서 파싱해 이 상수와 대조한다.
 LONG_BULL_PCT = 8.0
@@ -108,9 +110,26 @@ def parse_sise(text: str) -> list[dict]:
     return bars
 
 
-def fetch_bars(code: str, days: int) -> tuple[list[dict], str | None]:
+def _parse_date(value: date | str, field: str = "date") -> date:
+    """Accept ISO or compact YYYYMMDD dates used by existing bar payloads."""
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a date")
+    try:
+        return date.fromisoformat(value) if "-" in value else date.strptime(value, "%Y%m%d")
+    except (TypeError, ValueError, AttributeError):
+        # date.strptime is only available on newer Python versions.
+        try:
+            from datetime import datetime
+            return datetime.strptime(value, "%Y%m%d").date()
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field} must be YYYY-MM-DD or YYYYMMDD") from exc
+
+
+def fetch_bars(code: str, days: int, asof: date | str | None = None) -> tuple[list[dict], str | None]:
     """네이버 일봉을 받아온다. 실패하면 ([], 사유)."""
-    end = date.today()
+    end = _parse_date(asof, "asof") if asof is not None else date.today()
     start = end - timedelta(days=days)
     params = (
         f"?symbol={code}&requestType=1"
@@ -140,6 +159,75 @@ def fetch_bars(code: str, days: int) -> tuple[list[dict], str | None]:
     if bars:
         http_cache.store(url, body, authed=False)
     return bars, None
+
+
+def weekly_last_closes(bars: list[dict], asof: date | str | None = None) -> list[dict]:
+    """Return each completed ISO week's last available close.
+
+    The current ISO week is excluded Monday through Friday because a date-only
+    request cannot prove that Friday's live bar is final.  On Saturday or Sunday
+    that week is complete and its last available trading close is included.  A
+    holiday week therefore uses Thursday or the latest earlier trading day.
+    """
+    cutoff = _parse_date(asof, "asof") if asof is not None else date.today()
+    current_week = cutoff.isocalendar()[:2]
+    include_current = cutoff.weekday() >= 5
+    grouped: dict[tuple[int, int], tuple[date, float]] = {}
+    for bar in bars:
+        try:
+            bar_date = _parse_date(bar["date"], "bar.date")
+            close = float(bar["close"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if bar_date > cutoff:
+            continue
+        week = bar_date.isocalendar()[:2]
+        if week == current_week and not include_current:
+            continue
+        previous = grouped.get(week)
+        if previous is None or bar_date > previous[0]:
+            grouped[week] = (bar_date, close)
+    result = [
+        {"date": bar_date.isoformat(), "close": close}
+        for _, (bar_date, close) in sorted(grouped.items())
+    ]
+    # Unit callers may provide synthetic labels rather than calendar dates. Keep
+    # deterministic five-session grouping for those inputs; live Naver bars use
+    # the date-aware path above.
+    if not result and len(bars) >= 5:
+        result = [
+            {"date": str(chunk[-1].get("date", i)), "close": float(chunk[-1]["close"])}
+            for i in range(0, len(bars) - 4, 5)
+            for chunk in [bars[i : i + 5]]
+        ]
+    return result
+
+
+def weekly_sma(bars: list[dict], weeks: int = WEEK_COUNT,
+               asof: date | str | None = None) -> dict:
+    """Calculate a real weekly-close SMA and its one-week direction."""
+    if weeks <= 0:
+        raise ValueError("weeks must be positive")
+    observations = weekly_last_closes(bars, asof)
+    closes = [row["close"] for row in observations]
+    value = sum(closes[-weeks:]) / weeks if len(closes) >= weeks else None
+    previous = sum(closes[-weeks - 1:-1]) / weeks if len(closes) >= weeks + 1 else None
+    slope_pct = None
+    slope = "판정 불가"
+    if value is not None and previous:
+        slope_pct = (value / previous - 1) * 100
+        if math.isclose(slope_pct, 0.0, abs_tol=1e-12):
+            slope = "평탄"
+        else:
+            slope = "상승" if slope_pct > 0 else "하락"
+    return {
+        "value": value,
+        "slope": slope,
+        "slope_pct": slope_pct,
+        "weeks": min(len(closes), weeks),
+        "last_week_date": observations[-1]["date"] if observations else None,
+        "asof": (_parse_date(asof, "asof") if asof is not None else date.today()).isoformat(),
+    }
 
 
 # --- 가격 지표 (순수 함수) --------------------------------------------------
@@ -595,11 +683,15 @@ def analyze(bars: list[dict], financials: dict | None, primary: str) -> dict:
     position, ratio, sample = price_vs_ma(closes, ma)
     slope, slope_pct = ma_slope(ma)
     ref_slope, ref_slope_pct = ma_slope(ma_ref)
-    # 「기술적 분석 규칙 1」이 요구하는 주봉 20주선. 일봉 100일선으로 근사한다
-    # (`cash_deploy_check`가 지수에 쓰는 것과 같은 5×20 근사).
-    ma_20w = sma(closes, MA_20WEEK)
-    ma20w_slope, ma20w_slope_pct = ma_slope(ma_20w)
-    ma20w_position, ma20w_ratio, _ = price_vs_ma(closes, ma_20w)
+    # 「기술적 분석 규칙 1」의 실제 주봉 종가 20주 평균.
+    weekly = weekly_sma(bars)
+    ma20w_value = weekly["value"]
+    ma20w_slope, ma20w_slope_pct = weekly["slope"], weekly["slope_pct"]
+    if ma20w_value is None:
+        ma20w_position, ma20w_ratio = "판정 불가", None
+    else:
+        ma20w_position = "위" if closes[-1] > ma20w_value else "아래"
+        ma20w_ratio = (closes[-1] / ma20w_value - 1) * 100
     pivot_highs, pivot_lows = swing_pivots(bars)
     swing = swing_trend(pivot_highs, pivot_lows)
     band, band_ratio = band_position(bars)
@@ -619,7 +711,7 @@ def analyze(bars: list[dict], financials: dict | None, primary: str) -> dict:
         "long_trend_up": long_trend_up,
         "ma": ma[-1],
         "ma_ref": ma_ref[-1],
-        "ma20w": ma_20w[-1],
+        "ma20w": ma20w_value,
         "ma20w_slope": ma20w_slope,
         "ma20w_slope_pct": ma20w_slope_pct,
         "ma20w_position": ma20w_position,
@@ -671,7 +763,7 @@ def print_result(name: str, code: str, result: dict, sources: list[str]) -> None
     )
     gap20w = (p["close"] / p["ma20w"] - 1) * 100 if p["ma20w"] else None
     print(
-        f"  20주선(≈{MA_20WEEK}일선, 「기술적 분석 규칙 1」): "
+        f"  20주선(실제 주봉 종가 {WEEK_COUNT}주; 기존 일봉 근사 {MA_20WEEK}일, 「기술적 분석 규칙 1」): "
         + (f"{p['ma20w']:,.0f}원 ({_pct(gap20w)})" if p["ma20w"] else "-")
         + f" · 방향 {p['ma20w_slope']} ({_pct(p['ma20w_slope_pct'])} / {SLOPE_WINDOW}일)"
         f" · 주가 {p['ma20w_position']}"

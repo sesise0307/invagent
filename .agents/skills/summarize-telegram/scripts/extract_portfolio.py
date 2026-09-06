@@ -102,20 +102,46 @@ def parse_holdings(block: list[str]) -> tuple[list[dict], dict[str, str]]:
     """보유 종목 블록 → (종목 dict 리스트, 총계 dict)."""
     header = split_row(block[0])
     totals = parse_totals(header)
-    try:
-        base = header.index("종목")
-    except ValueError:
+    aliases = {
+        "종목": ("종목", "종목명"),
+        "계좌": ("계좌", "계좌명"),
+        "티커": ("티커", "종목코드", "코드"),
+        "섹터": ("섹터", "업종"),
+        "보유": ("보유", "보유수량", "수량"),
+        "평단": ("평단", "평균단가", "매입평균가"),
+        "현재가": ("현재가",),
+        "매수금액": ("매수금액", "매입금액", "취득금액"),
+        "평가금액": ("평가금액",),
+        "수익률": ("수익률",),
+        "손익": ("손익", "평가손익"),
+        "비중": ("비중",),
+        "메모": ("메모", "투자 아이디어", "투자아이디어"),
+    }
+    indexes: dict[str, int] = {}
+    for canonical, names in aliases.items():
+        hit = next((i for i, cell in enumerate(header) if cell in names), None)
+        if hit is not None:
+            indexes[canonical] = hit
+    if "종목" not in indexes:
         raise ValueError("보유 종목 표에서 '종목' 컬럼을 찾지 못했다")
 
-    fields = ["종목", "보유", "평단", "현재가", "매수금액", "평가금액", "수익률", "손익", "비중", "메모"]
+    required = ("보유", "평단", "현재가", "평가금액", "수익률", "비중")
+    missing = [name for name in required if name not in indexes]
+    if missing:
+        raise ValueError(f"보유 종목 표 필수 컬럼 누락: {', '.join(missing)}")
+
     holdings: list[dict] = []
     for line in block[1:]:
         cells = split_row(line)
-        if len(cells) <= base or not cells[base]:
+        name_index = indexes["종목"]
+        if len(cells) <= name_index or not cells[name_index]:
             continue
-        row = {name: (cells[base + i] if base + i < len(cells) else "") for i, name in enumerate(fields)}
-        row["섹터"] = cells[base - 1] if base >= 1 else ""
-        row["계좌"] = cells[base - 2] if base >= 2 else ""
+        row = {
+            name: (cells[index] if index < len(cells) else "")
+            for name, index in indexes.items()
+        }
+        for name in aliases:
+            row.setdefault(name, "")
         row["수익률_v"] = to_float(row["수익률"])
         row["비중_v"] = to_float(row["비중"])
         holdings.append(row)
@@ -158,13 +184,15 @@ def rule_findings(holdings: list[dict]) -> list[str]:
     # 「매매규칙 6」은 두 티어다. 깊은 티어가 얕은 티어를 흡수해 한 종목이 두 줄에 겹치지 않는다.
     full_exit = names(lambda v: v <= STOP_FULL_PCT)
     findings.append(
-        f"- 매매규칙 6(-20% 전량 매도): {', '.join(full_exit)} ← **위반**" if full_exit
+        f"- 매매규칙 6(-20% 전량 매도): {', '.join(full_exit)} "
+        "← **위반** (임계 도달 · 이행 여부 미확인 · 시장 급락 예외 미확인)" if full_exit
         else "- 매매규칙 6(-20% 전량 매도): 해당 없음"
     )
 
     tier1 = names(lambda v: STOP_LOSS_PCT >= v > STOP_FULL_PCT)
     findings.append(
-        f"- 매매규칙 6(-15% 1차 분할 매도): {', '.join(tier1)} ← **위반**" if tier1
+        f"- 매매규칙 6(-15% 1차 분할 매도): {', '.join(tier1)} "
+        "← **위반** (임계 도달 · 이행 여부 미확인 · 시장 급락 예외 미확인)" if tier1
         else "- 매매규칙 6(-15% 1차 분할 매도): 해당 없음"
     )
 
@@ -180,7 +208,8 @@ def rule_findings(holdings: list[dict]) -> list[str]:
         else "- 매매규칙 11(24~30%↑ 익절 쿠션): 해당 없음"
     )
 
-    over = [h for h in positions if h["비중_v"] is not None and h["비중_v"] >= MAX_WEIGHT_PCT]
+    over = [h for h in positions if h["비중_v"] is not None and h["비중_v"] > MAX_WEIGHT_PCT]
+    at_cap = [h for h in positions if h["비중_v"] == MAX_WEIGHT_PCT]
     near = [
         h for h in positions
         if h["비중_v"] is not None and MAX_WEIGHT_PCT > h["비중_v"] >= WEIGHT_WARN_PCT
@@ -190,6 +219,8 @@ def rule_findings(holdings: list[dict]) -> list[str]:
 
     if over:
         findings.append(f"- 매매규칙 9(평가 비중 35% 상한): {weight_desc(over)} ← **위반**")
+    elif at_cap:
+        findings.append(f"- 매매규칙 9(평가 비중 35% 상한): {weight_desc(at_cap)} ← 상한 도달")
     elif near:
         findings.append(f"- 매매규칙 9(평가 비중 35% 상한): {weight_desc(near)} ← 근접")
     else:
@@ -217,6 +248,14 @@ def render(holdings: list[dict], sectors: list[dict], totals: dict[str, str], to
     has_cash = len(positions) != len(holdings)
     total_line = " · ".join(f"{k} {v}" for k, v in totals.items()) or "(총계 없음)"
 
+    optional = [name for name in ("계좌", "티커", "매수금액") if any(h.get(name) for h in holdings)]
+    columns = [name for name in ("계좌", "티커") if name in optional]
+    columns += ["종목", "섹터", "보유", "평단", "현재가"]
+    if "매수금액" in optional:
+        columns.append("매수금액")
+    columns += ["수익률", "비중", "평가금액", "투자 아이디어"]
+    source_key = {"투자 아이디어": "메모"}
+
     lines = [
         f"# 포트폴리오 스냅샷 — {today}",
         "",
@@ -225,14 +264,11 @@ def render(holdings: list[dict], sectors: list[dict], totals: dict[str, str], to
         "",
         f"## 보유 ({len(positions)}종목{' + 현금' if has_cash else ''})",
         "",
-        "| 종목 | 섹터 | 보유 | 평단 | 현재가 | 수익률 | 비중 | 평가금액 | 투자 아이디어 |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| " + " | ".join(columns) + " |",
+        "| " + " | ".join("---" if c in {"계좌", "티커", "종목", "섹터", "투자 아이디어"} else "---:" for c in columns) + " |",
     ]
     for h in holdings:
-        lines.append(
-            f"| {h['종목']} | {h['섹터']} | {h['보유']} | {h['평단']} | {h['현재가']} | "
-            f"{h['수익률']} | {h['비중']} | {h['평가금액']} | {h['메모']} |"
-        )
+        lines.append("| " + " | ".join(h.get(source_key.get(c, c), "") for c in columns) + " |")
 
     if sectors:
         cols = list(sectors[0].keys())
