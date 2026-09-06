@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from invagent.datafeed import stockeasy as datafeed_stockeasy
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = REPO_ROOT / ".agents" / "skills"
@@ -601,8 +603,6 @@ def _patch_stock_info_fetch(
     `resolve_stock`도 같은 모듈 안에서 `fetch_stock_json`을 부르므로, 스크립트 쪽 별칭이
     아니라 수집 계층을 패치해야 종목 해석까지 함께 덮인다.
     """
-    from invagent.datafeed import stockeasy
-
     calls = {}
 
     def fake_fetch(path, params=None, referer=module.PAGE_BASE, cookie=None):
@@ -619,8 +619,8 @@ def _patch_stock_info_fetch(
             return REPORTS_PAYLOAD, None
         return None, "HTTP 404"
 
-    monkeypatch.setattr(stockeasy, "fetch_stock_json", fake_fetch)
-    monkeypatch.setattr(stockeasy, "load_cookie", lambda: cookie)
+    monkeypatch.setattr(datafeed_stockeasy, "fetch_stock_json", fake_fetch)
+    monkeypatch.setattr(datafeed_stockeasy, "load_cookie", lambda: cookie)
     return calls
 
 
@@ -683,7 +683,7 @@ def test_http_cache_key_never_carries_the_cookie(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(module.urllib.request, "urlopen",
                         lambda req, timeout=None: _FakeResponse(b'{"ok": 1}'))
 
-    payload, err = module.stockeasy.fetch_stock_json("/stock-info/info-tab/000660", cookie=secret)
+    payload, err = datafeed_stockeasy.fetch_stock_json("/stock-info/info-tab/000660", cookie=secret)
     assert (payload, err) == ({"ok": 1}, None)
 
     written = list(tmp_path.rglob("*"))
@@ -780,8 +780,8 @@ def test_stock_info_serves_a_repeat_call_from_the_cache(
 
     monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
 
-    first, err1 = module.stockeasy.fetch_stock_json("/stock-info/info-tab/064290")
-    second, err2 = module.stockeasy.fetch_stock_json("/stock-info/info-tab/064290")
+    first, err1 = datafeed_stockeasy.fetch_stock_json("/stock-info/info-tab/064290")
+    second, err2 = datafeed_stockeasy.fetch_stock_json("/stock-info/info-tab/064290")
 
     assert (err1, err2) == (None, None)
     assert first == second == {"stock_code": "064290"}
@@ -802,9 +802,9 @@ def test_stock_info_never_caches_a_failure(tmp_path: Path, monkeypatch: pytest.M
 
     monkeypatch.setattr(module.urllib.request, "urlopen", flaky_urlopen)
 
-    assert module.stockeasy.fetch_stock_json("/stock-info/info-tab/064290") == (None, "HTTP 401")
+    assert datafeed_stockeasy.fetch_stock_json("/stock-info/info-tab/064290") == (None, "HTTP 401")
     state["fail"] = False
-    payload, err = module.stockeasy.fetch_stock_json("/stock-info/info-tab/064290")
+    payload, err = datafeed_stockeasy.fetch_stock_json("/stock-info/info-tab/064290")
     assert (payload, err) == ({"ok": 1}, None)
 
 
@@ -867,11 +867,11 @@ def test_no_cache_flag_forces_a_fresh_fetch(
 
     monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
 
-    module.stockeasy.fetch_stock_json("/stock-info/info-tab/064290")
+    datafeed_stockeasy.fetch_stock_json("/stock-info/info-tab/064290")
     assert len(calls) == 1
 
     module.http_cache.disable()
-    module.stockeasy.fetch_stock_json("/stock-info/info-tab/064290")
+    datafeed_stockeasy.fetch_stock_json("/stock-info/info-tab/064290")
     assert len(calls) == 2, "disable() 후에도 캐시가 응답했다"
 
     # 네트워크를 타는 스크립트 넷 모두 플래그를 노출하고 실제로 끈다.
@@ -962,8 +962,8 @@ def test_stock_info_info_tab_401_points_at_cookie(
             return [{"stock_code": "064290", "stock_name": "인텍플러스", "market": "KR"}], None
         return None, "HTTP 401"
 
-    monkeypatch.setattr(module.stockeasy, "fetch_stock_json", fake_fetch)
-    monkeypatch.setattr(module.stockeasy, "load_cookie", lambda: "session=stale")
+    monkeypatch.setattr(datafeed_stockeasy, "fetch_stock_json", fake_fetch)
+    monkeypatch.setattr(datafeed_stockeasy, "load_cookie", lambda: "session=stale")
 
     assert module.main(["064290"]) == 1
     err = capsys.readouterr().err
@@ -1084,7 +1084,7 @@ def test_stock_info_cookie_read_from_env_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """저장소는 dotenv를 쓰지 않으므로 수집 계층이 .env를 직접 훑는다."""
-    from invagent.datafeed import env, stockeasy
+    from invagent.datafeed import env
 
     module = _load_stock_info_module()
     monkeypatch.delenv(module.COOKIE_ENV, raising=False)
@@ -1097,10 +1097,10 @@ def test_stock_info_cookie_read_from_env_file(
     )
     monkeypatch.setattr(env, "__file__", str(nested / "env.py"))
 
-    assert stockeasy.load_cookie() == "session=from-env-file"
+    assert datafeed_stockeasy.load_cookie() == "session=from-env-file"
 
     monkeypatch.setenv(module.COOKIE_ENV, "session=from-environ")
-    assert stockeasy.load_cookie() == "session=from-environ"
+    assert datafeed_stockeasy.load_cookie() == "session=from-environ"
 
 
 def test_stock_info_ambiguous_name_exits_2(
@@ -1502,6 +1502,27 @@ def test_long_bull_candle_is_wired_into_the_entry_rules() -> None:
     # analyze-stock 10단계의 매매규칙 12 항목이 스크립트 판정을 인용해야 한다.
     block = analyze.split("「매매규칙 12」")[1][:300]
     assert "stage_scan" in block or "장대 양봉 줄" in block
+
+
+def test_ticker_overrides_are_consulted_from_one_place() -> None:
+    """`context/ticker_overrides.md`는 자신이 API보다 먼저 읽힌다고 규정한다.
+
+    예전에는 `peak_drawdown`만 그 파일을 보고 `stage_scan`은 보지 않아, 같은 종목명이
+    스킬마다 다른 티커로 풀렸다. 두 경로 모두 수집 계층의 해석기를 지나야 한다.
+    """
+    overrides = (REPO_ROOT / "context" / "ticker_overrides.md").read_text(encoding="utf-8")
+    assert "API보다 이 파일을 먼저 본다" in overrides
+
+    stage = (SKILLS_ROOT / "stage-analysis" / "scripts" / "stage_scan.py").read_text(
+        encoding="utf-8"
+    )
+    peak = (SKILLS_ROOT / "summarize-telegram" / "scripts" / "peak_drawdown.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "tickers.resolve_stock(" in stage
+    assert "stockeasy.resolve_stock(" not in stage
+    assert "from invagent.datafeed.tickers import" in peak
 
 
 def test_every_mechanically_checkable_rule_has_a_script() -> None:
@@ -2177,7 +2198,7 @@ def test_peak_drawdown_unresolved_ticker_does_not_block_others(
 ) -> None:
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        module.stockeasy,
+        datafeed_stockeasy,
         "resolve_stock",
         lambda name: (
             ({"stock_code": "000660"}, None, 0)
@@ -2203,7 +2224,7 @@ def test_peak_drawdown_unresolved_ticker_does_not_block_others(
 def test_peak_drawdown_overrides_win_over_api(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        module.stockeasy, "resolve_stock", lambda name: ({"stock_code": "999999"}, None, 0)
+        datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "999999"}, None, 0)
     )
 
     assert module.resolve_code("알파전자", {"알파전자": "000660"}) == ("000660", None)
@@ -2224,7 +2245,7 @@ def test_peak_drawdown_overrides_file_ignores_comments(tmp_path: Path) -> None:
 def test_peak_drawdown_fetch_failure_is_non_blocking(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        module.stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+        datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
     )
     monkeypatch.setattr(module.naver, "fetch_bars", lambda code, days, asof=None: ([], "HTTP 500"))
 
@@ -2301,7 +2322,7 @@ def test_stock_deepest_band_leaves_nothing_to_warn() -> None:
 def test_render_lists_stock_approaches_per_axis(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        module.stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+        datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
     )
     # 52주 축 = -9.0%(-10% 임박) / 기록 축 = -9.5%(-10% 임박)
     monkeypatch.setattr(
@@ -2327,7 +2348,7 @@ def test_render_omits_approach_line_when_nothing_is_close(
 ) -> None:
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        module.stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+        datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
     )
     monkeypatch.setattr(
         module.naver,
@@ -2421,7 +2442,7 @@ def test_peak_drawdown_fetches_holdings_concurrently_keeping_order(
 ) -> None:
     """보유 10종목이면 네이버 왕복 10회가 직렬로 쌓인다. 병렬로 돌리되 출력 순서는 입력 순서다."""
     module = _load_peak_drawdown_module()
-    monkeypatch.setattr(module.stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0))
+    monkeypatch.setattr(datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0))
 
     import threading
     import time
@@ -2498,7 +2519,7 @@ def test_peak_drawdown_append_is_idempotent(
 ) -> None:
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        module.stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+        datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
     )
     monkeypatch.setattr(
         module.naver,
@@ -2684,7 +2705,7 @@ def test_record_axis_survives_market_data_failure(monkeypatch: pytest.MonkeyPatc
     """네트워크가 죽어 52주 축이 비어도 계좌 기록 축은 그대로 표에 남아야 한다."""
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        module.stockeasy, "resolve_stock", lambda name: (None, "종목 검색 결과 없음", 1)
+        datafeed_stockeasy, "resolve_stock", lambda name: (None, "종목 검색 결과 없음", 1)
     )
     history = {"알파전자": [("2026-08-10", 100_000.0)]}
 
@@ -2701,7 +2722,7 @@ def test_record_axis_survives_market_data_failure(monkeypatch: pytest.MonkeyPatc
 def test_render_names_both_axes_and_forbids_summing(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        module.stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+        datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
     )
     monkeypatch.setattr(
         module.naver,

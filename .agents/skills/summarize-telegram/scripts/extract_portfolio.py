@@ -17,6 +17,9 @@ import re
 import sys
 from pathlib import Path
 
+from invagent.datafeed.snapshot import CASH_SECTOR, to_float, unescape
+from invagent.datafeed.snapshot import split_row as _split_row
+
 # 「포트폴리오」 시트 다음 시트(매매기록)의 헤더 표식 — 여기서부터는 버린다
 NEXT_SHEET_MARKER = "최초 투자"
 
@@ -34,17 +37,14 @@ WEIGHT_WARN_PCT = 30.0  # 상한 근접 경고선
 MIN_HOLDINGS = 5  # 매매규칙 9: 5~12종목
 MAX_HOLDINGS = 12
 
-CASH_SECTOR = "현금"
-
-
-def unescape(text: str) -> str:
-    """마크다운 이스케이프(\\-, \\_, \\~, \\!) 해제."""
-    return re.sub(r"\\([-_~!*#|])", r"\1", text).strip()
 
 
 def split_row(line: str) -> list[str]:
-    """`| a | b |` 형태의 행을 셀 리스트로."""
-    return [unescape(c) for c in line.strip().strip("|").split("|")]
+    """`| a | b |` 형태의 행을 셀 리스트로.
+
+    시트 원본에서 표를 만드는 쪽이라 셀의 마크다운 이스케이프를 푼다.
+    """
+    return _split_row(line, unescape=True)
 
 
 def split_blocks(content: str) -> list[list[str]]:
@@ -73,17 +73,6 @@ def portfolio_blocks(content: str) -> list[list[str]]:
             break
         out.append(block)
     return out
-
-
-def to_float(text: str) -> float | None:
-    """'₩1,466,000', '-2.85%', '1,600' → float. 파싱 불가면 None."""
-    cleaned = re.sub(r"[₩,%\s]", "", text)
-    if not cleaned or cleaned in {"-", "#DIV/0!"}:
-        return None
-    try:
-        return float(cleaned)
-    except ValueError:
-        return None
 
 
 def parse_totals(header_cells: list[str]) -> dict[str, str]:

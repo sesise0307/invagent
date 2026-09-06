@@ -30,7 +30,7 @@ import urllib.request
 from datetime import date, timedelta
 from pathlib import Path
 
-from invagent.datafeed import cache as http_cache, naver, stockeasy
+from invagent.datafeed import cache as http_cache, naver, stockeasy, tickers
 from invagent.datafeed.naver import fetch_bars, parse_sise
 from invagent.datafeed.naver import parse_date as _parse_date
 from invagent.datafeed.series import sma
@@ -766,7 +766,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_cache:
         http_cache.disable()
 
-    stock, err, code = stockeasy.resolve_stock(args.query)
+    # 티커 해석 경로는 하나다 — `context/ticker_overrides.md`가 검색 API보다 먼저다.
+    stock, err, code = tickers.resolve_stock(args.query)
     if err:
         print(f"ERROR: {err}", file=sys.stderr)
         return code

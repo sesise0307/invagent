@@ -44,7 +44,9 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from invagent.datafeed import cache as http_cache, naver, stockeasy
+from invagent.datafeed import cache as http_cache, naver
+from invagent.datafeed.snapshot import CASH_SECTOR, parse_balance, parse_holdings, split_row, to_float
+from invagent.datafeed.tickers import TICKER_RE, load_overrides, resolve_code
 
 # --- 판정 임계값 -----------------------------------------------------------
 # 전고점 창과 밴드는 이 스킬의 운영 기준이다. 바꾸려면 SKILL.md의 밴드→룰 매핑도 함께 고친다.
@@ -78,97 +80,6 @@ SECTION_TITLE = "## 전고점 낙폭 (52주 시장 고점 · 계좌 기록 고�
 # 과거 실행이 남긴 제목들. `append_section`이 함께 제거해야 재실행 시 섹션이 둘로 갈라지지 않는다.
 # `output/`은 gitignore라 이미 쓰인 스냅샷을 커밋으로 마이그레이션할 수 없으므로 코드가 정리한다.
 LEGACY_SECTION_TITLES = ("## 전고점 낙폭 (52주 최고 종가 기준)",)
-CASH_SECTOR = "현금"
-TICKER_RE = re.compile(r"^\d{6}$")
-OVERRIDES_REL = Path("context") / "ticker_overrides.md"
-
-
-# --- 스냅샷 파싱 -----------------------------------------------------------
-
-
-def split_row(line: str) -> list[str]:
-    return [c.strip() for c in line.strip().strip("|").split("|")]
-
-
-def parse_holdings(text: str) -> list[dict]:
-    """스냅샷의 `## 보유` 표 → 종목 dict 리스트 (현금 행 제외)."""
-    lines = text.split("\n")
-    try:
-        start = next(i for i, l in enumerate(lines) if l.startswith("## 보유"))
-    except StopIteration:
-        raise ValueError("스냅샷에서 '## 보유' 섹션을 찾지 못했다")
-
-    header: list[str] | None = None
-    rows: list[dict] = []
-    for line in lines[start + 1:]:
-        if line.startswith("## "):
-            break
-        if not line.strip().startswith("|"):
-            continue
-        cells = split_row(line)
-        if set("".join(cells)) <= {"-", ":"}:
-            continue
-        if header is None:
-            header = cells
-            continue
-        row = {header[i]: cells[i] for i in range(min(len(header), len(cells)))}
-        if not row.get("종목") or row.get("섹터") == CASH_SECTOR:
-            continue
-        rows.append(row)
-
-    if header is None or not rows:
-        raise ValueError("보유 종목 행을 하나도 파싱하지 못했다")
-    return rows
-
-
-def parse_balance(text: str) -> float | None:
-    """스냅샷 머리말의 `잔고 ₩…` → float."""
-    m = re.search(r"잔고\s*₩([\d,]+)", text)
-    return float(m.group(1).replace(",", "")) if m else None
-
-
-def to_float(text: str) -> float | None:
-    cleaned = re.sub(r"[₩,%\s]", "", text or "")
-    try:
-        return float(cleaned)
-    except ValueError:
-        return None
-
-
-# --- 티커 해석 -------------------------------------------------------------
-
-
-def load_overrides(path: Path | None) -> dict[str, str]:
-    """`종목명 = 123456` 라인을 읽는다. 파일이 없으면 빈 맵."""
-    if path is None:
-        for parent in Path(__file__).resolve().parents:
-            candidate = parent / OVERRIDES_REL
-            if candidate.is_file():
-                path = candidate
-                break
-    if path is None or not path.is_file():
-        return {}
-
-    out: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith(("#", ">", "-")) or "=" not in line:
-            continue
-        name, _, code = line.partition("=")
-        code = code.split("#")[0].strip()
-        if TICKER_RE.match(code):
-            out[name.strip()] = code
-    return out
-
-
-def resolve_code(name: str, overrides: dict[str, str]) -> tuple[str | None, str | None]:
-    """종목명 → (티커, 실패 사유). override가 API보다 우선한다."""
-    if name in overrides:
-        return overrides[name], None
-    hit, err, *_ = stockeasy.resolve_stock(name)
-    if hit and hit.get("stock_code"):
-        return hit["stock_code"], None
-    return None, err or "티커 해석 실패"
 
 
 # --- 낙폭 계산 -------------------------------------------------------------

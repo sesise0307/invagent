@@ -13,52 +13,27 @@ import re
 import sys
 from pathlib import Path
 
-CASH_SECTOR = "현금"
+from invagent.datafeed.snapshot import parse_holdings
+from invagent.datafeed.snapshot import to_float as number
+from invagent.datafeed.tickers import TICKER_RE
+
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-TICKER_RE = re.compile(r"^\d{6}$")
 EVENT_TYPES = {"trade", "cash_flow", "corporate_event"}
 
 
-def split_row(line: str) -> list[str]:
-    return [cell.strip() for cell in line.strip().strip("|").split("|")]
-
-
-def number(value: str) -> float | None:
-    cleaned = re.sub(r"[₩,%\s,]", "", value or "")
-    try:
-        return float(cleaned)
-    except ValueError:
-        return None
-
-
 def parse_snapshot(text: str) -> list[dict]:
-    """헤더 이름으로 `## 보유` 표를 파싱한다."""
-    lines = text.splitlines()
-    try:
-        start = next(i for i, line in enumerate(lines) if line.startswith("## 보유"))
-    except StopIteration as exc:
-        raise ValueError("스냅샷에서 '## 보유' 섹션을 찾지 못했다") from exc
-    header: list[str] | None = None
-    rows: list[dict] = []
-    for line in lines[start + 1 :]:
-        if line.startswith("## "):
-            break
-        if not line.strip().startswith("|"):
-            continue
-        cells = split_row(line)
-        if set("".join(cells)) <= {"-", ":"}:
-            continue
-        if header is None:
-            header = cells
-            continue
-        row = {header[i]: cells[i] for i in range(min(len(header), len(cells)))}
+    """스냅샷의 `## 보유` 표 → 비교용 보유 항목 리스트.
+
+    표를 읽는 일은 수집 계층이 하고, 여기서는 수량 비교에 필요한 모양으로 옮기기만 한다.
+    """
+    rows = parse_holdings(text, require_rows=False)
+    out: list[dict] = []
+    for row in rows:
         name = row.get("종목") or row.get("종목명")
-        if not name or row.get("섹터") == CASH_SECTOR:
-            continue
         quantity = number(row.get("보유") or row.get("보유수량") or row.get("수량") or "")
         if quantity is None:
             raise ValueError(f"{name}: 보유 수량을 파싱하지 못했다")
-        rows.append(
+        out.append(
             {
                 "name": name,
                 "ticker": row.get("티커") or row.get("종목코드") or "",
@@ -68,9 +43,7 @@ def parse_snapshot(text: str) -> list[dict]:
                 "cost": number(row.get("매수금액") or row.get("매입금액") or ""),
             }
         )
-    if header is None:
-        raise ValueError("보유 표 헤더를 찾지 못했다")
-    return rows
+    return out
 
 
 def identity(row: dict) -> str:
