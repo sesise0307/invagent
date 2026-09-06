@@ -21,6 +21,7 @@ SKILLS_ROOT = REPO_ROOT / ".agents" / "skills"
 SKILL_NAMES = (
     "advice",
     "analyze-stock",
+    "market-data",
     "monthly-investment-review",
     "opendart",
     "stage-analysis",
@@ -1502,6 +1503,60 @@ def test_long_bull_candle_is_wired_into_the_entry_rules() -> None:
     # analyze-stock 10단계의 매매규칙 12 항목이 스크립트 판정을 인용해야 한다.
     block = analyze.split("「매매규칙 12」")[1][:300]
     assert "stage_scan" in block or "장대 양봉 줄" in block
+
+
+def _load_market_data_fetch_module():
+    script_path = SKILLS_ROOT / "market-data" / "scripts" / "fetch.py"
+    spec = importlib.util.spec_from_file_location("market_data_fetch", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_market_data_fetch_prints_a_quote(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load_market_data_fetch_module()
+    monkeypatch.setattr(
+        module.tickers, "resolve_stock", lambda q: ({"stock_code": "005930"}, None, 0)
+    )
+    monkeypatch.setattr(datafeed_stockeasy, "load_cookie", lambda: "session=abc")
+    monkeypatch.setattr(
+        module.stockeasy,
+        "fetch_stock_json",
+        lambda *a, **k: ({"stock_info": {"cur_prc": "-70000", "flu_rt": "-1.5"}}, None),
+    )
+
+    assert module.main(["quote", "삼성전자"]) == 0
+    out = capsys.readouterr().out
+    assert "005930" in out and "70,000" in out
+
+
+def test_market_data_fetch_reports_a_failure_without_raising(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """수집 실패는 비블로킹이라는 공통 원칙을 이 CLI도 따른다 — 사유를 stderr에 남긴다."""
+    module = _load_market_data_fetch_module()
+    monkeypatch.setattr(module.naver, "fetch_bars", lambda code, days, asof=None: ([], "HTTP 500"))
+    monkeypatch.setattr(
+        module.tickers, "resolve_stock", lambda q: ({"stock_code": "005930"}, None, 0)
+    )
+
+    assert module.main(["bars", "삼성전자"]) == 1
+    assert "HTTP 500" in capsys.readouterr().err
+
+
+def test_market_data_fetch_passes_an_ambiguous_name_back(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load_market_data_fetch_module()
+    monkeypatch.setattr(
+        module.tickers, "resolve_stock", lambda q: (None, "종목명 후보 다수 — 가나(000001)", 2)
+    )
+
+    assert module.main(["quote", "가나"]) == 2
+    assert "후보 다수" in capsys.readouterr().err
 
 
 def test_ticker_overrides_are_consulted_from_one_place() -> None:

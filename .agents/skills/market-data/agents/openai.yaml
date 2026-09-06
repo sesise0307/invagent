@@ -1,0 +1,4 @@
+interface:
+  display_name: "Market Data"
+  short_description: "Single reference for where every external data source comes from"
+  default_prompt: "Use $market-data to find the right way to fetch this data."
