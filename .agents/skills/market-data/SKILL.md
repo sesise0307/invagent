@@ -70,7 +70,7 @@ uv run python .agents/skills/market-data/scripts/fetch.py market [indices|big_pi
 uv run invagent fetch-messages --days 1
 ```
 
-원본은 `output/telegram-daily/raw/<날짜>_raw.md`, 첨부 이미지는 `output/telegram-daily/media/<날짜>/`.
+원본은 `output/daily-digest/raw/<날짜>_raw.md`, 첨부 이미지는 `output/daily-digest/media/<날짜>/`.
 이미지는 받아만 두고 읽지 않는다 — 읽는 것은 `daily-digest` 1-4단계의 일이다.
 링크 본문 수집은 신뢰할 수 없는 입력을 다루므로 `src/invagent/telegram/link_extractor.py`의
 SSRF 방어(스킴 제한, 비공개 대역 거부, 홉마다 재검증, 응답 크기·시간 상한)를 통과한다.

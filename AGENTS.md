@@ -44,7 +44,7 @@ The `analyze-stock` skill reads the local analyst-report archive at
 `~/1_Investment/리포트/<초성>/<종목명>/` (PDF only, outside this repository). Override
 the location with `INVAGENT_REPORT_ARCHIVE`; never hardcode an absolute path in
 skill files. It also searches the accumulated briefing archive under
-`output/telegram-daily/` (index, theme files, daily briefings) through
+`output/daily-digest/` (index, theme files, daily briefings) through
 `.agents/skills/analyze-stock/scripts/find_mentions.py`, which emits `path:line`
 locators rather than content — the archive's index and theme lines run to
 several kilobytes each and must be read from the original file, never truncated.
@@ -175,9 +175,11 @@ re-running one step alone, and each section remains the authority on how to read
 The `daily-digest` skill builds one briefing a day out of every daily input —
 saved Telegram messages, market signals, the cash-deployment ladder, the
 portfolio snapshot, peak drawdown and account MDD — which is why it is not named
-after Telegram. It owns everything under `output/telegram-daily/`; that path is
-unchanged, because it holds an accumulated archive that `analyze-stock` searches
-by name. `uv run invagent fetch-messages` writes the raw export to
+after Telegram. It owns everything under `output/daily-digest/`, which was
+`output/telegram-daily/` until the skill was renamed. `output/` is gitignored, so
+that directory moved on disk rather than in a commit: a checkout that predates the
+rename still has the old name, and `find_mentions` will report an empty archive
+until it is moved. `uv run invagent fetch-messages` writes the raw export to
 `raw/<yyyy-mm-dd>_raw.md`; the finished briefing goes to
 `<yyyy-mm>/<yyyy-mm-dd>.md`, the rolling cross-day index to
 `monthly_context.md`, and the full text of each running theme to
@@ -295,7 +297,7 @@ code that rewrites them.
 deployment ladder** — the standing answer to "when do I put the cash to work",
 fixed on 2026-09-03 as eight conditions gating three tranches rather than as a
 date. The ladder itself is registered in the `매크로 흐름` section of
-`output/telegram-daily/monthly_context.md`; the script is its enforcement arm, so
+`output/daily-digest/monthly_context.md`; the script is its enforcement arm, so
 the briefing quotes its verdict instead of re-grading the conditions by eye. Index
 moving averages come from the same unauthenticated Naver `siseJson` endpoint as
 `stage-analysis`, through `invagent.datafeed.naver.fetch_bars` and

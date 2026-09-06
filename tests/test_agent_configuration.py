@@ -1722,7 +1722,7 @@ def test_no_skill_still_cites_the_retired_minus_eight_percent_line() -> None:
         SKILLS_ROOT / "daily-digest" / "SKILL.md",
         SKILLS_ROOT / "daily-digest" / "scripts" / "extract_portfolio.py",
         REPO_ROOT / "template" / "stock_analysis.md",
-        REPO_ROOT / "template" / "telegram_daily.md",
+        REPO_ROOT / "template" / "daily_digest.md",
     ]
     for path in targets:
         text = path.read_text(encoding="utf-8")
@@ -1938,7 +1938,7 @@ BROKEN_MD = """알파전자 관련 메모지만 불릿 구조가 없다.
 
 
 def _build_telegram_archive(root: Path) -> Path:
-    archive = root / "telegram-daily"
+    archive = root / "daily-digest"
     (archive / "themes" / "archive").mkdir(parents=True)
     (archive / "2026-08").mkdir(parents=True)
 
@@ -2671,7 +2671,7 @@ def test_daily_digest_documents_image_reading_step() -> None:
 
     assert "### 1-4단계: 이미지 판독 (OCR·차트 해석)" in skill
     # 이미지는 fetch 단계가 내려받고 판독은 에이전트가 파일 읽기 툴로 한다
-    assert "output/telegram-daily/media/" in skill
+    assert "output/daily-digest/media/" in skill
     assert "파일 읽기 툴로 직접 읽는다" in skill
     # raw 파일에 NUL 바이트가 섞여 있어 grep -a 없이는 마커를 못 찾는다
     assert "grep -an" in skill
@@ -2683,8 +2683,8 @@ def test_daily_digest_documents_image_reading_step() -> None:
     assert "(이미지 미확인)" in skill
     # 7단계가 미디어까지 정리한다
     assert "### 7단계: 과거 raw·미디어 정리" in skill
-    assert "output/telegram-daily/media \\" in skill
-    assert "output/telegram-daily/media/{today}/**" in skill
+    assert "output/daily-digest/media \\" in skill
+    assert "output/daily-digest/media/{today}/**" in skill
 
 
 def test_image_pending_marker_matches_the_fetcher_constant() -> None:

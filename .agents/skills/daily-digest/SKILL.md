@@ -23,7 +23,7 @@ description: 하루치 투자 입력을 한 편의 브리핑으로 묶는 스킬
 
 오늘 날짜를 `YYYY-MM-DD` 형식으로 확인한 뒤, 아래 파일이 존재하는지 확인한다:
 ```
-output/telegram-daily/raw/<today>_raw.md
+output/daily-digest/raw/<today>_raw.md
 ```
 
 - **파일이 없으면**: 아래 명령어로 먼저 메시지를 가져온다
@@ -34,7 +34,7 @@ output/telegram-daily/raw/<today>_raw.md
 
 `--days` 인자를 사용자가 지정했다면 해당 값을 사용하되, 파일명 날짜는 오늘 날짜 기준이다.
 
-첨부 이미지는 같은 명령이 `output/telegram-daily/media/<today>/`에 함께 내려받는다
+첨부 이미지는 같은 명령이 `output/daily-digest/media/<today>/`에 함께 내려받는다
 (`--no-download-images`로 끌 수 있다). 판독은 1-4단계에서 한다.
 
 ### 1-0단계: 준비 단계 일괄 실행
@@ -320,14 +320,14 @@ uv run python .agents/skills/daily-digest/scripts/peak_drawdown.py \
 ### 1-4단계: 이미지 판독 (OCR·차트 해석)
 
 raw 파일에는 텔레그램 첨부 이미지가 `이미지:` 블록으로 들어 있다. `fetch-messages`는
-파일을 `output/telegram-daily/media/<today>/`에 내려받고 판독은 하지 않으므로, 여기서
+파일을 `output/daily-digest/media/<today>/`에 내려받고 판독은 하지 않으므로, 여기서
 이미지를 직접 보고 텍스트와 차트 해석을 raw 파일에 적어 넣는다. 이 단계를 건너뛰면
 2단계 분류가 이미지에만 있는 정보(차트 캡처, 공시 캡처, 표)를 통째로 놓친다.
 
 **1) 판독 대상 수집**
 
 ```bash
-grep -an "\[분석 대기\]" -B 1 output/telegram-daily/raw/<today>_raw.md
+grep -an "\[분석 대기\]" -B 1 output/daily-digest/raw/<today>_raw.md
 ```
 
 - **`-a` 필수.** raw 파일에는 NUL 바이트가 섞여 있다 (PDF 링크 본문이 blockquote로
@@ -416,9 +416,9 @@ raw 파일 전체를 읽은 뒤 다음 기준으로 분류한다:
 **2단 구조**다 (2026-08-09 개편 — 단일 파일이 302KB까지 커져 한 번에 읽을 수 없게 된 문제 대응):
 
 ```
-output/telegram-daily/monthly_context.md          # 인덱스: 항목당 1줄 (~62KB, 1회 Read 가능)
-output/telegram-daily/themes/<slug>.md            # 테마 전문 (파일당 ≤40KB)
-output/telegram-daily/themes/archive/<slug>-<from>~<to>.md   # 30일 경과분
+output/daily-digest/monthly_context.md          # 인덱스: 항목당 1줄 (~62KB, 1회 Read 가능)
+output/daily-digest/themes/<slug>.md            # 테마 전문 (파일당 ≤40KB)
+output/daily-digest/themes/archive/<slug>-<from>~<to>.md   # 30일 경과분
 ```
 
 **읽기 순서 (필수)**:
@@ -514,13 +514,13 @@ output/telegram-daily/themes/archive/<slug>-<from>~<to>.md   # 30일 경과분
 
 ### 5단계: 브리핑 파일 저장
 
-`template/telegram_daily.md` 템플릿 구조를 따라 브리핑을 작성하고 **월별 서브 디렉토리** 아래에 저장한다:
+`template/daily_digest.md` 템플릿 구조를 따라 브리핑을 작성하고 **월별 서브 디렉토리** 아래에 저장한다:
 
 ```
-output/telegram-daily/<yyyy-mm>/<yyyy-mm-dd>.md
+output/daily-digest/<yyyy-mm>/<yyyy-mm-dd>.md
 ```
 
-예: 오늘이 2026-05-08이면 → `output/telegram-daily/2026-05/2026-05-08.md`
+예: 오늘이 2026-05-08이면 → `output/daily-digest/2026-05/2026-05-08.md`
 
 월 디렉토리가 없으면 먼저 생성한다 (`mkdir -p`). 날짜는 오늘 날짜 (`_raw.md` 파일명과 동일한 날짜).
 
@@ -616,21 +616,21 @@ output/telegram-daily/<yyyy-mm>/<yyyy-mm-dd>.md
 raw를 거쳐 브리핑·월간 컨텍스트에 텍스트로 남았다.
 
 **선행 조건 (안전장치)** — 둘 다 충족해야 정리 진행. 하나라도 없으면 스킵 + 사유 알림:
-- 오늘 브리핑 `output/telegram-daily/{yyyy-mm}/{today}.md` 존재 확인 (월별 서브 디렉토리 안)
-- 오늘 raw `output/telegram-daily/raw/{today}_raw.md` 존재 확인
+- 오늘 브리핑 `output/daily-digest/{yyyy-mm}/{today}.md` 존재 확인 (월별 서브 디렉토리 안)
+- 오늘 raw `output/daily-digest/raw/{today}_raw.md` 존재 확인
 
 **삭제 명령**:
 ```bash
 TODAY=$(date +%Y-%m-%d)
-find output/telegram-daily/raw \
+find output/daily-digest/raw \
      -maxdepth 1 -type f -name '*_raw.md' \
      ! -name "${TODAY}_raw.md" -print -delete
-find output/telegram-daily/media \
+find output/daily-digest/media \
      -mindepth 1 -maxdepth 1 -type d \
      ! -name "${TODAY}" -print -exec rm -rf {} +
 ```
 
-- 저장소 루트에서 `output/telegram-daily/raw` 상대 경로를 사용한다.
+- 저장소 루트에서 `output/daily-digest/raw` 상대 경로를 사용한다.
 - **사용자 승인을 기다리지 않고 바로 삭제한다** (2026-08-07 사용자 지시). 선행
   조건 2개만 충족하면 확인 질문 없이 `-delete`를 실행하고, 삭제된 경로를 사후
   보고한다. 선행 조건이 하나라도 미충족이면 삭제하지 않고 사유만 알린다.
@@ -641,11 +641,11 @@ find output/telegram-daily/media \
   없으면 `find`가 에러를 내는데, 내려받은 이미지가 없었다는 뜻이므로 무시하고 진행한다.
 
 **보존 대상 (절대 삭제 금지)**:
-- `output/telegram-daily/raw/{today}_raw.md`
-- `output/telegram-daily/media/{today}/**` (오늘 내려받은 이미지)
-- `output/telegram-daily/{yyyy-mm}/{YYYY-MM-DD}.md` (월별 서브 디렉토리 안 브리핑 — raw 디렉토리 밖, 자동 보존)
-- `output/telegram-daily/monthly_context.md` (인덱스, 자동 보존)
-- `output/telegram-daily/themes/**` (테마 전문·아카이브, raw 디렉토리 밖 — 자동 보존)
+- `output/daily-digest/raw/{today}_raw.md`
+- `output/daily-digest/media/{today}/**` (오늘 내려받은 이미지)
+- `output/daily-digest/{yyyy-mm}/{YYYY-MM-DD}.md` (월별 서브 디렉토리 안 브리핑 — raw 디렉토리 밖, 자동 보존)
+- `output/daily-digest/monthly_context.md` (인덱스, 자동 보존)
+- `output/daily-digest/themes/**` (테마 전문·아카이브, raw 디렉토리 밖 — 자동 보존)
 - `output/portfolio/**` (포트폴리오 스냅샷 — raw 디렉토리 밖, 전일 대비 비교용으로 삭제하지 않는다)
 
 **사용자 보고**: 삭제된 파일 수, 보존된 오늘 raw 경로 출력.
@@ -670,7 +670,7 @@ uv run python .agents/skills/daily-digest/scripts/portfolio_diff.py \
 
 ## 출력 품질 기준
 
-섹션별 슬롯·분량은 `template/telegram_daily.md`가 정본이다. 여기는 템플릿이 규정하지 않는
+섹션별 슬롯·분량은 `template/daily_digest.md`가 정본이다. 여기는 템플릿이 규정하지 않는
 **내용 품질 기준**만 정의한다.
 
 - **섹션 경계 (중복 방지 핵심 룰)**

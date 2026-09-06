@@ -135,7 +135,7 @@ Generated output:
 
 ```text
 output/
-  telegram-daily/
+  daily-digest/
     raw/YYYY-MM-DD_raw.md         # 원본 (오늘자만 유지, 브리핑 후 자동 정리)
     YYYY-MM/YYYY-MM-DD.md         # 일일 브리핑 (월별 서브 디렉토리)
     monthly_context.md            # 월간 누적 인덱스

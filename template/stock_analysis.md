@@ -344,7 +344,7 @@
 | StockEasy | `stock-info/[티커]` — [수집 항목] | {yyyy-mm-dd} |
 | StockEasy 리포트 | `securities-reports?stock_code=[티커]` — [증권사/제목] | {yyyy-mm-dd} |
 | 웹 | [제목](URL) | {yyyy-mm-dd} |
-| 아카이브 | `output/telegram-daily/…:{줄번호}` | {yyyy-mm-dd} |
+| 아카이브 | `output/daily-digest/…:{줄번호}` | {yyyy-mm-dd} |
 | 포트폴리오 | `output/portfolio/{yyyy-mm-dd}.md` | {yyyy-mm-dd} |
 
 **미수집**

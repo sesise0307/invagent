@@ -6,10 +6,10 @@
 크기가 폭발하고, `daily-digest` 스킬은 이 파일들을 잘라 읽는 것을 금지한다.
 
 스캔 대상:
-    output/telegram-daily/monthly_context.md        누적 인덱스 (현재 유효 판정)
-    output/telegram-daily/themes/<slug>.md          테마 전문 (일자 서브불릿)
-    output/telegram-daily/themes/archive/**.md      롤오프분
-    output/telegram-daily/<YYYY-MM>/<YYYY-MM-DD>.md 일일 브리핑
+    output/daily-digest/monthly_context.md        누적 인덱스 (현재 유효 판정)
+    output/daily-digest/themes/<slug>.md          테마 전문 (일자 서브불릿)
+    output/daily-digest/themes/archive/**.md      롤오프분
+    output/daily-digest/<YYYY-MM>/<YYYY-MM-DD>.md 일일 브리핑
 
 기본 경로는 저장소 루트의 `output/` 이며 INVAGENT_OUTPUT_DIR 로 덮어쓸 수 있다.
 표준 라이브러리만 사용한다.
@@ -406,7 +406,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--count-only", action="store_true", help="요약만 출력")
     args = parser.parse_args(argv)
 
-    archive = output_dir() / "telegram-daily"
+    archive = output_dir() / "daily-digest"
     if not archive.is_dir():
         sys.stdout.write(
             f"# 아카이브 검색 — {args.stock}\n\n"

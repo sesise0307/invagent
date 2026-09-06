@@ -64,8 +64,8 @@ def fetch_messages_cmd(days, fetch_links, download_images):
     """Fetch saved messages from Telegram.
 
     Retrieves messages from Telegram 'Saved Messages' channel.
-    Saves formatted output to output/telegram-daily/raw/<YYYY-MM-DD>_raw.md
-    and attached images to output/telegram-daily/media/<YYYY-MM-DD>/
+    Saves formatted output to output/daily-digest/raw/<YYYY-MM-DD>_raw.md
+    and attached images to output/daily-digest/media/<YYYY-MM-DD>/
     """
     try:
         config = Config.from_env()
@@ -74,7 +74,7 @@ def fetch_messages_cmd(days, fetch_links, download_images):
         # The raw file name and the media directory must share one date string,
         # or the skill's cleanup step retires them on different days.
         today = datetime.now().strftime("%Y-%m-%d")
-        media_dir = config.telegram_media_dir(today) if download_images else None
+        media_dir = config.digest_media_dir(today) if download_images else None
 
         client_manager = TelegramClientManager()
         fetcher = MessageFetcher(config, client_manager)
@@ -92,7 +92,7 @@ def fetch_messages_cmd(days, fetch_links, download_images):
         formatted_content = fetcher.format_messages_markdown(messages)
 
         # Create output directory
-        output_dir = config.telegram_daily_dir()
+        output_dir = config.digest_raw_dir()
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Save to file

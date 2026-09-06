@@ -28,17 +28,17 @@ class Config:
     output_dir: Path
     default_channels: tuple[str, ...] = field(default_factory=lambda: DEFAULT_CHANNELS)
 
-    def telegram_daily_dir(self) -> Path:
-        """Return the directory used for daily Telegram exports."""
-        return self.output_dir / "telegram-daily/raw"
+    def digest_raw_dir(self) -> Path:
+        """Return the directory holding raw daily exports."""
+        return self.output_dir / "daily-digest/raw"
 
-    def telegram_media_dir(self, date_str: str) -> Path:
+    def digest_media_dir(self, date_str: str) -> Path:
         """Return the directory holding downloaded media for one export date.
 
         Sibling of the raw export directory so the daily-digest cleanup
         step can retire both on the same schedule.
         """
-        return self.output_dir / "telegram-daily/media" / date_str
+        return self.output_dir / "daily-digest/media" / date_str
 
     @classmethod
     def from_env(cls) -> "Config":

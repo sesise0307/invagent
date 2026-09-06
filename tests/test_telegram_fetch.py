@@ -481,14 +481,14 @@ def test_format_messages_markdown_renders_pending_image_marker():
                 "text": "차트 첨부",
                 "links_content": "",
                 "is_forwarded": True,
-                "images": ["output/telegram-daily/media/2026-09-03/1.jpg"],
+                "images": ["output/daily-digest/media/2026-09-03/1.jpg"],
             }
         ]
     )
 
     assert "**[포워드]**" in formatted
     assert "이미지:" in formatted
-    assert "> 파일: output/telegram-daily/media/2026-09-03/1.jpg" in formatted
+    assert "> 파일: output/daily-digest/media/2026-09-03/1.jpg" in formatted
     assert f"> {PENDING_IMAGE_MARKER}" in formatted
 
 

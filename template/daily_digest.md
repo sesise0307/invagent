@@ -77,7 +77,7 @@
 ## 💡 오늘의 투자 조언
 
 > **핵심 원칙**: 평정심(목계), 베팅력 및 홀딩력이, 오늘 원금(항상 zero base에서 생각), 수익은 길게 손실은 짧게, 분할 매도(수익 쿠션 확보), 2차적 사고, 풍림화산
-> 오늘 메시지 + 월간 누적 컨텍스트(인덱스 `output/telegram-daily/monthly_context.md` + 오늘 raw와 겹치는 `output/telegram-daily/themes/<slug>.md`) 기반으로 가장 중요한 테마 1~2개를 골라 아래 세 관점에서 조언.
+> 오늘 메시지 + 월간 누적 컨텍스트(인덱스 `output/daily-digest/monthly_context.md` + 오늘 raw와 겹치는 `output/daily-digest/themes/<slug>.md`) 기반으로 가장 중요한 테마 1~2개를 골라 아래 세 관점에서 조언.
 
 ### 🏛️ 가치투자 관점 (버핏 / 멍거 / 린치)
 

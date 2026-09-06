@@ -226,7 +226,7 @@ uv run python .agents/skills/stage-analysis/scripts/stage_scan.py "<5단계가 �
 
 ### 7단계 — 내 아카이브 이력
 
-이미 내가 이 종목에 대해 써 둔 것을 찾는다. 대상은 `output/telegram-daily/`의
+이미 내가 이 종목에 대해 써 둔 것을 찾는다. 대상은 `output/daily-digest/`의
 누적 인덱스 `monthly_context.md` · 테마 파일 `themes/` · 일일 브리핑 `<YYYY-MM>/<YYYY-MM-DD>.md`.
 
 ```bash
