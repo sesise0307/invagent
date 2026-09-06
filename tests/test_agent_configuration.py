@@ -1562,6 +1562,24 @@ def test_market_data_fetch_passes_an_ambiguous_name_back(
     assert "후보 다수" in capsys.readouterr().err
 
 
+def test_every_skill_script_is_named_by_a_skill_document() -> None:
+    """호출처 없는 스크립트는 있는지도 모른 채 낡는다.
+
+    스크립트를 두는 것과 언제 쓰는지 적는 것은 한 쌍이다. SKILL.md 어디에도 이름이 없으면
+    모델은 그것을 영영 부르지 않는다.
+    """
+    documents = "\n".join(
+        path.read_text(encoding="utf-8") for path in SKILLS_ROOT.glob("*/SKILL.md")
+    )
+    undocumented = sorted(
+        str(path.relative_to(SKILLS_ROOT))
+        for path in SKILLS_ROOT.glob("*/scripts/*.py")
+        if path.name not in documents
+    )
+
+    assert not undocumented, f"어느 SKILL.md에도 없는 스크립트: {undocumented}"
+
+
 def test_collection_mechanics_are_documented_in_one_skill() -> None:
     """수집 방법은 `market-data`가 정본이다.
 

@@ -507,6 +507,30 @@ w_s = 1 - w_c
 
 ---
 
+## 보조 도구
+
+11단계의 파일 조작과 실행 기록을 손이 아니라 스크립트로 한다. 둘 다 원자적으로 쓰고,
+어긋난 상태를 만나면 덮지 않고 멈춘다.
+
+**`scripts/report_update.py`** — 2단계가 정한 승계 규칙의 집행부. 읽은 뒤 원본이 바뀌었으면
+(`--expected-sha256` 불일치) `source changed since it was read`로 거절하고, 목표 경로에 다른
+파일이 이미 있으면 덮지 않는다. 손으로 `mv` 하다 보면 이 두 가지를 놓친다.
+
+```bash
+uv run python .agents/skills/analyze-stock/scripts/report_update.py \
+  --source <승계할 보고서> --target <오늘 날짜 경로> --update <추가할 본문.md> \
+  [--expected-sha256 <읽은 시점 해시>]
+```
+
+**`scripts/run_manifest.py`** — 이번 실행에서 어느 단계가 돌았고 어느 단계가 빠졌는지를
+기계가 읽을 수 있게 남긴다. 부분 수집으로 끝난 보고서를 나중에 볼 때 "이 값이 없는 것"과
+"이 단계를 안 돌린 것"을 구분하는 근거가 된다.
+
+```bash
+uv run python .agents/skills/analyze-stock/scripts/run_manifest.py <매니페스트 경로> \
+  --run-id <실행 식별자> --step 6=ok:1200 --step 5=skipped
+```
+
 ## 출력 품질 기준
 
 보고서 본문은 **caveman full**로 작성한다. 구조는 `template/stock_analysis.md`가, 내용 품질은 아래가 정한다.

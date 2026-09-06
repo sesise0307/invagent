@@ -648,6 +648,22 @@ find output/telegram-daily/media \
 
 ---
 
+## 보조 도구 — 스냅샷 간 수량 변화
+
+**`scripts/portfolio_diff.py`** — 어제 스냅샷과 오늘 스냅샷 사이의 **보유 수량 변화**를 구조화한다.
+"어제 200주 → 오늘 100주"까지가 이 도구의 답이고, 그것을 매도로 부르지 않는다. 매매·입출금·
+기업행위는 `--events`로 사용자가 준 것만 태그로 붙는다. 수량이 준 이유를 추정해 브리핑에 적으면
+액면분할이나 이관을 매도로 기록하게 된다.
+
+```bash
+uv run python .agents/skills/summarize-telegram/scripts/portfolio_diff.py \
+  output/portfolio/<어제>.md output/portfolio/<오늘>.md \
+  [--events <이벤트.json>] [--run-manifest <매니페스트.json>] [--json]
+```
+
+- 1-3단계에서 오늘 스냅샷을 만든 뒤에 돌린다. 변화가 없으면 출력도 비어 있다.
+- 변화가 있는데 사용자가 준 이벤트로 설명되지 않으면, 브리핑에 **사실만** 적고 사유는 되묻는다.
+
 ## 출력 품질 기준
 
 섹션별 슬롯·분량은 `template/telegram_daily.md`가 정본이다. 여기는 템플릿이 규정하지 않는
