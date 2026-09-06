@@ -7,7 +7,7 @@
 
 데이터 출처
   - 지수 일봉(150일선·20주선·연속 유지일): 네이버 `api.finance.naver.com/siseJson.naver`
-    (`stage_analysis.stage_scan.fetch_bars` 재사용, 인증 불필요)
+    (`invagent.datafeed.naver.fetch_bars` 재사용, 인증 불필요)
   - 분산일·랠리일차·FTD·200일선 하회 비율: StockEasy `stockdata/api/v1/market/*`
     (`fetch_market_signals.fetch_api` 재사용, 인증 불필요)
   - VKOSPI·수급 주체별 순매수: 자동 수집 경로가 없어 `--vkospi`·`--net-buy-days`로 받는다.
@@ -21,16 +21,15 @@ import sys
 from datetime import date
 from pathlib import Path
 
-_SKILLS_ROOT = Path(__file__).resolve().parents[2]
-for _extra in ("stage-analysis/scripts", "summarize-telegram/scripts"):
-    _path = str(_SKILLS_ROOT / _extra)
-    if _path not in sys.path:
-        sys.path.insert(0, _path)
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
 
-from fetch_market_signals import fetch_api  # noqa: E402  (경로 주입 후에만 import된다)
-from stage_scan import fetch_bars, sma  # noqa: E402
+from fetch_market_signals import fetch_api  # noqa: E402  (같은 스킬 폴더)
 
 from invagent.datafeed import cache as http_cache
+from invagent.datafeed.naver import fetch_bars
+from invagent.datafeed.series import sma
 
 # --- 사다리 상수 (2026-09-03 확정) -------------------------------------------
 # 사다리를 세운 날. FTD는 이 날짜보다 뒤에 찍힌 것만 새 신호로 인정한다.

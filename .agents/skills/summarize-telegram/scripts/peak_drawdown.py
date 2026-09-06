@@ -23,7 +23,7 @@
 요구하는 추세 훼손 감지를 이 축들이 담당한다.
 
 데이터 소스:
-- 일봉 OHLCV — 네이버 금융 `siseJson` (무인증). `stage-analysis/scripts/stage_scan.py` 재사용.
+- 일봉 OHLCV — 네이버 금융 `siseJson` (무인증). `invagent.datafeed.naver` 재사용.
 - 티커 해석 — `context/ticker_overrides.md` → `analyze-stock/scripts/fetch_stock_info.py` 순.
 - 계좌 기록 고점 — `output/portfolio/*.md` 스냅샷의 `## 보유` 표 (외부 조회 없음).
 
@@ -36,7 +36,6 @@
 from __future__ import annotations
 
 import argparse
-import inspect
 import json
 import os
 import re
@@ -45,15 +44,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-_SKILLS_ROOT = Path(__file__).resolve().parents[2]
-for _extra in ("stage-analysis/scripts",):
-    _path = str(_SKILLS_ROOT / _extra)
-    if _path not in sys.path:
-        sys.path.insert(0, _path)
-
-import stage_scan  # noqa: E402
-
-from invagent.datafeed import cache as http_cache, stockeasy
+from invagent.datafeed import cache as http_cache, naver, stockeasy
 
 # --- 판정 임계값 -----------------------------------------------------------
 # 전고점 창과 밴드는 이 스킬의 운영 기준이다. 바꾸려면 SKILL.md의 밴드→룰 매핑도 함께 고친다.
@@ -273,12 +264,7 @@ def analyze_holdings(
     pending = [e for e in results if e.get("code")]
     if pending:
         def fetch(entry: dict):
-            params = inspect.signature(stage_scan.fetch_bars).parameters
-            if "asof" in params:
-                return stage_scan.fetch_bars(
-                    entry["code"], FETCH_CALENDAR_DAYS, asof=today or None
-                )
-            return stage_scan.fetch_bars(entry["code"], FETCH_CALENDAR_DAYS)
+            return naver.fetch_bars(entry["code"], FETCH_CALENDAR_DAYS, asof=today or None)
 
         with ThreadPoolExecutor(max_workers=min(MAX_FETCH_WORKERS, len(pending))) as pool:
             fetched = list(pool.map(fetch, pending))

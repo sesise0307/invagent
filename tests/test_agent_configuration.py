@@ -2186,9 +2186,9 @@ def test_peak_drawdown_unresolved_ticker_does_not_block_others(
         ),
     )
     monkeypatch.setattr(
-        module.stage_scan,
+        module.naver,
         "fetch_bars",
-        lambda code, days: (_bars([("20260601", 100_000.0), ("20260828", 60_000.0)]), None),
+        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 60_000.0)]), None),
     )
 
     results = module.analyze_holdings(module.parse_holdings(PEAK_SNAPSHOT), {})
@@ -2226,7 +2226,7 @@ def test_peak_drawdown_fetch_failure_is_non_blocking(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(
         module.stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
     )
-    monkeypatch.setattr(module.stage_scan, "fetch_bars", lambda code, days: ([], "HTTP 500"))
+    monkeypatch.setattr(module.naver, "fetch_bars", lambda code, days, asof=None: ([], "HTTP 500"))
 
     results = module.analyze_holdings(module.parse_holdings(PEAK_SNAPSHOT), {})
 
@@ -2305,9 +2305,9 @@ def test_render_lists_stock_approaches_per_axis(monkeypatch: pytest.MonkeyPatch)
     )
     # 52주 축 = -9.0%(-10% 임박) / 기록 축 = -9.5%(-10% 임박)
     monkeypatch.setattr(
-        module.stage_scan,
+        module.naver,
         "fetch_bars",
-        lambda code, days: (_bars([("20260601", 100_000.0), ("20260828", 91_000.0)]), None),
+        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 91_000.0)]), None),
     )
     history = {"알파전자": [("2026-08-10", 77_348.0)]}  # 현재가 ₩70,000 → -9.5%
 
@@ -2330,9 +2330,9 @@ def test_render_omits_approach_line_when_nothing_is_close(
         module.stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
     )
     monkeypatch.setattr(
-        module.stage_scan,
+        module.naver,
         "fetch_bars",
-        lambda code, days: (_bars([("20260601", 100_000.0), ("20260828", 99_000.0)]), None),
+        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 99_000.0)]), None),
     )
 
     section = module.render(
@@ -2429,7 +2429,7 @@ def test_peak_drawdown_fetches_holdings_concurrently_keeping_order(
     live, peak_live = 0, 0
     lock = threading.Lock()
 
-    def slow_fetch(code, days):
+    def slow_fetch(code, days, asof=None):
         nonlocal live, peak_live
         with lock:
             live += 1
@@ -2439,7 +2439,7 @@ def test_peak_drawdown_fetches_holdings_concurrently_keeping_order(
             live -= 1
         return [{"date": "20260903", "close": 100.0}], None
 
-    monkeypatch.setattr(module.stage_scan, "fetch_bars", slow_fetch)
+    monkeypatch.setattr(module.naver, "fetch_bars", slow_fetch)
 
     holdings = [
         {"종목": f"종목{i}", "섹터": "반도체", "현재가": "90", "수익률": "0%", "비중": "1%"}
@@ -2501,9 +2501,9 @@ def test_peak_drawdown_append_is_idempotent(
         module.stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
     )
     monkeypatch.setattr(
-        module.stage_scan,
+        module.naver,
         "fetch_bars",
-        lambda code, days: (_bars([("20260601", 100_000.0), ("20260828", 90_000.0)]), None),
+        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 90_000.0)]), None),
     )
     snapshot = tmp_path / "2026-08-28.md"
     snapshot.write_text(PEAK_SNAPSHOT, encoding="utf-8")
@@ -2704,9 +2704,9 @@ def test_render_names_both_axes_and_forbids_summing(monkeypatch: pytest.MonkeyPa
         module.stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
     )
     monkeypatch.setattr(
-        module.stage_scan,
+        module.naver,
         "fetch_bars",
-        lambda code, days: (_bars([("20260601", 100_000.0), ("20260828", 60_000.0)]), None),
+        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 60_000.0)]), None),
     )
     # 52주 축은 -40%(⛔), 기록 축은 -12.5%(🟡) — 두 축이 두 밴드만큼 어긋나는 상황
     history = {"알파전자": [("2026-08-10", 80_000.0)], "베타파마": [("2026-08-10", 80_000.0)]}

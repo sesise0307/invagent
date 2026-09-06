@@ -30,10 +30,14 @@ import urllib.request
 from datetime import date, timedelta
 from pathlib import Path
 
-from invagent.datafeed import cache as http_cache, stockeasy
+from invagent.datafeed import cache as http_cache, naver, stockeasy
+from invagent.datafeed.naver import fetch_bars, parse_sise
+from invagent.datafeed.naver import parse_date as _parse_date
+from invagent.datafeed.series import sma
 
-SISE_URL = "https://api.finance.naver.com/siseJson.naver"
-TIMEOUT = 20
+# 출력문과 테스트가 쓰는 재노출.
+SISE_URL = naver.SISE_URL
+TIMEOUT = naver.TIMEOUT
 
 # --- 판정 임계값 -----------------------------------------------------------
 # 리포트는 "150일선 위/아래", "평탄", "저점·고점이 높아진다"를 말로만 규정하고 수치를 주지
@@ -75,85 +79,6 @@ STAGE_ACTION = {
 
 
 # --- 시세 수집 -------------------------------------------------------------
-
-
-def parse_sise(text: str) -> list[dict]:
-    """`siseJson` 응답을 일봉 리스트로 바꾼다.
-
-    응답은 표준 JSON이 아니라 작은따옴표를 쓴 파이썬 리터럴이다. 헤더 행을 버리고
-    날짜 오름차순 리스트를 돌려준다.
-    """
-    raw = json.loads(text.replace("'", '"'))
-    bars = []
-    for row in raw:
-        if not row or str(row[0]).strip() in ("날짜", ""):
-            continue
-        try:
-            bars.append(
-                {
-                    "date": str(row[0]),
-                    "open": float(row[1]),
-                    "high": float(row[2]),
-                    "low": float(row[3]),
-                    "close": float(row[4]),
-                    "volume": float(row[5]),
-                }
-            )
-        except (IndexError, TypeError, ValueError):
-            continue
-    bars.sort(key=lambda b: b["date"])
-    return bars
-
-
-def _parse_date(value: date | str, field: str = "date") -> date:
-    """Accept ISO or compact YYYYMMDD dates used by existing bar payloads."""
-    if isinstance(value, date):
-        return value
-    if not isinstance(value, str):
-        raise ValueError(f"{field} must be a date")
-    try:
-        return date.fromisoformat(value) if "-" in value else date.strptime(value, "%Y%m%d")
-    except (TypeError, ValueError, AttributeError):
-        # date.strptime is only available on newer Python versions.
-        try:
-            from datetime import datetime
-            return datetime.strptime(value, "%Y%m%d").date()
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{field} must be YYYY-MM-DD or YYYYMMDD") from exc
-
-
-def fetch_bars(code: str, days: int, asof: date | str | None = None) -> tuple[list[dict], str | None]:
-    """네이버 일봉을 받아온다. 실패하면 ([], 사유)."""
-    end = _parse_date(asof, "asof") if asof is not None else date.today()
-    start = end - timedelta(days=days)
-    params = (
-        f"?symbol={code}&requestType=1"
-        f"&startTime={start.strftime('%Y%m%d')}&endTime={end.strftime('%Y%m%d')}&timeframe=day"
-    )
-    url = SISE_URL + params
-    # peak_drawdown은 보유 종목마다, cash_deploy_check은 지수마다 이 함수를 부른다.
-    # 무인증 엔드포인트라 인증 축은 항상 anon이다.
-    cached = http_cache.load(url, authed=False)
-    if cached is not None:
-        bars = parse_sise(cached.decode("utf-8"))
-        if bars:
-            return bars, None
-
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com/"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            body = resp.read()
-        bars = parse_sise(body.decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        return [], f"HTTP {e.code}"
-    except Exception as e:  # 네트워크 오류·파싱 실패
-        return [], str(e)[:80]
-    if bars:
-        http_cache.store(url, body, authed=False)
-    return bars, None
 
 
 def weekly_last_closes(bars: list[dict], asof: date | str | None = None) -> list[dict]:
@@ -226,18 +151,6 @@ def weekly_sma(bars: list[dict], weeks: int = WEEK_COUNT,
 
 
 # --- 가격 지표 (순수 함수) --------------------------------------------------
-
-
-def sma(values: list[float], window: int) -> list[float | None]:
-    """단순이동평균. 구간이 안 차는 앞부분은 None."""
-    out: list[float | None] = []
-    total = 0.0
-    for i, v in enumerate(values):
-        total += v
-        if i >= window:
-            total -= values[i - window]
-        out.append(total / window if i >= window - 1 else None)
-    return out
 
 
 def ma_slope(ma: list[float | None], window: int = SLOPE_WINDOW) -> tuple[str, float | None]:
