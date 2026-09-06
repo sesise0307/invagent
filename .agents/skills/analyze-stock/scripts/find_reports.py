@@ -18,7 +18,8 @@ import argparse
 import os
 import re
 import sys
-import unicodedata
+
+from invagent.datafeed.text import nfc
 from datetime import date
 from pathlib import Path
 
@@ -32,11 +33,6 @@ _FOLD = {"ㄲ": "ㄱ", "ㄸ": "ㄷ", "ㅃ": "ㅂ", "ㅆ": "ㅅ", "ㅉ": "ㅈ"}
 LATIN_DIR = "A-Z"
 # 종목 폴더가 아니라 파일명 매칭으로만 훑는 특수 폴더 접두사
 AUX_PREFIX = "_"
-
-
-def nfc(text: str) -> str:
-    """macOS 파일명은 NFD로 저장된다. 비교 전 NFC로 정규화한다."""
-    return unicodedata.normalize("NFC", text)
 
 
 def archive_root() -> Path:
@@ -60,7 +56,11 @@ def chosung_dir(name: str) -> str:
 
 
 def _key(name: str) -> str:
-    """비교용 키 — NFC + 소문자 + 공백/구두점 제거."""
+    """비교용 키 — NFC + 소문자 + 공백/구두점 제거.
+
+    `datafeed.text.norm`보다 구두점 범위가 좁다. 여기서 비교하는 것은 아카이브의 실제
+    폴더·파일 이름이고, 괄호는 그 이름의 일부라 지우면 다른 종목과 섞인다.
+    """
     return re.sub(r"[\s._·\-]+", "", nfc(name).lower())
 
 

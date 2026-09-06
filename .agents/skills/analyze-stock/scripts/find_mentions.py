@@ -18,14 +18,14 @@
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import sys
-import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+from invagent.datafeed.env import output_dir
+from invagent.datafeed.text import nfc, norm as _key
+
 INDEX_NAME = "monthly_context.md"
 THEMES_DIR = "themes"
 
@@ -48,20 +48,7 @@ _MONTH_DIR_RE = re.compile(r"^\d{4}-\d{2}$")
 _DAILY_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.md$")
 
 
-def nfc(text: str) -> str:
-    """macOS 파일명·본문 정규화. 비교 전에 항상 통과시킨다."""
-    return unicodedata.normalize("NFC", text)
 
-
-def _key(text: str) -> str:
-    """비교용 키 — NFC + 소문자 + 공백/구두점 제거."""
-    return re.sub(r"[\s._·\-()\[\]{},;:'\"]+", "", nfc(text).lower())
-
-
-def output_dir() -> Path:
-    """아카이브가 담긴 output 디렉터리. 환경변수 우선."""
-    override = os.environ.get("INVAGENT_OUTPUT_DIR")
-    return Path(override).expanduser() if override else REPO_ROOT / "output"
 
 
 @dataclass

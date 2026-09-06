@@ -21,19 +21,19 @@
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import sys
-import unicodedata
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
+
+from invagent.datafeed.env import output_dir
+from invagent.datafeed.text import nfc, norm as _key
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from find_reports import chosung_dir  # noqa: E402  (같은 스크립트 폴더)
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
 REPORTS_SUBDIR = "reports"
 STOCK_DIR = "종목"
 SECTOR_DIR = "산업"
@@ -45,20 +45,7 @@ _STOCK_RE = re.compile(r"^(.+)_(\d{4}-\d{2}-\d{2})$")
 _DATED_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})_(.+)$")
 
 
-def nfc(text: str) -> str:
-    """macOS 파일명은 NFD로 저장된다. 비교 전 NFC로 정규화한다."""
-    return unicodedata.normalize("NFC", text)
 
-
-def _key(text: str) -> str:
-    """비교용 키 — NFC + 소문자 + 공백/구두점 제거."""
-    return re.sub(r"[\s._·\-()\[\]{},;:'\"]+", "", nfc(text).lower())
-
-
-def output_dir() -> Path:
-    """보고서가 담긴 output 디렉터리. 환경변수 우선."""
-    override = os.environ.get("INVAGENT_OUTPUT_DIR")
-    return Path(override).expanduser() if override else REPO_ROOT / "output"
 
 
 @dataclass
