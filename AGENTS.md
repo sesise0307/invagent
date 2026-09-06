@@ -3,7 +3,9 @@
 This repository contains a personal investment-decision support package. Use the
 project skills for investment advice, single-stock analysis, price-stage
 judgement, Telegram briefings, monthly Notion reviews, and OpenDART research
-instead of recreating those workflows in a prompt.
+instead of recreating those workflows in a prompt. When the question is where a
+piece of external data comes from — an endpoint, a credential, the response cache —
+read the `market-data` skill rather than tracing the scripts.
 
 At the start of each session, activate the installed `caveman` skill at `full`
 intensity. In Codex use `$caveman:caveman full`; in Claude Code use
@@ -14,12 +16,26 @@ professional language.
 
 Core package code lives under `src/invagent/`. Keep shared configuration and
 Telegram client setup in `src/invagent/core/`, Telegram fetch logic in
-`src/invagent/telegram/`, and stock tracking in `src/invagent/tracking/`. The
-CLI entry point is `src/invagent/cli.py`. Tests mirror the package in `tests/`.
-Runtime outputs go to `output/`, reusable templates to `template/`, reference
-context to `context/`, and design notes to `docs/`. Curated reference files in
-`context/` are checked into the repository: `context/my_rules.md` holds the
-user's personal risk-management rules, `context/interested_stocks.md` holds the
+`src/invagent/telegram/`, stock tracking in `src/invagent/tracking/`, and every
+other external-data path in `src/invagent/datafeed/`. The CLI entry point is
+`src/invagent/cli.py`. Tests mirror the package in `tests/`. Runtime outputs go to
+`output/`, reusable templates to `template/`, reference context to `context/`, and
+design notes to `docs/`.
+
+`src/invagent/datafeed/` is the only place that talks to a market data source.
+`http.get_json` is the single request path and every other module goes through it:
+`stockeasy` (the `/stockdata/api/v1/**` stock endpoints and the `.../market/**`
+ones, the `STOCKEASY_COOKIE` session, stock resolution, `fs_rows`), `naver`
+(daily OHLCV), `cache` (the shared response cache), `env` (repository root,
+`output/`, `.env` values), `series` (`sma`), `tickers` (override-first ticker
+resolution) and `snapshot` (portfolio snapshot tables). **Add a new source here,
+never in a skill script.** A skill script fetches nothing itself; it calls this
+package and spends its own lines on judgement and output. Nothing under
+`.agents/skills/` may import another skill's scripts — that cross-directory
+`sys.path` injection is gone and must not come back.
+
+Curated reference files in `context/` are checked into the repository:
+`context/my_rules.md` holds the user's personal risk-management rules, `context/interested_stocks.md` holds the
 tracked holdings list, and `context/ticker_overrides.md` pins stock names to
 tickers the StockEasy search cannot resolve. Skills read `context/my_rules.md`
 directly, so keep the rule numbering stable.
@@ -278,10 +294,11 @@ date. The ladder itself is registered in the `매크로 흐름` section of
 `output/telegram-daily/monthly_context.md`; the script is its enforcement arm, so
 the briefing quotes its verdict instead of re-grading the conditions by eye. Index
 moving averages come from the same unauthenticated Naver `siseJson` endpoint as
-`stage-analysis` (reusing its `fetch_bars`/`sma`), and distribution days, rally
-count, the last follow-through day, and the below-200-day-average breadth ratio
-come from `fetch_market_signals.fetch_api` — neither is reimplemented; both reach the network
-through `invagent.datafeed`. VKOSPI and
+`stage-analysis`, through `invagent.datafeed.naver.fetch_bars` and
+`datafeed.series.sma`; distribution days, rally count, the last follow-through
+day, and the below-200-day-average breadth ratio come from
+`fetch_market_signals.fetch_api`, which reads the StockEasy market endpoints
+through the same package. Neither is reimplemented. VKOSPI and
 the foreign/institutional net-buy streak have no unauthenticated source, so they
 arrive as `--vkospi` and `--net-buy-days`; without them those conditions stay `❓`
 and **`❓` is never promoted to a pass**, which is what keeps cash from leaving on
@@ -296,7 +313,8 @@ briefing; the `monthly_context.md` entry carries the condition table and is
 updated only when a tranche opens, the ladder is invalidated, or the conditions
 themselves change.
 
-`src/invagent/datafeed/cache.py` is the shared http_cache every network call routes through —
+`src/invagent/datafeed/cache.py` is the shared HTTP response cache every network call goes
+through —
 `datafeed.http.get_json` is the single request path, so `stockeasy`, `naver` and every skill
 script above get it without asking. It exists because one `analyze-stock` run pulls the ~128 KB
 `info-tab` payload twice (once for the quote, once for the stage verdict) and a re-run of a
@@ -307,8 +325,9 @@ whether a cookie was sent — never by the cookie's value, which is written nowh
 unauthenticated HTTP 401 body can never be replayed to an authenticated call. Only successful
 responses are stored, so a transient 401 or timeout does not stick for the rest of the TTL.
 `INVAGENT_HTTP_CACHE=0` disables it, `INVAGENT_HTTP_CACHE_TTL` overrides the window in seconds,
-and every script that reaches the network exposes `--no-cache` (`fetch_market_signals.py` has no
-argparse, so `invagent daily-prep` passes the environment variable to it instead). Change the
+and every script that has an `argparse` exposes `--no-cache` — `fetch_market_signals.py` has
+none, which is why `invagent daily-prep` reaches all three steps with the environment variable
+rather than a flag. Change the
 constant and the minutes quoted here together; a test compares them.
 
 Canonical project skills live in `.agents/skills/`: `advice`, `analyze-stock`,
@@ -330,18 +349,29 @@ Use `uv` for local development.
 - `uv run invagent --help`: inspect the CLI surface.
 - `uv run pytest -q`: run the full test suite.
 - `uv run pytest tests/test_cli.py -q`: run a focused test file.
+- `uv run pytest tests/test_datafeed_http.py -q`: the collection layer, one file per
+  module. No test reaches the network — the request path is faked at
+  `datafeed.http.read_url`, so the whole suite runs with sockets blocked.
 - `uv run pytest tests/test_agent_configuration.py -q`: check skill wiring,
   skill-script behavior, and the credential/absolute-path guard after editing
   anything under `.agents/skills/` or `template/`.
 - `uv run invagent fetch-messages --days 1`: manually verify message fetching.
 - `uv run invagent daily-prep`: run the briefing's independent prep steps at once.
 
-Skill scripts under `.agents/skills/**/scripts/` are invoked directly rather than through
-the package, so each one must run standalone. They are not restricted to the standard
-library: a script may depend on third-party packages as long as it stays self-contained,
-declaring them inline with `uv run --with <pkg>` (or `uvx --with <pkg>`) in the command
-the SKILL.md documents, so no repository-wide install is required to run it. Keep the
-dependency list in the script's docstring in step with the command in its SKILL.md.
+Skill scripts under `.agents/skills/**/scripts/` are invoked directly by path rather than
+through a console entry point, so each one must own its own `argparse` and exit codes.
+They run **inside the project environment** — `uv run python .agents/skills/.../x.py`, which
+is the form every SKILL.md documents — because they import `invagent.datafeed` for anything
+that touches the network or reads a shared file format. That import is the point: a script
+that reimplements a fetch, a cookie read, or a snapshot parse locally is the defect this
+layout exists to prevent. Beyond the package they are not restricted to the standard
+library: a script may depend on third-party packages, declaring them inline with
+`uv run --with <pkg>` in the command the SKILL.md documents. Keep the dependency list in
+the script's docstring in step with the command in its SKILL.md.
+
+Every script must be named by a SKILL.md with the command that runs it — a script no
+document calls is one the model never runs, and `tests/test_agent_configuration.py` fails
+on one.
 
 Analyst report PDFs are read straight through the agent's file-read tool, which
 renders the pages — no local PDF toolchain needed. Past 10 pages the read needs an
@@ -350,8 +380,10 @@ explicit page range (`analyze-stock/SKILL.md` step 4).
 Copy `.env.example` to `.env` for local configuration. Telegram commands require
 `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`; `TELEGRAM_SESSION_PATH`,
 `INVAGENT_OUTPUT_DIR`, and `INVAGENT_DEFAULT_CHANNELS` override the defaults in
-`src/invagent/core/config.py`. Skills read `STOCKEASY_COOKIE` (StockEasy session)
-and `INVAGENT_REPORT_ARCHIVE` (analyst-PDF root) from the same file. OpenDART
+`src/invagent/core/config.py`. `invagent.datafeed.env` reads `STOCKEASY_COOKIE`
+(StockEasy session) from the same file, and it reads any key — not just that one — so a
+new credential needs no new parser. `INVAGENT_REPORT_ARCHIVE` (analyst-PDF root),
+`INVAGENT_HTTP_CACHE` and `INVAGENT_HTTP_CACHE_TTL` are read there too. OpenDART
 agent access requires private per-client MCP configuration; never put its
 credential in repository files.
 
@@ -376,12 +408,15 @@ own, and caps both response size (`MAX_RESPONSE_BYTES`) and per-URL wall time
 Tests use `pytest` and `pytest-asyncio`. Add or update tests for every behavior
 change, especially CLI flows, configuration parsing, Telegram integrations, and
 stock tracking. Prefer small unit tests with mocks over live network calls. Name
-test modules `tests/test_<area>.py` and functions `test_<behavior>()`. Skill
-behavior is covered by two files that call the skill scripts directly:
-`tests/test_agent_configuration.py` (skill wiring plus the script behavior that
-matters, against mocked HTTP payloads) and `tests/test_stage_analysis.py` (stage
-grading, against synthetic price series). Keep their assertions about documented
-thresholds and output rules in step with the SKILL.md files they mirror.
+test modules `tests/test_<area>.py` and functions `test_<behavior>()`. The collection
+layer is tested as an ordinary package — `tests/test_datafeed_*.py`, one file per module,
+importing it normally and faking the network at `datafeed.http.read_url`, which is the
+single seam every request passes through. Skill behavior is covered by two files that load
+the skill scripts by path: `tests/test_agent_configuration.py` (skill wiring plus the script
+behavior that matters) and `tests/test_stage_analysis.py` (stage grading, against synthetic
+price series). Keep their assertions about documented thresholds and output rules in step
+with the SKILL.md files they mirror. A test that needs to stop a network call patches
+`invagent.datafeed`, never a script's own name for it.
 
 ## Git and Security
 
