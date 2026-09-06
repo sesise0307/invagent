@@ -69,6 +69,7 @@ description: >
 | 기존 종목 보고서 | `.agents/skills/analyze-stock/scripts/find_prior_report.py <종목명>` |
 | 재무·공시·지분·배당 | `opendart` 스킬 |
 | 보유 수량·평단·비중 | `output/portfolio/<yyyy-mm-dd>.md` (최신) |
+| 수집 경로·인증·캐시가 막힐 때 | `market-data` 스킬 |
 
 조달이 실패하면 **실패했다고 밝히고**, 그 관점은 「데이터 없음 — 판단 보류」로 남긴다.
 추정치로 채우지 마라. 데이터가 없는 관점을 억지로 쓰느니 비워 두는 편이 낫다.

@@ -28,7 +28,7 @@ uv run python .agents/skills/stage-analysis/scripts/stage_scan.py "<종목명 �
   `info-tab`(로그인 쿠키 필요)**.
 - `STOCKEASY_COOKIE`가 없거나 만료되면 `[누락] info_tab —` 한 줄과 함께 **가격 전용 판정(와인스타인
   원본 버전)으로 강등**되고 판정은 계속된다. 이때 결과에 「가격 전용 판정」 꼬리표가 붙으므로
-  **그 꼬리표를 사용자에게 그대로 전달한다.** 쿠키 갱신법은 `analyze-stock/SKILL.md` 6단계와 동일.
+  **그 꼬리표를 사용자에게 그대로 전달한다.** 쿠키 갱신법은 `market-data` 스킬이 정본이다.
 - ⛔ 쿠키 값을 대화·보고서·로그에 출력하지 않는다.
 
 ### 3단계 — 판정 해석

@@ -905,8 +905,11 @@ def test_http_cache_ttl_is_documented_where_it_is_explained() -> None:
     minutes = module.DEFAULT_TTL_SECONDS // 60
     assert f"{minutes}분" in agents, "AGENTS.md의 TTL 설명이 상수와 어긋난다"
     assert "INVAGENT_HTTP_CACHE" in agents
+    # 모듈이 옮겨가면 설명도 따라와야 한다. 우연히 남은 옛 이름으로 통과하지 않도록 경로로 찾는다.
+    anchor = "src/invagent/datafeed/cache.py"
+    assert anchor in agents, "AGENTS.md가 캐시 모듈의 현재 위치를 가리키지 않는다"
     # 왜 일 단위가 아닌지가 이 설계의 핵심이다.
-    assert "현재가" in agents.split("http_cache")[1][:1200]
+    assert "현재가" in agents.split(anchor)[1][:1200]
 
 
 def test_stock_info_endpoints_point_at_stockdata_api() -> None:
@@ -1557,6 +1560,23 @@ def test_market_data_fetch_passes_an_ambiguous_name_back(
 
     assert module.main(["quote", "가나"]) == 2
     assert "후보 다수" in capsys.readouterr().err
+
+
+def test_collection_mechanics_are_documented_in_one_skill() -> None:
+    """수집 방법은 `market-data`가 정본이다.
+
+    쿠키 갱신 절차가 여러 SKILL.md에 복제돼 있으면 하나만 고쳐지고 나머지는 낡는다.
+    각 스킬은 절차를 다시 적지 않고 참조한다.
+    """
+    reference = (SKILLS_ROOT / "market-data" / "SKILL.md").read_text(encoding="utf-8")
+    # 정본에는 실제 절차가 있어야 한다.
+    assert "DevTools" in reference and "STOCKEASY_COOKIE" in reference
+    assert "INVAGENT_HTTP_CACHE" in reference
+
+    for name in ("analyze-stock", "stage-analysis", "summarize-telegram", "advice"):
+        skill = (SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8")
+        assert "market-data" in skill, f"{name}이 수집 정본을 참조하지 않는다"
+        assert "DevTools" not in skill, f"{name}이 쿠키 갱신 절차를 복제하고 있다"
 
 
 def test_ticker_overrides_are_consulted_from_one_place() -> None:

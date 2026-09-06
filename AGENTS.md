@@ -50,22 +50,32 @@ investment call may be rewritten, but the prior call and its reasoning remain
 visible inside the rolling report. Because `output/` is gitignored, resolve the
 exact source and target before renaming and never overwrite an existing target.
 
+Every external data source is documented in one place — the `market-data` skill.
+It is the single reference for which endpoint serves which value, how the
+`STOCKEASY_COOKIE` session is refreshed, how the response cache behaves, and where
+the Telegram, Google Sheets and OpenDART paths run. Other skills do not restate
+collection mechanics; they cite it. Judgement stays with the skill that asked.
+
+The collection code itself lives in the `invagent.datafeed` package, not in a
+skill: `stockeasy` (both the `/stockdata/api/v1/**` stock endpoints and the
+`.../market/**` ones, plus the cookie and stock resolution), `naver` (daily
+OHLCV), `http` (the one request-plus-cache path), `cache`, `env`, `series`,
+`tickers` and `snapshot`. Skill scripts import it normally, so no script reaches
+into another skill's directory through `sys.path` any more.
+
 Quote, multiples, per-broker target-price history, consensus estimates, EPS
 consensus revisions, and stock news come from StockEasy through
-`.agents/skills/analyze-stock/scripts/fetch_stock_info.py`, which calls the
-`stockeasy.intellio.kr/stockdata/api/v1/**` JSON endpoints (`stock-search`,
-`stock-info/info-tab`, `news/by-stock-code`, `securities-reports`) and prints a
-compact summary — the raw `info-tab` payload is ~128 KB because it embeds three
-years of chart data. **All of them except `stock-search` now require a login**
-(as of 2026-08 `info-tab` and `news/by-stock-code`, previously open, return HTTP
-401 without a session), so the script reads the `STOCKEASY_COOKIE` variable (a
-browser Cookie header, environment first and then the repository-root `.env`)
-once and sends it verbatim on every call. Without it the script cannot resolve
-quote, multiples, consensus, or news at all and exits 1 naming the cookie as the
-cause; the report-summary section alone stays non-blocking. Keep the real value
-in the gitignored `.env`, never in a tracked file, and never print it. To refresh
-it, copy the `cookie:` request header from a logged-in `securities-reports` call
-in Chrome DevTools' Network tab and replace the `.env` line, quoted, on one line.
+`.agents/skills/analyze-stock/scripts/fetch_stock_info.py`, which fetches through
+`invagent.datafeed.stockeasy` and prints a compact summary — the raw `info-tab`
+payload is ~128 KB because it embeds three years of chart data. **All of those
+endpoints except `stock-search` require a login** (as of 2026-08 `info-tab` and
+`news/by-stock-code`, previously open, return HTTP 401 without a session), so the
+cookie is read once from `STOCKEASY_COOKIE` (environment first, then the
+repository-root `.env`) and sent verbatim on every call. Without it the script
+cannot resolve quote, multiples, consensus, or news at all and exits 1 naming the
+cookie as the cause; the report-summary section alone stays non-blocking. Keep the
+real value in the gitignored `.env`, never in a tracked file, and never print it;
+the refresh procedure lives in `market-data/SKILL.md`.
 
 The `stage-analysis` skill judges which of the four price-maturity stages a stock
 sits in, following DB Securities' 2026-08-25 「Stage Analysis 마스터하기」 integrated
@@ -77,8 +87,11 @@ Finance's open `api.finance.naver.com/siseJson.naver` endpoint (no auth, respons
 a single-quoted literal rather than strict JSON), and the quarterly operating-profit
 series comes from the same StockEasy `info-tab` payload described above, so a missing
 `STOCKEASY_COOKIE` degrades the run to a price-only verdict instead of failing it.
-Ticker resolution, cookie loading, and financial-row selection are imported from
-`analyze-stock/scripts/fetch_stock_info.py` rather than reimplemented. The judgement
+Ticker resolution, cookie loading, and financial-row selection come from
+`invagent.datafeed` rather than being reimplemented, and ticker resolution goes
+through `datafeed.tickers`, which reads `context/ticker_overrides.md` before the
+search API — that override path used to exist in only one of the two skills that
+resolve names, so the same name could resolve two ways. The judgement
 thresholds (150-day line, ±1.5%/20-day flat band, 80/20% position ratio, 10-day
 pivot radius, 60-day box, 250-day cycle window) are this skill's own operating
 choices, not the report's — they live as constants at the top of the script and are
@@ -155,7 +168,8 @@ from scratch. At the end of a run the skill deletes every raw file except today'
 and every dated media directory except today's (`raw/` and `media/` only,
 `-maxdepth 1`); nothing outside those two directories is ever deleted. Market
 indices come from `.agents/skills/summarize-telegram/scripts/fetch_market_signals.py`,
-which calls the same StockEasy `stockdata/api/v1` host as `fetch_stock_info.py`.
+which reads the StockEasy market endpoints through `invagent.datafeed.stockeasy`; the module owns
+the rule verdicts (leverage rule 3, the drawdown ladder, the margin-call climax), not the fetch.
 
 The same command downloads attached images to `media/<yyyy-mm-dd>/` and leaves
 them unread, because reading them is not a fetch-time job. `fetch-messages` only
@@ -224,8 +238,9 @@ warning over the unrounded 2.031 would contradict the table; this is the same
 class of mismatch `BAND_EPS` exists to prevent. `--append` writes the
 result back into the snapshot, replacing its own section so reruns stay
 idempotent. Daily bars come from the same unauthenticated Naver `siseJson`
-endpoint as `stage-analysis`, reusing its `fetch_bars`, and ticker resolution
-reuses `analyze-stock`'s `resolve_stock` — neither is reimplemented. The peak
+endpoint as `stage-analysis`, through `invagent.datafeed.naver.fetch_bars`, and ticker resolution
+goes through `invagent.datafeed.tickers` — neither is reimplemented, and neither skill reaches
+into the other's script directory any more. The peak
 window and the band list are this skill's own operating choices and live as
 constants at the top of the script; the band-to-rule mapping is documented in
 `summarize-telegram/SKILL.md` step 1-3-1, and the two must change together.
@@ -265,7 +280,8 @@ the briefing quotes its verdict instead of re-grading the conditions by eye. Ind
 moving averages come from the same unauthenticated Naver `siseJson` endpoint as
 `stage-analysis` (reusing its `fetch_bars`/`sma`), and distribution days, rally
 count, the last follow-through day, and the below-200-day-average breadth ratio
-come from `fetch_market_signals.fetch_api` — neither is reimplemented. VKOSPI and
+come from `fetch_market_signals.fetch_api` — neither is reimplemented; both reach the network
+through `invagent.datafeed`. VKOSPI and
 the foreign/institutional net-buy streak have no unauthenticated source, so they
 arrive as `--vkospi` and `--net-buy-days`; without them those conditions stay `❓`
 and **`❓` is never promoted to a pass**, which is what keeps cash from leaving on
@@ -280,23 +296,23 @@ briefing; the `monthly_context.md` entry carries the condition table and is
 updated only when a tranche opens, the ladder is invalidated, or the conditions
 themselves change.
 
-`.agents/skills/analyze-stock/scripts/http_cache.py` is the shared HTTP response cache the
-network-touching scripts route through — `fetch_stock_info.fetch_json`, `stage_scan.fetch_bars`
-and `fetch_market_signals.fetch_api`, which means `peak_drawdown` and `cash_deploy_check` get it
-for free through the functions they already reuse. It exists because one `analyze-stock` run
-pulls the ~128 KB `info-tab` payload twice (once for the quote, once for the stage verdict) and a
-re-run of a briefing repeats every call. **The TTL is short — 15분 by default — rather than
+`src/invagent/datafeed/cache.py` is the shared http_cache every network call routes through —
+`datafeed.http.get_json` is the single request path, so `stockeasy`, `naver` and every skill
+script above get it without asking. It exists because one `analyze-stock` run pulls the ~128 KB
+`info-tab` payload twice (once for the quote, once for the stage verdict) and a re-run of a
+briefing repeats every call. **The TTL is short — 15분 by default — rather than
 daily, because `info-tab` carries 현재가**: a day-scoped entry would hand a late-afternoon re-run
 the morning's price. Entries live under the gitignored `output/.cache/http/`, keyed by URL plus
 whether a cookie was sent — never by the cookie's value, which is written nowhere — so an
 unauthenticated HTTP 401 body can never be replayed to an authenticated call. Only successful
 responses are stored, so a transient 401 or timeout does not stick for the rest of the TTL.
 `INVAGENT_HTTP_CACHE=0` disables it, `INVAGENT_HTTP_CACHE_TTL` overrides the window in seconds,
-and every script that reaches the network exposes `--no-cache`. Change the constant and the
-minutes quoted here together; a test compares them.
+and every script that reaches the network exposes `--no-cache` (`fetch_market_signals.py` has no
+argparse, so `invagent daily-prep` passes the environment variable to it instead). Change the
+constant and the minutes quoted here together; a test compares them.
 
 Canonical project skills live in `.agents/skills/`: `advice`, `analyze-stock`,
-`monthly-investment-review`, `opendart`, `stage-analysis`, and
+`market-data`, `monthly-investment-review`, `opendart`, `stage-analysis`, and
 `summarize-telegram`. Each `.claude/skills/<name>` is a symlink to the canonical
 directory — edit the canonical files only. Client-side setup that cannot live in
 the repository (Codex plugins, the local OpenDART MCP server, Notion) is

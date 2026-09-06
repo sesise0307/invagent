@@ -176,8 +176,8 @@ uv run python .agents/skills/analyze-stock/scripts/fetch_stock_info.py "<종목�
   - ⛔ `추정 E` 행은 **증권사 컨센서스이지 공시가 아니다.** DART 확정치와 같은 표·같은 행에
     나란히 놓지 않는다. 대조할 때는 「확정 vs 컨센」임을 명시한다.
 - 출처 표기: `StockEasy stock-info/<티커>` + 조회일. 스크립트 첫 줄에 URL과 조회일이 찍힌다.
-- 응답은 15분 캐시된다. 같은 실행에서 이어 도는 `stage_scan.py`가 `info-tab`을 다시 받지 않게
-  하려는 것이고, 시세가 들어 있어 TTL이 짧다. 캐시 오염이 의심되면 `--no-cache`로 다시 받는다.
+- 응답은 짧은 TTL로 캐시된다. 같은 실행에서 이어 도는 `stage_scan.py`가 `info-tab`을 다시 받지
+  않게 하려는 것이다. 캐시 오염이 의심되면 `--no-cache`. 규칙은 `market-data` 스킬 참조.
 
 **스테이지 판정 (`stage-analysis` 스킬 스크립트)**
 
@@ -206,12 +206,10 @@ uv run python .agents/skills/stage-analysis/scripts/stage_scan.py "<5단계가 �
 같은 스크립트가 `securities-reports` API에서 최신 리포트의 요약 논지까지 받아온다.
 스크립트는 `.env`의 `STOCKEASY_COOKIE`(브라우저에서 복사한 Cookie 헤더 전문)를 읽어 붙인다.
 
-⛔ **2026-08부터 `stock-search`를 뺀 전 엔드포인트가 로그인 세션을 요구한다.** 예전에는
-`securities-reports`만 인증이 필요했으나 `info-tab`·`news/by-stock-code`도 비인증 호출 시
-HTTP 401을 준다. 쿠키가 없으면 시세·멀티플·컨센까지 통째로 못 받고 스크립트가 exit 1로
-쿠키를 사유로 지목한다. **6단계 전체가 막히므로 이때는 사용자에게 쿠키 갱신을 먼저 요청한다.**
-갱신 방법 = 로그인 상태에서 Chrome DevTools Network 탭의 `securities-reports` 요청 →
-Request Headers의 `cookie:` 값을 복사 → `.env`의 `STOCKEASY_COOKIE` 줄을 한 줄·따옴표로 교체.
+⛔ **`stock-search`를 뺀 전 엔드포인트가 로그인 세션을 요구한다.** 쿠키가 없으면 시세·멀티플·
+컨센까지 통째로 못 받고 스크립트가 exit 1로 쿠키를 사유로 지목한다. **6단계 전체가 막히므로
+이때는 사용자에게 쿠키 갱신을 먼저 요청한다.** 갱신 절차와 401 증상 구분은 `market-data` 스킬이
+정본이다 — 여기서 다시 적지 않는다.
 
 - 리포트마다 나오는 것: **발간일 · 증권사 · 애널리스트 · 투자의견/목표가 · 제목 · 요약 논지 불릿.**
   기본 5건(`--summaries N`), 본문까지 보려면 `--detail-chars 800`.
