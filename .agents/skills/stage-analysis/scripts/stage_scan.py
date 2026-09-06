@@ -35,7 +35,8 @@ if str(_STOCK_INFO_DIR) not in sys.path:
     sys.path.insert(0, str(_STOCK_INFO_DIR))
 
 import fetch_stock_info as si_api  # noqa: E402  (경로 주입 후에만 import된다)
-import http_cache  # noqa: E402  (같은 경로에 있다)
+
+from invagent.datafeed import cache as http_cache
 
 SISE_URL = "https://api.finance.naver.com/siseJson.naver"
 TIMEOUT = 20

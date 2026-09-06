@@ -53,7 +53,8 @@ for _extra in ("stage-analysis/scripts", "analyze-stock/scripts"):
 
 import fetch_stock_info as si_api  # noqa: E402  (경로 주입 후에만 import된다)
 import stage_scan  # noqa: E402
-import http_cache  # noqa: E402  (같은 경로에 있다)
+
+from invagent.datafeed import cache as http_cache
 
 # --- 판정 임계값 -----------------------------------------------------------
 # 전고점 창과 밴드는 이 스킬의 운영 기준이다. 바꾸려면 SKILL.md의 밴드→룰 매핑도 함께 고친다.

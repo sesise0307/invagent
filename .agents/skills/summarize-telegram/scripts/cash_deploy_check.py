@@ -29,7 +29,8 @@ for _extra in ("stage-analysis/scripts", "summarize-telegram/scripts"):
 
 from fetch_market_signals import fetch_api  # noqa: E402  (경로 주입 후에만 import된다)
 from stage_scan import fetch_bars, sma  # noqa: E402
-import http_cache  # noqa: E402  (analyze-stock/scripts 경로에 있다)
+
+from invagent.datafeed import cache as http_cache
 
 # --- 사다리 상수 (2026-09-03 확정) -------------------------------------------
 # 사다리를 세운 날. FTD는 이 날짜보다 뒤에 찍힌 것만 새 신호로 인정한다.

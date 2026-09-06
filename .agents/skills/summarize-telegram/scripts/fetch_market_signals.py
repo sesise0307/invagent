@@ -19,11 +19,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-_STOCK_INFO_DIR = Path(__file__).resolve().parents[2] / "analyze-stock" / "scripts"
-if str(_STOCK_INFO_DIR) not in sys.path:
-    sys.path.insert(0, str(_STOCK_INFO_DIR))
-
-import http_cache  # noqa: E402  (경로 주입 후에만 import된다)
+from invagent.datafeed import cache as http_cache
 
 PAGE_URL = "https://stockeasy.intellio.kr/market-analysis?tab=overview"
 API_BASE = "https://stockeasy.intellio.kr/stockdata/api/v1/market"

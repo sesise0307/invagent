@@ -33,11 +33,7 @@ from datetime import date, datetime, timezone
 from math import isfinite
 from pathlib import Path
 
-_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
-
-import http_cache  # noqa: E402  (경로 주입 후에만 import된다)
+from invagent.datafeed import cache as http_cache
 
 API_BASE = "https://stockeasy.intellio.kr/stockdata/api/v1"
 PAGE_BASE = "https://stockeasy.intellio.kr/stock-analysis/stock-info"

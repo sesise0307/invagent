@@ -30,14 +30,15 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator
 
+from invagent.datafeed.env import repo_root
+
 try:
     import fcntl
 except ImportError:  # pragma: no cover - Windows fallback; production runs on macOS/Linux.
     fcntl = None
 
 # 저장소 루트 기준 `output/`은 gitignore 대상이라 새 추적 경로를 만들지 않는다.
-# parents: [0] scripts · [1] analyze-stock · [2] skills · [3] .agents · [4] 저장소 루트.
-CACHE_ROOT = Path(__file__).resolve().parents[4] / "output" / ".cache" / "http"
+CACHE_ROOT = repo_root() / "output" / ".cache" / "http"
 
 DEFAULT_TTL_SECONDS = 900
 # TTL이 지난 항목도 파일로는 남는다. 하루 지난 것은 다시 쓰일 일이 없으므로 지운다.
