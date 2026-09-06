@@ -33,88 +33,20 @@ from datetime import date, datetime, timezone
 from math import isfinite
 from pathlib import Path
 
-from invagent.datafeed import cache as http_cache
+from invagent.datafeed import cache as http_cache, stockeasy
 
-API_BASE = "https://stockeasy.intellio.kr/stockdata/api/v1"
-PAGE_BASE = "https://stockeasy.intellio.kr/stock-analysis/stock-info"
-REPORTS_PAGE = "https://stockeasy.intellio.kr/stock-analysis/reports"
-ENDPOINTS = {
-    "search": "/stock-search/",
-    "info_tab": "/stock-info/info-tab/{code}",
-    "news": "/news/by-stock-code/{code}",
-    "reports": "/securities-reports",
-}
-TIMEOUT = 20
-TICKER_RE = re.compile(r"^\d{6}$")
-COOKIE_ENV = "STOCKEASY_COOKIE"
+# 엔드포인트·자격증명 축은 수집 계층이 소유한다. 여기서는 출력문과 SKILL.md가 쓰는
+# 이름만 그대로 다시 노출한다.
+API_BASE = stockeasy.API_BASE
+PAGE_BASE = stockeasy.PAGE_BASE
+REPORTS_PAGE = stockeasy.REPORTS_PAGE
+ENDPOINTS = stockeasy.ENDPOINTS
+TIMEOUT = stockeasy.TIMEOUT
+TICKER_RE = stockeasy.TICKER_RE
+COOKIE_ENV = stockeasy.COOKIE_ENV
 
 # 추정치는 컨센서스이지 공시가 아니다. 표 헤더에 그대로 박아 보고서로 흘려보낸다.
 ESTIMATE_NOTE = "추정 — 컨센서스, DART 데이터 아님"
-
-
-def load_cookie() -> str | None:
-    """`STOCKEASY_COOKIE`를 환경변수 → 저장소 루트 `.env` 순으로 찾는다.
-
-    저장소는 dotenv 라이브러리를 쓰지 않으므로 `.env`를 직접 훑는다.
-    값(쿠키 본문)은 출력하지 않는다 — 로그·보고서로 새면 안 된다.
-    """
-    value = os.environ.get(COOKIE_ENV, "").strip()
-    if value:
-        return value
-
-    for parent in Path(__file__).resolve().parents:
-        env_path = parent / ".env"
-        if not env_path.is_file():
-            continue
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line.startswith("#") or "=" not in line:
-                continue
-            key, _, raw = line.partition("=")
-            if key.strip() == COOKIE_ENV:
-                return raw.strip().strip("'\"") or None
-        break
-    return None
-
-
-def fetch_json(
-    path: str,
-    params: dict | None = None,
-    referer: str = PAGE_BASE,
-    cookie: str | None = None,
-):
-    """API 하나를 호출해 JSON을 반환한다. 실패하면 (None, 사유)."""
-    url = API_BASE + path
-    if params:
-        url += "?" + urllib.parse.urlencode(params)
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json",
-        "Referer": referer,
-    }
-    if cookie:
-        headers["Cookie"] = cookie
-    # 같은 실행 안에서 info-tab(약 128KB)을 두 번 받는 경로가 있다 — 짧은 TTL 캐시로 덮는다.
-    req = urllib.request.Request(url, headers=headers)
-    def request_body() -> bytes:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            return resp.read()
-
-    try:
-        body, cache_hit = http_cache.get_or_fetch(url, authed=bool(cookie), fetcher=request_body)
-        try:
-            payload = json.loads(body.decode("utf-8"))
-        except ValueError:
-            if not cache_hit:
-                raise
-            http_cache.invalidate(url, authed=bool(cookie))
-            body, _ = http_cache.get_or_fetch(url, authed=bool(cookie), fetcher=request_body)
-            payload = json.loads(body.decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        return None, f"HTTP {e.code}"
-    except Exception as e:  # 네트워크 오류·JSON 파싱 실패 등
-        return None, str(e)[:80]
-    return payload, None
 
 
 # --- 값 정리 ---------------------------------------------------------------
@@ -169,30 +101,6 @@ def ymd(raw) -> str:
 
 
 # --- 종목 해석 -------------------------------------------------------------
-
-
-def resolve_stock(query: str):
-    """종목명 또는 6자리 티커 → (code, name, market). 실패하면 (None, 사유, exit_code)."""
-    if TICKER_RE.match(query):
-        return {"stock_code": query, "stock_name": None, "exchange": None}, None, 0
-
-    data, err = fetch_json(ENDPOINTS["search"], {"q": query})
-    if err:
-        return None, f"종목 검색 실패 — {err}", 1
-    hits = [h for h in (data or []) if h.get("market") == "KR"] or (data or [])
-    if not hits:
-        return None, f"종목 검색 결과 없음 — '{query}'", 1
-
-    exact = [h for h in hits if h.get("stock_name") == query]
-    if len(exact) == 1:
-        return exact[0], None, 0
-    if len(hits) == 1:
-        return hits[0], None, 0
-
-    candidates = ", ".join(
-        f"{h.get('stock_name')}({h.get('stock_code')}, {h.get('exchange')})" for h in hits[:10]
-    )
-    return None, f"종목명 후보 다수 — {candidates}", 2
 
 
 # --- 섹션 출력 -------------------------------------------------------------
@@ -406,14 +314,6 @@ def print_target_prices(history: list, current_price: float | None, limit: int, 
         )
 
 
-def _fs_rows(financials: dict, primary: str, yearly: bool) -> tuple[list, list]:
-    """primary_fs_type(C/S)에 맞는 (확정, 추정) 리스트."""
-    prefix = "consolidated" if primary != "S" else "separate"
-    if yearly:
-        return financials.get(f"{prefix}Yearly") or [], financials.get(f"{prefix}YearlyEstimate") or []
-    return financials.get(prefix) or [], financials.get(f"{prefix}Estimate") or []
-
-
 def _period(row: dict, yearly: bool) -> str:
     if yearly:
         return f"{row.get('year')}"
@@ -423,7 +323,7 @@ def _period(row: dict, yearly: bool) -> str:
 def print_financials(financials: dict | None, primary: str, yearly: bool, actual_n: int) -> None:
     if not financials:
         return
-    actual, estimate = _fs_rows(financials, primary, yearly)
+    actual, estimate = stockeasy.fs_rows(financials, primary, yearly)
     if not actual and not estimate:
         return
     basis = "연결" if primary != "S" else "별도"
@@ -624,7 +524,7 @@ def collect_stock_payloads(
 
     def fetch_job(job: tuple[str, dict | None, str]):
         path, params, job_referer = job
-        return fetch_json(path, params, referer=job_referer, cookie=cookie)
+        return stockeasy.fetch_stock_json(path, params, referer=job_referer, cookie=cookie)
 
     with ThreadPoolExecutor(max_workers=min(3, len(jobs))) as pool:
         futures = {name: pool.submit(fetch_job, job) for name, job in jobs.items()}
@@ -661,7 +561,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_cache:
         http_cache.disable()
 
-    stock, err, code = resolve_stock(args.query)
+    stock, err, code = stockeasy.resolve_stock(args.query)
     if err:
         print(f"ERROR: {err}", file=sys.stderr)
         return code
@@ -669,7 +569,7 @@ def main(argv: list[str] | None = None) -> int:
     ticker = stock["stock_code"]
     # 2026-08 이후 info-tab·news도 로그인 세션을 요구한다(비인증 호출은 HTTP 401).
     # 쿠키는 한 번만 읽어 세 엔드포인트에 함께 넘긴다. 없으면 종전대로 비인증으로 시도한다.
-    cookie = load_cookie()
+    cookie = stockeasy.load_cookie()
 
     info, news, reports, errors = collect_stock_payloads(
         ticker,

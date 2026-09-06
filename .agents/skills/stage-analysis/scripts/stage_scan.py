@@ -30,13 +30,7 @@ import urllib.request
 from datetime import date, timedelta
 from pathlib import Path
 
-_STOCK_INFO_DIR = Path(__file__).resolve().parents[2] / "analyze-stock" / "scripts"
-if str(_STOCK_INFO_DIR) not in sys.path:
-    sys.path.insert(0, str(_STOCK_INFO_DIR))
-
-import fetch_stock_info as si_api  # noqa: E402  (경로 주입 후에만 import된다)
-
-from invagent.datafeed import cache as http_cache
+from invagent.datafeed import cache as http_cache, stockeasy
 
 SISE_URL = "https://api.finance.naver.com/siseJson.naver"
 TIMEOUT = 20
@@ -521,7 +515,7 @@ def op_growth(financials: dict | None, primary: str) -> dict:
         result["note"] = "영업이익 데이터 없음"
         return result
 
-    actual, estimate = si_api._fs_rows(financials, primary, yearly=False)
+    actual, estimate = stockeasy.fs_rows(financials, primary, yearly=False)
     values = {}
     for row in actual:
         oi, year, quarter = row.get("operating_income"), row.get("year"), row.get("quarter")
@@ -859,7 +853,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_cache:
         http_cache.disable()
 
-    stock, err, code = si_api.resolve_stock(args.query)
+    stock, err, code = stockeasy.resolve_stock(args.query)
     if err:
         print(f"ERROR: {err}", file=sys.stderr)
         return code
@@ -880,10 +874,10 @@ def main(argv: list[str] | None = None) -> int:
     sources = ["Naver siseJson"]
     financials, primary, name = None, "C", stock.get("stock_name") or ticker
     if not args.no_fundamental:
-        cookie = si_api.load_cookie()
-        info, ie = si_api.fetch_json(
-            si_api.ENDPOINTS["info_tab"].format(code=ticker),
-            referer=f"{si_api.PAGE_BASE}/{ticker}",
+        cookie = stockeasy.load_cookie()
+        info, ie = stockeasy.fetch_stock_json(
+            stockeasy.ENDPOINTS["info_tab"].format(code=ticker),
+            referer=f"{stockeasy.PAGE_BASE}/{ticker}",
             cookie=cookie,
         )
         if info:
@@ -892,7 +886,7 @@ def main(argv: list[str] | None = None) -> int:
             name = (info.get("stock_info") or {}).get("name") or name
             sources.append("StockEasy info-tab")
         else:
-            hint = "쿠키 만료·무효" if cookie else f"{si_api.COOKIE_ENV} 미설정"
+            hint = "쿠키 만료·무효" if cookie else f"{stockeasy.COOKIE_ENV} 미설정"
             reason = f"{ie or '빈 응답'}" + (f" ({hint})" if ie == "HTTP 401" or not cookie else "")
             print(f"[누락] info_tab — {reason} · 가격 전용 판정으로 진행", file=sys.stderr)
 

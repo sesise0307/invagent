@@ -19,17 +19,13 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from invagent.datafeed import cache as http_cache
+from invagent.datafeed import cache as http_cache, stockeasy
 
-PAGE_URL = "https://stockeasy.intellio.kr/market-analysis?tab=overview"
-API_BASE = "https://stockeasy.intellio.kr/stockdata/api/v1/market"
-ENDPOINTS = {
-    "indices": "/indices",
-    "big_picture": "/big-picture",
-    "market_monitor": "/market-monitor",
-    "credit_balance": "/credit-balance",
-}
-TIMEOUT = 20
+# 엔드포인트는 수집 계층이 소유한다. 이 이름들은 이 모듈의 출력·테스트가 쓰는 재노출이다.
+PAGE_URL = stockeasy.MARKET_PAGE_URL
+API_BASE = stockeasy.MARKET_API_BASE
+ENDPOINTS = stockeasy.MARKET_ENDPOINTS
+TIMEOUT = stockeasy.TIMEOUT
 
 # --- 「레버리지 규칙 3(변동성 레버리지 청산)」 판정 상수 -------------------------
 # 룰 원문: "지수가 ±5% 이상 변동하는 날이 최근 10거래일 이내에 3일 이상 나타나면 레버리지
@@ -79,34 +75,7 @@ STATUS_KO = {
 
 def fetch_api(name: str):
     """market API 하나를 호출해 JSON을 반환한다. 실패하면 (None, 사유)."""
-    url = API_BASE + ENDPOINTS[name]
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json",
-            "Referer": PAGE_URL,
-        },
-    )
-    def request_body() -> bytes:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            return resp.read()
-
-    try:
-        body, cache_hit = http_cache.get_or_fetch(url, authed=False, fetcher=request_body)
-        try:
-            payload = json.loads(body.decode("utf-8"))
-        except ValueError:
-            if not cache_hit:
-                raise
-            http_cache.invalidate(url, authed=False)
-            body, _ = http_cache.get_or_fetch(url, authed=False, fetcher=request_body)
-            payload = json.loads(body.decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        return None, f"HTTP {e.code}"
-    except Exception as e:  # 네트워크 오류·JSON 파싱 실패 등
-        return None, str(e)[:80]
-    return payload, None
+    return stockeasy.fetch_market_json(name)
 
 
 def _row_date(row: dict) -> str | None:

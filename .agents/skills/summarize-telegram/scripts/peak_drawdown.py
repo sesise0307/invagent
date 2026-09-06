@@ -46,15 +46,14 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 _SKILLS_ROOT = Path(__file__).resolve().parents[2]
-for _extra in ("stage-analysis/scripts", "analyze-stock/scripts"):
+for _extra in ("stage-analysis/scripts",):
     _path = str(_SKILLS_ROOT / _extra)
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-import fetch_stock_info as si_api  # noqa: E402  (경로 주입 후에만 import된다)
 import stage_scan  # noqa: E402
 
-from invagent.datafeed import cache as http_cache
+from invagent.datafeed import cache as http_cache, stockeasy
 
 # --- 판정 임계값 -----------------------------------------------------------
 # 전고점 창과 밴드는 이 스킬의 운영 기준이다. 바꾸려면 SKILL.md의 밴드→룰 매핑도 함께 고친다.
@@ -175,7 +174,7 @@ def resolve_code(name: str, overrides: dict[str, str]) -> tuple[str | None, str 
     """종목명 → (티커, 실패 사유). override가 API보다 우선한다."""
     if name in overrides:
         return overrides[name], None
-    hit, err, *_ = si_api.resolve_stock(name)
+    hit, err, *_ = stockeasy.resolve_stock(name)
     if hit and hit.get("stock_code"):
         return hit["stock_code"], None
     return None, err or "티커 해석 실패"
