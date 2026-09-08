@@ -190,10 +190,11 @@ def price_vs_ma(
     if not pairs:
         return "판정 불가", None, 0
     above = sum(1 for c, m in pairs if c > m)
+    below = sum(1 for c, m in pairs if c < m)
     ratio = above / len(pairs)
     if ratio >= POSITION_ABOVE:
         return "위", ratio, len(pairs)
-    if ratio <= POSITION_BELOW:
+    if below / len(pairs) >= 1 - POSITION_BELOW:
         return "아래", ratio, len(pairs)
     return "오르내림", ratio, len(pairs)
 
@@ -218,7 +219,8 @@ def swing_trend(pivot_highs: list[dict], pivot_lows: list[dict]) -> str:
     hl = pivot_lows[-1]["price"] > pivot_lows[-2]["price"]
     if hh and hl:
         return "높아짐"
-    if not hh and not hl:
+    if (pivot_highs[-1]["price"] < pivot_highs[-2]["price"]
+            and pivot_lows[-1]["price"] < pivot_lows[-2]["price"]):
         return "낮아짐"
     return "혼조"
 
@@ -333,6 +335,8 @@ def days_to_cross(
     path = project_ma_path(closes, ma_now, price, max_days, window)
     # 누적 가감산이라 정확히 만나는 날에도 끝자리 오차가 남는다. 상대 허용오차로 비교한다.
     tol = abs(price) * 1e-9
+    if abs(ma_now - price) <= tol:
+        return 0
     for day, ma in enumerate(path):
         if day and ((below and ma - price <= tol) or (not below and price - ma <= tol)):
             return day
@@ -387,7 +391,10 @@ def project(bars: list[dict], window: int = MA_DAYS) -> dict:
             continue
         targets.append({"days": days, "price": needed, "change_pct": (needed - price) / price * 100})
     return {
-        "direction": "상향 교차(2단계 진입)" if below else "하향 이탈(4단계 전환)",
+        "direction": (
+            "현재 이평선과 일치" if math.isclose(price, ma_now, rel_tol=1e-9)
+            else "아래에서 이평선 접촉" if below else "위에서 이평선 접촉"
+        ),
         "below": below,
         "close": price,
         "ma": ma_now,
@@ -450,13 +457,11 @@ def op_growth(financials: dict | None, primary: str) -> dict:
     latest_yoy = _yoy(merged, *latest_key)
     result["latest"] = {"period": f"{latest_key[0]}.{latest_key[1]}Q", "kind": "확정", "yoy": latest_yoy}
 
-    if not est_values:
+    next_key = (latest_key[0] + 1, 1) if latest_key[1] == 4 else (latest_key[0], latest_key[1] + 1)
+    if next_key not in est_values:
         result["note"] = "다음 분기 컨센 추정 없음"
-        if latest_yoy is not None:
-            result["available"] = True
         return result
 
-    next_key = min(est_values)
     next_yoy = _yoy(merged, *next_key)
     result["next"] = {"period": f"{next_key[0]}.{next_key[1]}Q", "kind": "추정 E", "yoy": next_yoy}
 
@@ -465,7 +470,10 @@ def op_growth(financials: dict | None, primary: str) -> dict:
         return result
 
     result["available"] = True
-    result["direction"] = "상승" if next_yoy > latest_yoy else "하락"
+    result["direction"] = (
+        "평탄" if math.isclose(next_yoy, latest_yoy, rel_tol=0.0, abs_tol=1e-12)
+        else "상승" if next_yoy > latest_yoy else "하락"
+    )
     return result
 
 
@@ -552,6 +560,8 @@ def classify(price: dict, cyclical: dict, growth: dict, close: float) -> dict:
             reasons.append("영업이익 증가율 상승 → 약한 4단계 (리포트 도표 20)")
         else:
             reasons.append(f"영업이익 증가율 {growth['direction']} — 가격 축과 정합")
+    elif growth["available"] and growth["direction"] == "평탄":
+        reasons.append("영업이익 증가율 평탄 — 강·약 등급 조정 없음")
     else:
         reasons.append(f"가격 전용 판정 — {growth.get('note') or '영업이익 축 미적용'}")
 
@@ -559,7 +569,11 @@ def classify(price: dict, cyclical: dict, growth: dict, close: float) -> dict:
         label = f"약한 {label}"
 
     aligned = max(up, down)
-    if aligned == 3 and growth["available"] and not weak:
+    growth_aligned = growth["available"] and (
+        (stage == 2 and growth["direction"] == "상승")
+        or (stage == 4 and growth["direction"] == "하락")
+    )
+    if aligned == 3 and growth_aligned and not weak:
         confidence = "높음"
     elif aligned >= 2:
         confidence = "중간"
@@ -673,7 +687,7 @@ def print_result(name: str, code: str, result: dict, sources: list[str]) -> None
     print(
         f"  20주선(실제 주봉 종가 {WEEK_COUNT}주; 기존 일봉 근사 {MA_20WEEK}일, 「기술적 분석 규칙 1」): "
         + (f"{p['ma20w']:,.0f}원 ({_pct(gap20w)})" if p["ma20w"] else "-")
-        + f" · 방향 {p['ma20w_slope']} ({_pct(p['ma20w_slope_pct'])} / {SLOPE_WINDOW}일)"
+        + f" · 방향 {p['ma20w_slope']} ({_pct(p['ma20w_slope_pct'])} / 1주)"
         f" · 주가 {p['ma20w_position']}"
     )
     if p["long_bull"]:
@@ -725,17 +739,17 @@ def print_projection(proj: dict) -> None:
     if not proj:
         return
     print(f"[전망] {proj['direction']} — 현재가 {proj['close']:,.0f}원 유지 가정")
+    print("  이평선 접촉의 산술 계산이며 단계 전환을 뜻하지 않는다. 미래 가격 예측이 아니다.")
     if proj["flat_days"] is not None:
         d = proj["flat_days"]
-        print(f"  주가 횡보 시 {MA_DAYS}일선 교차: {d}거래일 뒤 ({_months(d)})")
+        print(f"  주가 횡보 시 {MA_DAYS}일선 접촉: {d}거래일 뒤 ({_months(d)})")
     else:
         print(f"  주가 횡보 시 {PROJECT_MAX_DAYS}거래일 안에는 {MA_DAYS}일선과 만나지 않는다")
     if proj["flat_slope_days"] is not None:
         d = proj["flat_slope_days"]
         print(f"  주가 횡보 시 기울기 '평탄' 진입: {d}거래일 뒤 ({_months(d)})")
     if proj["targets"]:
-        verb = "상향 교차" if proj["below"] else "하향 이탈"
-        print(f"  N거래일 안에 {verb}하려면 필요한 주가 (그 기간 그 가격 유지 가정):")
+        print("  N거래일 뒤 이평선과 같아지는 주가 (그 기간 그 가격 유지 가정):")
         for t in proj["targets"]:
             print(
                 f"    {t['days']:>3d}거래일({_months(t['days'])}): "

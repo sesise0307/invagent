@@ -323,8 +323,8 @@ def test_project_labels_the_direction_from_the_price_position() -> None:
     below = stage_scan.project(_bars(DOWNTREND))
     above = stage_scan.project(_bars(UPTREND))
 
-    assert below["below"] is True and "2단계 진입" in below["direction"]
-    assert above["below"] is False and "4단계 전환" in above["direction"]
+    assert below["below"] is True and "아래에서" in below["direction"]
+    assert above["below"] is False and "위에서" in above["direction"]
     assert below["targets"] and below["dropouts"]
 
 
@@ -414,3 +414,68 @@ def test_long_bull_candle_only_looks_at_the_recent_window():
     closes = [100.0, 109.0] + [109.0 + i * 0.01 for i in range(220)]
     price = stage_scan.analyze(_bars(closes), None, "C")["price"]
     assert price["long_bull"] == []
+
+
+def test_equal_price_and_ma_is_neutral():
+    result = _analyze([100.0] * 400)
+    assert result["price"]["position"] == "오르내림"
+    assert result["verdict"]["stage"] in (1, 3)
+
+
+@pytest.mark.parametrize("close, expected", [(101, "위"), (99, "아래")])
+def test_position_requires_eighty_percent_strict_residence(close, expected):
+    assert stage_scan.price_vs_ma([close] * 16 + [100] * 4, [100] * 20)[0] == expected
+    assert stage_scan.price_vs_ma([close] * 15 + [100] * 5, [100] * 20)[0] == "오르내림"
+
+
+@pytest.mark.parametrize("highs, lows", [([100, 100], [90, 90]), ([100, 100], [90, 80])])
+def test_equal_pivots_are_not_lower_highs_and_lows(highs, lows):
+    assert stage_scan.swing_trend(
+        [{"price": p} for p in highs], [{"price": p} for p in lows]
+    ) == "혼조"
+
+
+def test_equal_growth_is_flat_and_not_weak():
+    financials = _financials([(2025, 2, 100), (2025, 3, 100), (2026, 2, 200)], [(2026, 3, 200)])
+    growth = stage_scan.op_growth(financials, "C")
+    assert growth["direction"] == "평탄"
+    verdict = stage_scan.classify(_price("위", "상승", "높아짐", "상단", 12000), {}, growth, 12000)
+    assert not verdict["weak"]
+    assert verdict["confidence"] != "높음"
+    assert not any("가격 전용" in reason for reason in verdict["reasons"])
+
+
+@pytest.mark.parametrize("estimate", [[], [(2026, 4, 120)]])
+def test_missing_immediate_next_quarter_cannot_raise_confidence(estimate):
+    growth = stage_scan.op_growth(
+        _financials([(2025, 2, 100), (2025, 4, 100), (2026, 2, 200)], estimate), "C"
+    )
+    assert not growth["available"]
+    assert growth["next"] is None
+    verdict = stage_scan.classify(_price("위", "상승", "높아짐", "상단", 12000), {}, growth, 12000)
+    assert verdict["confidence"] != "높음"
+    assert any("가격 전용" in reason for reason in verdict["reasons"])
+
+
+def test_next_quarter_rolls_over_year():
+    growth = stage_scan.op_growth(
+        _financials([(2025, 1, 100), (2025, 4, 100), (2026, 4, 200)], [(2027, 1, 300)]), "C"
+    )
+    assert growth["next"]["period"] == "2027.1Q"
+
+
+def test_twenty_week_slope_output_uses_one_week(capsys):
+    stage_scan.print_result("test", "000000", _analyze(UPTREND), [])
+    line = next(line for line in capsys.readouterr().out.splitlines() if "20주선(" in line)
+    assert "/ 1주" in line
+    assert "/ 20일" not in line
+
+
+def test_projection_contact_is_not_a_stage_change(capsys):
+    projection = stage_scan.project(_bars([100.0] * 400))
+    assert projection["flat_days"] == 0
+    assert projection["direction"] == "현재 이평선과 일치"
+    stage_scan.print_projection(projection)
+    output = capsys.readouterr().out
+    assert "단계 전환을 뜻하지 않는다" in output
+    assert "N거래일 뒤" in output
