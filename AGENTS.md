@@ -385,6 +385,15 @@ own, and caps both response size (`MAX_RESPONSE_BYTES`) and per-URL wall time
 (`hard_timeout`). Keep those checks when changing the module, and add cases to
 `tests/test_telegram_link_extractor.py` for any new fetch path.
 
+Write every implementation — a new feature, a bug fix, a behavior change in a
+skill script — through the installed `tdd` skill (mattpocock's, at
+`~/.claude/skills/tdd`; invoke it with the Skill tool as `tdd`). Invoke it before
+touching implementation code, not after, and follow its loop: agree the seams
+under test first, then one failing test, one minimal implementation, repeat.
+Refactoring is a separate pass, not part of the loop. The rule holds regardless
+of how small the change looks; the package's own seam discipline (`datafeed.http.read_url`
+for the network, `parse_holdings` for a snapshot) exists so this is cheap.
+
 Tests use `pytest` and `pytest-asyncio`. Add or update tests for every behavior
 change, especially CLI flows, configuration parsing, Telegram integrations, and
 stock tracking. Prefer small unit tests with mocks over live network calls. Name
