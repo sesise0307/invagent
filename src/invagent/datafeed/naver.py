@@ -62,7 +62,7 @@ def parse_date(value: date | str, field: str = "date") -> date:
 def fetch_bars(code: str, days: int, asof: date | str | None = None) -> tuple[list[dict], str | None]:
     """네이버 일봉을 받아온다. 실패하면 ([], 사유).
 
-    `peak_drawdown`은 보유 종목마다, `cash_deploy_check`은 지수마다 이 함수를 부른다 —
+    `peak_drawdown`은 보유 종목마다, `stage_scan`은 종목마다 이 함수를 부른다 —
     같은 창을 반복해서 받지 않도록 공용 캐시를 탄다.
     """
     end = parse_date(asof, "asof") if asof is not None else date.today()

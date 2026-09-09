@@ -821,7 +821,7 @@ def _load_stage_scan_module():
 def test_daily_bars_and_market_signals_share_the_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """peak_drawdown은 종목마다, cash_deploy_check은 지수마다 같은 네이버 일봉을 다시 받는다."""
+    """peak_drawdown은 종목마다, stage_scan은 종목마다 같은 네이버 일봉을 다시 받는다."""
     stage = _load_stage_scan_module()
     monkeypatch.setattr(stage.http_cache, "CACHE_ROOT", tmp_path)
 
@@ -875,23 +875,22 @@ def test_no_cache_flag_forces_a_fresh_fetch(
     datafeed_stockeasy.fetch_stock_json("/stock-info/info-tab/064290")
     assert len(calls) == 2, "disable() 후에도 캐시가 응답했다"
 
-    # 네트워크를 타는 스크립트 넷 모두 플래그를 노출하고 실제로 끈다.
+    # 네트워크를 타는 스크립트 셋 모두 플래그를 노출하고 실제로 끈다.
     for name in ("analyze-stock/scripts/fetch_stock_info.py",
                  "stage-analysis/scripts/stage_scan.py",
-                 "daily-digest/scripts/peak_drawdown.py",
-                 "daily-digest/scripts/cash_deploy_check.py"):
+                 "daily-digest/scripts/peak_drawdown.py"):
         text = (SKILLS_ROOT / name).read_text(encoding="utf-8")
         assert "--no-cache" in text, f"{name}에 --no-cache가 없다"
         assert "http_cache.disable()" in text, f"{name}이 플래그를 캐시에 연결하지 않았다"
 
 
 def test_briefing_prep_steps_have_one_entry_point() -> None:
-    """1-1·1-1-1·1-3-1은 서로 독립인데 각각 별도 bash 왕복으로 돌았다."""
+    """1-1·1-3-1은 서로 독립인데 각각 별도 bash 왕복으로 돌았다."""
     skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "uv run invagent daily-prep" in skill
     # 개별 명령은 지우지 않는다 — 한 단계만 다시 돌릴 때 쓰고, 해석 기준의 정본이다.
-    for script in ("fetch_market_signals.py", "cash_deploy_check.py", "peak_drawdown.py"):
+    for script in ("fetch_market_signals.py", "peak_drawdown.py"):
         assert script in skill
     # 스냅샷이 없으면 낙폭 단계는 실패가 아니라 미실행이라는 점이 문서에 있어야 한다.
     assert "그 파일이 이미 있을 때만" in skill
@@ -2863,120 +2862,3 @@ def test_append_section_removes_legacy_title(tmp_path: Path) -> None:
     assert module.LEGACY_SECTION_TITLES[0] not in text
     assert "-45.3%" not in text  # 옛 섹션 본문까지 걷어낸다
     assert "매매규칙 6(-15% 손절)" in text  # 다른 섹션은 보존
-
-
-# --- cash_deploy_check.py (현금 투입 사다리) ---------------------------------
-
-
-def _load_cash_deploy_module():
-    script_path = SKILLS_ROOT / "daily-digest" / "scripts" / "cash_deploy_check.py"
-    spec = importlib.util.spec_from_file_location("cash_deploy_check", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _all_pass_metrics(module) -> dict:
-    """세 단계를 전부 여는 지표 묶음."""
-    return {
-        "last_ftd": "2026-09-20",
-        "distribution_days": 1,
-        "hold_days_ma150": 4,
-        "ma150": 6_500.0,
-        "ma20week": 6_900.0,
-        "close": 7_000.0,
-        "below_200ma_ratio": 0.45,
-        "vkospi": 24.0,
-        "net_buy_days": 6,
-    }
-
-
-def test_cash_deploy_ladder_opens_all_three_when_conditions_met() -> None:
-    module = _load_cash_deploy_module()
-
-    conditions = module.grade(_all_pass_metrics(module), date(2026, 10, 1))
-    step, reason = module.verdict(conditions, 7_000.0)
-
-    assert [c.state for c in conditions] == [module.OK] * 8
-    assert step == 3
-    assert reason == "3단계 전부 충족"
-
-
-def test_cash_deploy_ladder_stops_at_first_unmet_gate() -> None:
-    """2차 문항 하나가 비면 1차까지만 열리고, 3차 충족 여부는 승격 근거가 되지 못한다."""
-    module = _load_cash_deploy_module()
-    metrics = _all_pass_metrics(module)
-    metrics["below_200ma_ratio"] = 0.804  # C5 미충족
-
-    conditions = module.grade(metrics, date(2026, 10, 1))
-    step, reason = module.verdict(conditions, 7_000.0)
-
-    assert step == 1
-    assert "2차 미충족" in reason and "C5" in reason
-
-
-def test_cash_deploy_unknown_never_counts_as_pass() -> None:
-    """VKOSPI·수급은 자동 수집 경로가 없다. 미확인(❓)이 충족으로 새면 사다리가 무의미해진다."""
-    module = _load_cash_deploy_module()
-    metrics = _all_pass_metrics(module)
-    metrics["vkospi"] = None
-    metrics["net_buy_days"] = None
-
-    conditions = module.grade(metrics, date(2026, 10, 1))
-    states = {c.code: c.state for c in conditions}
-    step, _ = module.verdict(conditions, 7_000.0)
-
-    assert states["C6"] == module.UNKNOWN and states["C8"] == module.UNKNOWN
-    assert step == 1
-
-
-def test_cash_deploy_invalidation_overrides_every_condition() -> None:
-    """사이클 저점 이탈은 조건이 전부 켜져 있어도 사다리를 접는다."""
-    module = _load_cash_deploy_module()
-
-    conditions = module.grade(_all_pass_metrics(module), date(2026, 10, 1))
-    step, reason = module.verdict(conditions, module.INVALIDATION_CLOSE - 0.01)
-
-    assert step == -1
-    assert "무효화" in reason
-
-
-def test_cash_deploy_ftd_must_be_newer_than_ladder_start() -> None:
-    """사다리를 세우기 전에 찍힌 FTD(2026-08-05)는 새 신호가 아니다."""
-    module = _load_cash_deploy_module()
-    metrics = _all_pass_metrics(module)
-    metrics["last_ftd"] = "2026-08-05"
-
-    conditions = module.grade(metrics, date(2026, 10, 1))
-    c1 = next(c for c in conditions if c.code == "C1")
-
-    assert c1.state == module.NG
-    assert module.LADDER_START == "2026-09-03"
-
-
-def test_cash_deploy_hold_days_counts_only_the_current_streak() -> None:
-    """150일선을 되찾은 뒤의 연속일만 센다. 중간에 한 번 밑돌면 카운터는 0부터 다시."""
-    module = _load_cash_deploy_module()
-
-    closes = [10.0, 12.0, 9.0, 11.0, 12.0]
-    line = [10.5, 10.5, 10.5, 10.5, 10.5]
-
-    assert module.hold_days_above(closes, line) == 2
-    assert module.hold_days_above([9.0], [10.5]) == 0
-    assert module.hold_days_above([11.0], [None]) == 0
-
-
-def test_cash_deploy_thresholds_match_the_documented_ladder() -> None:
-    """SKILL.md·monthly_context에 문서화된 값과 상수가 어긋나면 채점이 조용히 달라진다."""
-    module = _load_cash_deploy_module()
-
-    assert module.INVALIDATION_CLOSE == 5593.56
-    assert module.MAX_DISTRIBUTION_DAYS == 2
-    assert module.HOLD_DAYS == 3
-    assert module.MAX_BELOW_200MA_RATIO == 0.60
-    assert module.MAX_VKOSPI == 30.0
-    assert module.MIN_NET_BUY_DAYS == 5
-    assert module.FOMC_DATE == date(2026, 9, 17)
-    assert module.TRANCHES == {1: 50_000_000, 2: 70_000_000, 3: 50_000_000}
-    assert module.RESERVE == 34_000_000

@@ -85,14 +85,13 @@ def test_cli_daily_prep_help():
 
 
 def test_daily_prep_runs_steps_concurrently_in_a_fixed_order():
-    """브리핑 준비 3단계는 서로 독립인데 각각 별도 bash 왕복으로 순서대로 돌았다."""
+    """브리핑 준비 단계는 서로 독립인데 각각 별도 bash 왕복으로 순서대로 돌았다."""
     import time
 
     from invagent.daily_prep import Step, run_steps
 
     steps = [
         Step("시장 신호", [sys.executable, "-c", "import time; time.sleep(0.15); print('signals')"]),
-        Step("현금 사다리", [sys.executable, "-c", "import time; time.sleep(0.15); print('ladder')"]),
         Step("전고점 낙폭", [sys.executable, "-c", "import time; time.sleep(0.15); print('drawdown')"]),
     ]
 
@@ -100,10 +99,10 @@ def test_daily_prep_runs_steps_concurrently_in_a_fixed_order():
     results = run_steps(steps)
     elapsed = time.monotonic() - started
 
-    assert [r.name for r in results] == ["시장 신호", "현금 사다리", "전고점 낙폭"]
-    assert [r.stdout.strip() for r in results] == ["signals", "ladder", "drawdown"]
+    assert [r.name for r in results] == ["시장 신호", "전고점 낙폭"]
+    assert [r.stdout.strip() for r in results] == ["signals", "drawdown"]
     assert all(r.ok for r in results)
-    assert elapsed < 3 * 0.15, "여전히 한 단계씩 기다린다"
+    assert elapsed < 2 * 0.15, "여전히 한 단계씩 기다린다"
 
 
 def test_daily_prep_step_failure_never_blocks_the_others():
@@ -123,35 +122,21 @@ def test_daily_prep_skips_a_step_whose_input_is_missing(tmp_path):
     """스냅샷이 없으면 전고점 낙폭 단계는 건너뛴다 — 실패가 아니라 미실행이다."""
     from invagent.daily_prep import build_steps
 
-    names = [s.name for s in build_steps(snapshot=tmp_path / "없음.md", vkospi=None, net_buy_days=None, no_cache=False)]
+    names = [s.name for s in build_steps(snapshot=tmp_path / "없음.md", no_cache=False)]
     assert "전고점 낙폭" not in names
-    assert "시장 신호" in names and "현금 투입 사다리" in names
-
-
-def test_daily_prep_passes_optional_inputs_through():
-    """VKOSPI·수급 일수는 자동 수집 경로가 없어 인자로만 들어온다. 안 주면 붙이지 않는다."""
-    from invagent.daily_prep import build_steps
-
-    with_args = build_steps(snapshot=None, vkospi=28.5, net_buy_days=5, no_cache=True)
-    ladder = next(s for s in with_args if s.name == "현금 투입 사다리")
-    assert "--vkospi" in ladder.command and "28.5" in ladder.command
-    assert "--net-buy-days" in ladder.command and "5" in ladder.command
-
-    without = build_steps(snapshot=None, vkospi=None, net_buy_days=None, no_cache=False)
-    ladder = next(s for s in without if s.name == "현금 투입 사다리")
-    assert "--vkospi" not in ladder.command
+    assert "시장 신호" in names
 
 
 def test_daily_prep_no_cache_reaches_every_step():
     """단계마다 `--no-cache`를 붙이면 그 플래그가 없는 스크립트(fetch_market_signals)는 조용히 캐시를 쓴다."""
     from invagent.daily_prep import build_steps
 
-    off = build_steps(snapshot=None, vkospi=None, net_buy_days=None, no_cache=True)
+    off = build_steps(snapshot=None, no_cache=True)
     assert off, "단계가 하나도 없다"
     for step in off:
         assert step.env.get("INVAGENT_HTTP_CACHE") == "0", f"{step.name}이 캐시를 계속 쓴다"
 
-    on = build_steps(snapshot=None, vkospi=None, net_buy_days=None, no_cache=False)
+    on = build_steps(snapshot=None, no_cache=False)
     for step in on:
         assert "INVAGENT_HTTP_CACHE" not in step.env
 
@@ -191,7 +176,7 @@ def test_daily_prep_render_keeps_partial_output_and_its_warnings():
 
     text = render([
         StepResult("시장 신호", True, "지수 6,687", "[누락] credit_balance — HTTP 500"),
-        StepResult("사다리", False, "", "cookie 없음"),
+        StepResult("전고점 낙폭", False, "", "cookie 없음"),
     ])
 
     assert "지수 6,687" in text

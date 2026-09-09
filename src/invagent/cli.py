@@ -220,20 +220,16 @@ def show_stock_cmd(ticker):
 @cli.command()
 @click.option("--snapshot", type=click.Path(path_type=Path), default=None,
               help="포트폴리오 스냅샷 경로 (없으면 전고점 낙폭 단계를 건너뛴다)")
-@click.option("--vkospi", type=float, default=None, help="오늘 VKOSPI 종가 (자동 수집 경로 없음)")
-@click.option("--net-buy-days", type=int, default=None, help="외국인·기관 중 최대 연속 순매수 일수")
 @click.option("--no-cache", is_flag=True, default=False, help="HTTP 캐시를 쓰지 않고 매번 새로 받는다")
-def daily_prep_cmd(snapshot, vkospi, net_buy_days, no_cache):
+def daily_prep_cmd(snapshot, no_cache):
     """Run the briefing's independent prep steps at once.
 
-    Market signals, the cash-deployment ladder and the peak-drawdown scan do not
-    depend on each other, so they run concurrently and print as one block in a
-    fixed order. Each step is non-blocking: a failure leaves its section with a
-    reason and the command still exits 0.
+    Market signals and the peak-drawdown scan do not depend on each other, so
+    they run concurrently and print as one block in a fixed order. Each step is
+    non-blocking: a failure leaves its section with a reason and the command
+    still exits 0.
     """
-    steps = daily_prep.build_steps(
-        snapshot=snapshot, vkospi=vkospi, net_buy_days=net_buy_days, no_cache=no_cache
-    )
+    steps = daily_prep.build_steps(snapshot=snapshot, no_cache=no_cache)
     click.echo(daily_prep.render(daily_prep.run_steps(steps)))
 
 

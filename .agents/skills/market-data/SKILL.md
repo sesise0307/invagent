@@ -50,7 +50,7 @@ uv run python .agents/skills/analyze-stock/scripts/fetch_stock_info.py "<종목�
 ```bash
 uv run python .agents/skills/stage-analysis/scripts/stage_scan.py "<종목명 또는 티커>" [--no-cache]
 uv run python .agents/skills/daily-digest/scripts/fetch_market_signals.py
-uv run invagent daily-prep   # 시장 신호 + 현금 사다리 + 전고점 낙폭을 한 번에
+uv run invagent daily-prep   # 시장 신호 + 전고점 낙폭을 한 번에
 ```
 
 ### 임시 조회 (판정 없이 원자료만)
@@ -123,5 +123,5 @@ gitignore된 `.env`에 한 줄로, 따옴표로 감싸 둔다. 추적되는 파�
 
 ## 스킬 경계
 
-- 값을 **판정**하는 일(스테이지 등급, 낙폭 밴드, 현금 사다리, 목표가 blend)은 각 스킬이 한다.
+- 값을 **판정**하는 일(스테이지 등급, 낙폭 밴드, 목표가 blend)은 각 스킬이 한다.
 - 이 스킬은 판정하지 않는다. "어디서 가져오나 / 왜 실패했나 / 어떻게 고치나"까지가 범위다.

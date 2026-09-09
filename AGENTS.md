@@ -163,8 +163,8 @@ lives in `analyze-stock/SKILL.md` step 5-1; the output layout lives in
 `template/stock_analysis.md` §6-A.
 
 `uv run invagent daily-prep` (`src/invagent/daily_prep.py`) is the single entry point for the
-briefing's independent prep steps — market signals, the cash-deployment ladder, and, when today's
-snapshot already exists, the peak-drawdown scan. They do not depend on each other, so they run
+briefing's independent prep steps — market signals and, when today's snapshot already exists,
+the peak-drawdown scan. They do not depend on each other, so they run
 concurrently and print as one block in a fixed order instead of costing a separate command each.
 Every step stays non-blocking exactly as its SKILL.md section requires: a failed step leaves its
 section with a reason and the command still exits 0. `--snapshot` runs the drawdown step only if
@@ -173,8 +173,8 @@ and a same-day re-run picks it up. The per-step commands stay documented in the 
 re-running one step alone, and each section remains the authority on how to read its output.
 
 The `daily-digest` skill builds one briefing a day out of every daily input —
-saved Telegram messages, market signals, the cash-deployment ladder, the
-portfolio snapshot, peak drawdown and account MDD — which is why it is not named
+saved Telegram messages, market signals, the portfolio snapshot, peak drawdown
+and account MDD — which is why it is not named
 after Telegram. It owns everything under `output/daily-digest/`, which was
 `output/telegram-daily/` until the skill was renamed. `output/` is gitignored, so
 that directory moved on disk rather than in a commit: a checkout that predates the
@@ -292,32 +292,6 @@ are printed as a footnote in the section itself. Renaming the section title
 requires adding the old title to `LEGACY_SECTION_TITLES` so `--append` strips it;
 `output/` is gitignored, so already-written snapshots can only be migrated by the
 code that rewrites them.
-
-`.agents/skills/daily-digest/scripts/cash_deploy_check.py` grades the **cash
-deployment ladder** — the standing answer to "when do I put the cash to work",
-fixed on 2026-09-03 as eight conditions gating three tranches rather than as a
-date. The ladder itself is registered in the `매크로 흐름` section of
-`output/daily-digest/monthly_context.md`; the script is its enforcement arm, so
-the briefing quotes its verdict instead of re-grading the conditions by eye. Index
-moving averages come from the same unauthenticated Naver `siseJson` endpoint as
-`stage-analysis`, through `invagent.datafeed.naver.fetch_bars` and
-`datafeed.series.sma`; distribution days, rally count, the last follow-through
-day, and the below-200-day-average breadth ratio come from
-`fetch_market_signals.fetch_api`, which reads the StockEasy market endpoints
-through the same package. Neither is reimplemented. VKOSPI and
-the foreign/institutional net-buy streak have no unauthenticated source, so they
-arrive as `--vkospi` and `--net-buy-days`; without them those conditions stay `❓`
-and **`❓` is never promoted to a pass**, which is what keeps cash from leaving on
-an unverified condition. A close below the cycle low overrides every condition and
-retires the ladder into the 「기본 원칙 13」 procedure, because the ladder is an
-entry tool and not a defensive one. Thresholds are this skill's own operating
-choices, live as constants at the top of the script, and are documented with their
-rationale in `daily-digest/SKILL.md` step 1-1-1 — change both together, and
-`tests/test_agent_configuration.py` fails if the constants drift from that table.
-Because the verdict is recomputed daily it is written only into that day's
-briefing; the `monthly_context.md` entry carries the condition table and is
-updated only when a tranche opens, the ladder is invalidated, or the conditions
-themselves change.
 
 `src/invagent/datafeed/cache.py` is the shared HTTP response cache every network call goes
 through —
