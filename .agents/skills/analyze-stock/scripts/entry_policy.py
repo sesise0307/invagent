@@ -13,6 +13,14 @@ Example input::
    "earnings":{"status":"ok","surprise":false},
    "instrument":{"status":"ok","kind":"stock","leveraged":false}}
 
+Stage 1 and stage 3 open only through ``value_gate`` (가치 우선 진입), which caps the
+entry at the planned first tranche::
+
+  {"stage":{"status":"ok","value":1},
+   "value_gate":{"status":"ok","downside_blocked":true,"reward_risk":3.4,
+                 "first_tranche_fraction":0.03,"target_weight_fraction":0.10,
+                 "next_tranche_trigger":"직전 순환적 저점 회복 후 스윙 고점 돌파"}}
+
 Fractions use 0..1 (5% is 0.05). Output is policy advice only.
 """
 
@@ -27,6 +35,8 @@ from pathlib import Path
 from typing import Any
 
 EVENT_LIMIT = 0.05
+VALUE_GATE_MIN_REWARD_RISK = 3.0
+VALUE_PATH_TRANCHE_RATIO = 1 / 3
 ACTION_PRIORITY = {"eligible": 0, "watch": 1, "withhold": 2, "avoid": 3}
 
 
@@ -52,6 +62,31 @@ def _state(payload: dict[str, Any], name: str) -> dict[str, Any] | None:
     if value.get("status") not in {"ok", "unknown", "missing", "error", "stale"}:
         raise EntryPolicyError(f"{name}.status is invalid")
     return value
+
+
+def _value_first_tranche(gate: dict[str, Any] | None) -> float | None:
+    """가치 우선 진입의 1차 수량. 게이트가 못 열면 None — 진입 수량 0이다."""
+    if not gate or gate["status"] != "ok":
+        return None
+    blocked = gate.get("downside_blocked")
+    if not isinstance(blocked, bool):
+        raise EntryPolicyError("value_gate.downside_blocked must be boolean")
+    if not blocked:
+        return None
+    reward_risk = gate.get("reward_risk")
+    if isinstance(reward_risk, bool) or not isinstance(reward_risk, (int, float)) \
+            or not math.isfinite(reward_risk):
+        raise EntryPolicyError("value_gate.reward_risk must be a finite number")
+    if reward_risk < VALUE_GATE_MIN_REWARD_RISK:
+        return None
+    trigger = gate.get("next_tranche_trigger")
+    if not isinstance(trigger, str) or not trigger.strip():
+        return None
+    tranche = _fraction(gate.get("first_tranche_fraction"), "value_gate.first_tranche_fraction")
+    target = _fraction(gate.get("target_weight_fraction"), "value_gate.target_weight_fraction")
+    if tranche <= 0 or tranche > target * VALUE_PATH_TRANCHE_RATIO + 1e-12:
+        return None
+    return tranche
 
 
 def decide(payload: Any) -> dict[str, Any]:
@@ -103,12 +138,17 @@ def decide(payload: Any) -> dict[str, Any]:
         value = stage.get("value")
         if value not in {1, 2, 3, 4}:
             raise EntryPolicyError("stage.value must be 1, 2, 3, or 4")
-        if value == 1:
-            apply("stage", "watch", "stage 1 is not a buy stage", "기본 원칙 8(풍림화산)")
+        if value in {1, 3}:
+            tranche = _value_first_tranche(_state(payload, "value_gate"))
+            if tranche is None:
+                apply("stage", "withhold", f"stage {value} without a passing value gate",
+                      "매매규칙 2(펀더 기반 매수)")
+            else:
+                cap = min(cap, tranche)
+                apply("stage", "watch", f"stage {value} value-first entry: capped first tranche only",
+                      "매매규칙 4(분할 매수)")
         elif value == 2:
             apply("stage", "eligible", "stage 2 is the buy-stage gate", "매매규칙 2(펀더 기반 매수)")
-        elif value == 3:
-            apply("stage", "watch", "stage 3 prohibits a new buy", "매매규칙 5(분할 매도)")
         else:
             apply("stage", "avoid", "stage 4 remains an avoidance stage", "매매규칙 6(-15%, -20% 손절)")
 

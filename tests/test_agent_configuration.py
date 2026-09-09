@@ -159,16 +159,19 @@ def test_analyze_stock_checks_overhang_before_entry() -> None:
 
 
 def test_analyze_stock_gates_entry_on_the_scripted_stage() -> None:
-    """오버행만 게이트고 스테이지는 3관점 중 1표에 그치면, 3·4단계 종목이 기대수익만으로 🟢를 받는다."""
+    """스테이지가 3관점 중 1표에 그치면 3·4단계 종목이 기대수익만으로 🟢를 받는다.
+    게이트는 유지하되, 1·3단계는 밸류 게이트라는 명시된 문을 통해서만 열린다."""
     skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
     stage = (SKILLS_ROOT / "stage-analysis" / "SKILL.md").read_text(encoding="utf-8")
 
-    # stage-analysis가 3단계를 신규 매수 금지로 규정하므로 analyze-stock도 같은 강도여야 한다.
-    assert "3단계 | 신규 매수 금지" in stage
-    assert "스테이지 게이트" in skill
-    # 오버행 게이트와 같은 형식 — 두 단계 모두 강등 + 뒤집을 근거 요구.
-    gate = skill.split("스테이지 게이트")[1].split("오버행 게이트")[0]
-    assert "`3단계`" in gate and "🟡" in gate
+    # 두 스킬이 3단계를 같은 강도로 다뤄야 한다 — 기본은 금지, 예외는 1차 분할 한정.
+    assert "신규 매수 금지 — 밸류 게이트 통과 시 1차 분할만 예외" in stage
+    assert "밸류 게이트 통과 시 1차 분할 한정" in stage
+    assert "진입 가부의 정본은 `analyze-stock` 10단계" in stage
+
+    assert "진입 경로 판정" in skill
+    gate = skill.split("진입 경로 판정")[1].split("오버행 게이트")[0]
+    assert "`1단계` 또는 `3단계`" in gate and "🟡" in gate
     assert "`4단계`" in gate and "🔴" in gate
     assert "stage_scan" in gate
     assert "기대수익이 크다는 것은 뒤집을 근거가 아니다" in gate
@@ -2862,3 +2865,249 @@ def test_append_section_removes_legacy_title(tmp_path: Path) -> None:
     assert module.LEGACY_SECTION_TITLES[0] not in text
     assert "-45.3%" not in text  # 옛 섹션 본문까지 걷어낸다
     assert "매매규칙 6(-15% 손절)" in text  # 다른 섹션은 보존
+
+
+def _load_entry_policy_module():
+    script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "entry_policy.py"
+    spec = importlib.util.spec_from_file_location("entry_policy", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _entry_payload(**overrides) -> dict:
+    """진입 게이트가 전부 통과하는 기본 입력. 시험할 게이트만 덮어쓴다."""
+    payload = {
+        "asof": "2026-09-09",
+        "valuation_grade": "buy_candidate",
+        "account_pause": {
+            "status": "ok",
+            "active": False,
+            "remaining_trading_days": 0,
+            "review_complete": True,
+        },
+        "stage": {"status": "ok", "value": 2},
+        "overhang": {"status": "ok", "value": "none"},
+        "event": {"status": "ok", "enabled": False},
+        "long_bull": {"status": "ok", "active": False},
+        "earnings": {"status": "ok", "surprise": False},
+        "instrument": {"status": "ok", "kind": "stock", "leveraged": False},
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_entry_policy_stage_two_stays_eligible() -> None:
+    """가드 — 밸류 경로를 여는 동안 2단계 정상 진입이 깨지면 안 된다."""
+    module = _load_entry_policy_module()
+
+    result = module.decide(_entry_payload())
+
+    assert result["action"] == "eligible"
+    assert result["max_tranche_fraction"] is None
+
+
+def test_entry_policy_withholds_when_stage_is_unknown() -> None:
+    """가드 — 알 수 없음은 허가로 승격되지 않는다."""
+    module = _load_entry_policy_module()
+
+    result = module.decide(_entry_payload(stage={"status": "missing"}))
+
+    assert result["action"] == "withhold"
+
+
+VALUE_GATE_PASS = {
+    "status": "ok",
+    "downside_blocked": True,
+    "reward_risk": 3.4,
+    "first_tranche_fraction": 0.03,
+    "target_weight_fraction": 0.10,
+    "next_tranche_trigger": "직전 순환적 저점 회복 후 스윙 고점 돌파",
+}
+
+
+def test_entry_policy_opens_stage_one_for_a_passing_value_gate() -> None:
+    """1단계는 매집 구간이다. 하방이 막힌 저평가면 1차 분할이 열려야 한다."""
+    module = _load_entry_policy_module()
+
+    result = module.decide(
+        _entry_payload(stage={"status": "ok", "value": 1}, value_gate=dict(VALUE_GATE_PASS))
+    )
+
+    assert result["action"] == "watch"
+    assert result["max_tranche_fraction"] == pytest.approx(0.03)
+
+
+def test_entry_policy_withholds_stage_one_without_a_value_gate() -> None:
+    """밸류 근거 없이 1단계에 들어가는 것은 여전히 막는다 — 진입 수량 0."""
+    module = _load_entry_policy_module()
+
+    result = module.decide(_entry_payload(stage={"status": "ok", "value": 1}))
+
+    assert result["action"] == "withhold"
+    assert result["max_tranche_fraction"] is None
+
+
+def test_entry_policy_treats_stage_three_like_stage_one() -> None:
+    """3단계도 밸류 게이트 통과 시 1차 분할만 예외로 연다. 미통과면 수량 0."""
+    module = _load_entry_policy_module()
+
+    opened = module.decide(
+        _entry_payload(stage={"status": "ok", "value": 3}, value_gate=dict(VALUE_GATE_PASS))
+    )
+    closed = module.decide(_entry_payload(stage={"status": "ok", "value": 3}))
+
+    assert opened["action"] == "watch"
+    assert opened["max_tranche_fraction"] == pytest.approx(0.03)
+    assert closed["action"] == "withhold"
+
+
+def test_entry_policy_keeps_stage_four_closed_to_the_value_gate() -> None:
+    """「매매규칙 2」는 하락하는 와중의 매수를 금지한다 — 밸류가 4단계를 열지 못한다."""
+    module = _load_entry_policy_module()
+
+    result = module.decide(
+        _entry_payload(stage={"status": "ok", "value": 4}, value_gate=dict(VALUE_GATE_PASS))
+    )
+
+    assert result["action"] == "avoid"
+    assert result["max_tranche_fraction"] is None
+
+
+def test_value_gate_requires_a_blocked_downside() -> None:
+    """하방 막힘이 필수 조건이다. 기대수익만 큰 종목으로 경로가 열리면 안 된다."""
+    module = _load_entry_policy_module()
+
+    result = module.decide(
+        _entry_payload(
+            stage={"status": "ok", "value": 1},
+            value_gate={**VALUE_GATE_PASS, "downside_blocked": False},
+        )
+    )
+
+    assert result["action"] == "withhold"
+    assert result["max_tranche_fraction"] is None
+
+
+def test_value_gate_requires_reward_risk_of_three() -> None:
+    """추세 확인 없이 들어가는 대가로 손익비 문턱이 일반 2.0보다 높다."""
+    module = _load_entry_policy_module()
+
+    below = module.decide(
+        _entry_payload(
+            stage={"status": "ok", "value": 1},
+            value_gate={**VALUE_GATE_PASS, "reward_risk": 2.9},
+        )
+    )
+    at_threshold = module.decide(
+        _entry_payload(
+            stage={"status": "ok", "value": 1},
+            value_gate={**VALUE_GATE_PASS, "reward_risk": module.VALUE_GATE_MIN_REWARD_RISK},
+        )
+    )
+
+    assert below["action"] == "withhold"
+    assert at_threshold["action"] == "watch"
+
+
+def test_value_gate_caps_the_first_tranche_at_a_third_of_target_weight() -> None:
+    """경로 B는 1차 분할 한정이다. 목표 비중을 통째로 싣는 tranche는 통과시키지 않는다."""
+    module = _load_entry_policy_module()
+
+    oversized = module.decide(
+        _entry_payload(
+            stage={"status": "ok", "value": 1},
+            value_gate={**VALUE_GATE_PASS, "first_tranche_fraction": 0.05},
+        )
+    )
+    at_limit = module.decide(
+        _entry_payload(
+            stage={"status": "ok", "value": 1},
+            value_gate={
+                **VALUE_GATE_PASS,
+                "first_tranche_fraction": 0.10 * module.VALUE_PATH_TRANCHE_RATIO,
+            },
+        )
+    )
+
+    assert oversized["action"] == "withhold"
+    assert at_limit["action"] == "watch"
+
+
+def test_value_gate_requires_a_next_tranche_trigger() -> None:
+    """나머지 tranche를 무엇이 여는지 안 적었으면 1차도 열지 않는다 — 「매매규칙 4」 사전 계획."""
+    module = _load_entry_policy_module()
+
+    blank = module.decide(
+        _entry_payload(
+            stage={"status": "ok", "value": 1},
+            value_gate={**VALUE_GATE_PASS, "next_tranche_trigger": "   "},
+        )
+    )
+    missing = module.decide(
+        _entry_payload(
+            stage={"status": "ok", "value": 1},
+            value_gate={k: v for k, v in VALUE_GATE_PASS.items() if k != "next_tranche_trigger"},
+        )
+    )
+
+    assert blank["action"] == "withhold"
+    assert missing["action"] == "withhold"
+
+
+def test_analyze_stock_opens_a_value_first_entry_path() -> None:
+    """드리프트 가드 — 매수는 가치, 매도는 추세. 1·3단계가 밸류 게이트로 열려야 한다."""
+    skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "경로 A (추세 확인 진입)" in skill
+    assert "경로 B (가치 우선 진입)" in skill
+    assert "밸류 게이트" in skill
+    # 하방 막힘이 필수 조건이다 — 기대수익만으로 열리면 안 된다.
+    assert "하방 막힘" in skill
+    assert "손익비 ≥ 3.0" in skill
+    assert "목표 비중 ÷ 3" in skill
+    # 4단계는 밸류 예외가 없다.
+    gate = skill.split("경로 A (추세 확인 진입)")[1].split("오버행 게이트")[0]
+    assert "밸류 예외 없음" in gate
+    assert "기대수익이 크다는 것은 뒤집을 근거가 아니다" in gate
+
+
+def test_stock_analysis_template_has_entry_path_and_trailing_stop() -> None:
+    """드리프트 가드 — 진입 경로와 추세 이탈선은 §1에서 바로 읽혀야 한다."""
+    template = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
+
+    assert "| 진입 경로 |" in template
+    assert "| 추세 이탈선 |" in template
+    # 「매매규칙 15」가 요구하는 것 — 미리 정한 선 + 매주 재검토.
+    assert "매매규칙 3·15" in template
+    assert "매주 재검토" in template
+    # §9에 밸류 게이트 체크리스트가 붙는다.
+    assert "### 🚪 진입 경로 판정" in template
+    assert "max_tranche_fraction" in template
+    # 12섹션 구조는 그대로다.
+    sections = re.findall(r"^## (\d+)\.", template, re.MULTILINE)
+    assert [int(section) for section in sections] == list(range(1, 13))
+
+
+def test_trailing_stop_uses_the_closing_price_basis() -> None:
+    """드리프트 가드 — 발동 판정은 종가로만 한다(`my_rules.md` 「적용 방법」 2026-09-09 확정)."""
+    rules = _my_rules()
+    assert "가격 기준은 종가다" in rules
+
+    skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+    assert "추세 이탈선" in skill
+    block = skill.split("추세 이탈선")[1][:500]
+    assert "종가 기준" in block
+    assert "매매규칙 3" in block and "매매규칙 15" in block
+
+
+def test_advice_records_the_entry_stage_conflict_resolution() -> None:
+    """드리프트 가드 — 대가 기준(2단계만 매수) vs 사용자 룰을 매번 재논쟁하지 않는다."""
+    advice = (SKILLS_ROOT / "advice" / "SKILL.md").read_text(encoding="utf-8")
+
+    table = advice.split("## 대가 기준 vs 사용자 룰 충돌 처리")[1]
+    assert "진입 국면" in table
+    assert "매수는 가치, 매도는 추세" in table
+    assert "1차 분할 한정" in table
