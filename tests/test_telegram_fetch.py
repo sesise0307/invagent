@@ -674,3 +674,83 @@ async def test_message_fetcher_extracts_links_concurrently(monkeypatch):
     assert messages[3]["links_content"].endswith("body-m3")
     assert peak_live > 1, "링크를 아직 한 건씩 받고 있다"
     assert elapsed < 8 * 0.05, "직렬 실행 시간이 그대로 나온다"
+
+
+# --- 네이버 블로그 원문 분리 --------------------------------------------------
+
+
+def _link_message(text, msg_id=1):
+    """링크만 담긴 텍스트 메시지 목."""
+    msg = AsyncMock()
+    msg.media = None
+    msg.id = msg_id
+    msg.date = datetime.now(timezone.utc)
+    msg.text = text
+    msg.forward = None
+    return msg
+
+
+@pytest.mark.asyncio
+async def test_fetch_saved_messages_moves_naver_blog_body_to_a_file(tmp_path, monkeypatch):
+    """네이버 블로그 글 원문은 파일로 빼고 링크 블록엔 경로와 요약 대기 마커만 남긴다"""
+    fetcher = MessageFetcher(_image_config(), TelegramClientManager())
+    url = "https://blog.naver.com/chacha36/224407253026"
+    body = "HD현대중공업 발전엔진 증설 팔로업입니다.\n본문 둘째 줄"
+
+    async def fake_extract(text):
+        return {"contents": {url: body}}
+
+    monkeypatch.setattr(fetcher.link_extractor, "extract_and_fetch", fake_extract)
+    blog_dir = tmp_path / "blogs" / "2026-09-10"
+
+    with patch.object(fetcher.client_manager, "get_client") as mock_get_client:
+        mock_get_client.return_value = _patched_client(fetcher.client_manager, _link_message(url))
+        messages = await fetcher.fetch_saved_messages(days=1, fetch_links=True, blog_dir=blog_dir)
+
+    saved = blog_dir / "chacha36_224407253026.md"
+    assert saved.read_text(encoding="utf-8") == f"URL: {url}\n\n{body}\n"
+    assert messages[0]["links_content"] == f"URL: {url}\n파일: {saved}\n[요약 대기]"
+
+
+@pytest.mark.asyncio
+async def test_fetch_saved_messages_keeps_other_links_inline(tmp_path, monkeypatch):
+    """네이버 글이 아닌 링크는 지금처럼 본문을 링크 블록에 그대로 둔다"""
+    fetcher = MessageFetcher(_image_config(), TelegramClientManager())
+    naver = "https://blog.naver.com/chacha36/224407253026"
+    other = "https://example.com/report"
+
+    async def fake_extract(text):
+        return {"contents": {naver: "블로그 원문", other: "일반 링크 본문"}}
+
+    monkeypatch.setattr(fetcher.link_extractor, "extract_and_fetch", fake_extract)
+    blog_dir = tmp_path / "blogs"
+
+    with patch.object(fetcher.client_manager, "get_client") as mock_get_client:
+        mock_get_client.return_value = _patched_client(
+            fetcher.client_manager, _link_message(f"{naver} {other}")
+        )
+        messages = await fetcher.fetch_saved_messages(days=1, fetch_links=True, blog_dir=blog_dir)
+
+    assert f"URL: {other}\n일반 링크 본문" in messages[0]["links_content"]
+    assert "블로그 원문" not in messages[0]["links_content"]
+    assert [p.name for p in blog_dir.iterdir()] == ["chacha36_224407253026.md"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_saved_messages_leaves_failed_naver_fetch_inline(tmp_path, monkeypatch):
+    """네이버 글이라도 읽기에 실패했으면 파일도 마커도 없이 실패 표시만 남긴다"""
+    fetcher = MessageFetcher(_image_config(), TelegramClientManager())
+    url = "https://blog.naver.com/chacha36/224407253026"
+
+    async def fake_extract(text):
+        return {"contents": {url: "[링크 읽기 타임아웃]"}}
+
+    monkeypatch.setattr(fetcher.link_extractor, "extract_and_fetch", fake_extract)
+    blog_dir = tmp_path / "blogs"
+
+    with patch.object(fetcher.client_manager, "get_client") as mock_get_client:
+        mock_get_client.return_value = _patched_client(fetcher.client_manager, _link_message(url))
+        messages = await fetcher.fetch_saved_messages(days=1, fetch_links=True, blog_dir=blog_dir)
+
+    assert messages[0]["links_content"] == f"URL: {url}\n[링크 읽기 타임아웃]"
+    assert not blog_dir.exists()

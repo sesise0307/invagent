@@ -182,3 +182,34 @@ def test_daily_prep_render_keeps_partial_output_and_its_warnings():
     assert "지수 6,687" in text
     assert "credit_balance" in text
     assert "(수집 실패 — cookie 없음)" in text
+
+
+def test_fetch_messages_passes_todays_blog_dir(tmp_path):
+    """fetch-messages는 raw와 같은 날짜의 blogs 폴더를 넘기고 저장한 글 수를 알린다"""
+    from datetime import datetime
+    from invagent.core.config import Config
+
+    config = Config(api_id=1, api_hash="h", session_path=tmp_path / "s", output_dir=tmp_path)
+    captured = {}
+
+    class FakeFetcher:
+        def __init__(self, config, client_manager):
+            pass
+
+        async def fetch_saved_messages(self, days, **kwargs):
+            captured.update(kwargs)
+            return []
+
+        def format_messages_markdown(self, messages):
+            return ""
+
+    with patch("invagent.cli.Config.from_env", return_value=config), \
+         patch("invagent.cli.MessageFetcher", FakeFetcher), \
+         patch("invagent.cli.TelegramClientManager") as manager_cls:
+        manager_cls.return_value.disconnect = AsyncMock()
+        result = CliRunner().invoke(cli, ["fetch-messages"])
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    assert result.exit_code == 0, result.output
+    assert captured["blog_dir"] == tmp_path / "daily-digest/blogs" / today
+    assert "Blog posts saved: 0" in result.output

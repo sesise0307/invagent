@@ -2733,6 +2733,36 @@ def test_image_pending_marker_matches_the_fetcher_constant() -> None:
     assert f"`{PENDING_IMAGE_MARKER}`로 남은 항목만 처리" in skill
 
 
+def test_blog_summary_marker_matches_the_fetcher_constant() -> None:
+    """SKILL.md가 찾는 요약 대기 마커와 fetch.py가 쓰는 마커가 같아야 한다.
+
+    한쪽만 바꾸면 스킬이 요약할 글을 하나도 못 찾고, 원문 파일만 쌓인 채 조용히 넘어간다.
+    """
+    from invagent.telegram.fetch import PENDING_BLOG_SUMMARY_MARKER
+
+    skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert PENDING_BLOG_SUMMARY_MARKER == "[요약 대기]"
+    assert "\\[요약 대기\\]" in skill
+    assert f"`{PENDING_BLOG_SUMMARY_MARKER}`로 남은 항목만 처리" in skill
+
+
+def test_daily_digest_documents_blog_summary_step() -> None:
+    skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "### 1-5단계: 네이버 블로그 요약" in skill
+    # 원문은 fetch 단계가 파일로 빼 두고, 요약은 서브에이전트가 한다
+    assert "output/daily-digest/blogs/" in skill
+    assert "서브에이전트" in skill
+    assert "1,000자" in skill
+    # 실패 경로와 2단계 출처 표기
+    assert "[요약 실패]" in skill
+    assert "(블로그 요약)" in skill
+    # 7단계가 원문 파일도 정리하고 오늘 것은 남긴다
+    assert "output/daily-digest/blogs \\" in skill
+    assert "output/daily-digest/blogs/{today}/**" in skill
+
+
 def test_peak_drawdown_thresholds_match_documented_bands() -> None:
     module = _load_peak_drawdown_module()
 

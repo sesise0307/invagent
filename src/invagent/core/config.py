@@ -40,6 +40,14 @@ class Config:
         """
         return self.output_dir / "daily-digest/media" / date_str
 
+    def digest_blog_dir(self, date_str: str) -> Path:
+        """Return the directory holding Naver blog post bodies for one export date.
+
+        The raw export carries only a pointer and a summary marker for each post,
+        so the bodies live here, retired by the same cleanup step as the media.
+        """
+        return self.output_dir / "daily-digest/blogs" / date_str
+
     @classmethod
     def from_env(cls) -> "Config":
         """Load configuration from environment variables."""

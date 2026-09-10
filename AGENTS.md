@@ -195,8 +195,8 @@ until it is moved. `uv run invagent fetch-messages` writes the raw export to
 `themes/archive/`. The index and theme files are the accumulated memory that
 `analyze-stock` searches, so they are appended to and rolled off, never rewritten
 from scratch. At the end of a run the skill deletes every raw file except today's
-and every dated media directory except today's (`raw/` and `media/` only,
-`-maxdepth 1`); nothing outside those two directories is ever deleted. Market
+and every dated media and blog directory except today's (`raw/`, `media/` and `blogs/`
+only, `-maxdepth 1`); nothing outside those three directories is ever deleted. Market
 indices come from `.agents/skills/daily-digest/scripts/fetch_market_signals.py`,
 which reads the StockEasy market endpoints through `invagent.datafeed.stockeasy`; the module owns
 the rule verdicts (leverage rule 3, the drawdown ladder, the margin-call climax), not the fetch.
@@ -408,8 +408,18 @@ rewritten address goes through the same SSRF checks as any other; any other Nave
 home, Naver News) is fetched as given. From the PostView document only the `.se-main-container`
 body is kept, because trafilatura otherwise mixes the page's layer notices and embedded JSON into
 the text, and a post keeps up to `NAVER_BLOG_MAX_CONTENT_CHARS` (10,000) characters instead of
-`MAX_CONTENT_CHARS` (1,500) — blog conclusions tend to come last. The raw export still records
-the URL the user saved.
+`MAX_CONTENT_CHARS` (1,500) — blog conclusions tend to come last.
+
+That body is too long to sit in the raw export: step 2 of `daily-digest` reads raw in full, so
+several posts would fill the context the briefing is written in. When `fetch-messages` runs with
+links, each successfully fetched post body is written to
+`output/daily-digest/blogs/<yyyy-mm-dd>/<blogId>_<logNo>.md` (`Config.digest_blog_dir`), and the
+raw link block keeps only the saved URL, a `파일:` path and the marker `[요약 대기]`; a failed fetch
+stays inline as its bracketed sentinel. Step 1-5 of the skill hands every pending file to one
+subagent, which replaces each marker with a summary of at most 1,000 characters, so the agent that
+writes the briefing reads summaries and never the posts. The marker is a contract between
+`PENDING_BLOG_SUMMARY_MARKER` in `src/invagent/telegram/fetch.py` and the grep in step 1-5, asserted
+by a test exactly as the image marker is.
 
 Write every implementation — a new feature, a bug fix, a behavior change in a
 skill script — through the installed `tdd` skill (mattpocock's, at

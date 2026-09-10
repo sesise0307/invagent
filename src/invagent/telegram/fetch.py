@@ -14,7 +14,7 @@ from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto
 
 from invagent.core.config import Config
 from invagent.core.client import TelegramClientManager
-from invagent.telegram.link_extractor import LinkExtractor
+from invagent.telegram.link_extractor import LinkExtractor, naver_post_id
 
 
 # 이미지 판정/다운로드 한계값. 링크 추출기의 MAX_RESPONSE_BYTES와 같은 성격의
@@ -42,6 +42,11 @@ MAX_CONCURRENT_LINK_MESSAGES = 5
 # 찾아 판독 결과로 치환하므로 코드와 SKILL.md 양쪽의 계약이다. 한쪽만 바꾸면 스킬이
 # 이미지를 하나도 못 찾는다.
 PENDING_IMAGE_MARKER = "[분석 대기]"
+
+# 네이버 블로그 글 원문 대신 raw에 남는 요약 대기 마커. 원문은 길어서 raw에 그대로 두면
+# 브리핑을 쓰는 에이전트의 컨텍스트를 채우므로 파일로 빼고, daily-digest 스킬 1-5단계가
+# 이 문자열을 찾아 요약으로 치환한다. PENDING_IMAGE_MARKER와 같은 SKILL.md 계약이다.
+PENDING_BLOG_SUMMARY_MARKER = "[요약 대기]"
 
 
 def _is_image_message(message) -> bool:
@@ -85,6 +90,7 @@ class MessageFetcher:
         days: int = 1,
         fetch_links: bool = False,
         media_dir: Optional[Path] = None,
+        blog_dir: Optional[Path] = None,
     ) -> list[dict]:
         """
         저장된 메시지를 조회합니다.
@@ -97,6 +103,9 @@ class MessageFetcher:
             fetch_links: True일 경우 링크 내용을 추출. 기본값: False
             media_dir: 첨부 이미지를 내려받을 디렉토리. None이면 다운로드하지 않고
                 이미지 존재 여부만 기록한다.
+            blog_dir: 네이버 블로그 글 원문을 저장할 디렉토리. 주어지면 글 원문은 여기
+                파일로 저장하고 링크 내용에는 경로와 요약 대기 마커만 남긴다. None이면
+                원문을 링크 내용에 그대로 둔다.
 
         Returns:
             메시지 리스트. 각 메시지는 다음 구조의 딕셔너리:
@@ -160,11 +169,13 @@ class MessageFetcher:
             messages.append(msg_dict)
 
         if fetch_links:
-            await self._attach_link_contents(messages)
+            await self._attach_link_contents(messages, blog_dir)
 
         return messages
 
-    async def _attach_link_contents(self, messages: list[dict]) -> None:
+    async def _attach_link_contents(
+        self, messages: list[dict], blog_dir: Optional[Path] = None
+    ) -> None:
         """메시지별 링크 본문을 동시에 받아 각자의 자리에 채운다.
 
         메시지끼리는 독립이라 순서대로 기다릴 이유가 없다. 결과는 원래 dict에 직접 쓰므로
@@ -176,13 +187,25 @@ class MessageFetcher:
             async with semaphore:
                 result = await self.link_extractor.extract_and_fetch(msg_dict["text"])
             links_contents = [
-                f"URL: {url}\n{content}"
+                self._link_entry(url, content, blog_dir)
                 for url, content in result.get("contents", {}).items()
                 if content
             ]
             msg_dict["links_content"] = "\n\n".join(links_contents)
 
         await asyncio.gather(*(fill(m) for m in messages))
+
+    @staticmethod
+    def _link_entry(url: str, content: str, blog_dir: Optional[Path]) -> str:
+        """링크 1건의 raw 항목. 네이버 글 원문은 파일로 빼고 경로와 요약 대기 마커만 남긴다."""
+        post = naver_post_id(url) if blog_dir is not None else None
+        # 링크 추출기의 실패 결과는 대괄호 센티널이다. 요약할 원문이 없으므로 그대로 둔다.
+        if post is None or content.startswith("["):
+            return f"URL: {url}\n{content}"
+        blog_dir.mkdir(parents=True, exist_ok=True)
+        path = blog_dir / f"{post[0]}_{post[1]}.md"
+        path.write_text(f"URL: {url}\n\n{content}\n", encoding="utf-8")
+        return f"URL: {url}\n파일: {path}\n{PENDING_BLOG_SUMMARY_MARKER}"
 
     async def _download_image(
         self, client, message, media_dir: Path, downloaded_so_far: int

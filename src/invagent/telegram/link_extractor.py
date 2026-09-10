@@ -56,15 +56,21 @@ NAVER_BLOG_MAX_CONTENT_CHARS = 10000
 _NAVER_POST_PATH = re.compile(r"^/([A-Za-z0-9_-]+)/(\d+)/?$")
 
 
+def naver_post_id(url: str) -> Optional[tuple[str, str]]:
+    """네이버 블로그 글 주소면 (블로그 ID, 글 번호)를, 아니면 None을 돌려준다."""
+    parsed = urlparse(normalize_url(url))
+    if parsed.hostname not in NAVER_BLOG_HOSTS:
+        return None
+    match = _NAVER_POST_PATH.match(parsed.path)
+    return match.groups() if match else None
+
+
 def _naver_postview_url(url: str) -> str:
     """네이버 블로그 글 주소면 PostView 주소를, 아니면 받은 주소를 그대로 돌려준다."""
-    parsed = urlparse(url)
-    if parsed.hostname not in NAVER_BLOG_HOSTS:
+    post = naver_post_id(url)
+    if post is None:
         return url
-    match = _NAVER_POST_PATH.match(parsed.path)
-    if not match:
-        return url
-    blog_id, log_no = match.groups()
+    blog_id, log_no = post
     return f"https://blog.naver.com/PostView.naver?blogId={blog_id}&logNo={log_no}"
 
 
