@@ -59,12 +59,20 @@ the same stock already exists, the skill inherits it instead of starting over.
 It reads the prior report, collects only what is newer than that report's date,
 renames that existing file to today's target path, and then edits the renamed
 file in place. Keep one rolling report per stock; do not create or retain a
-separate dated snapshot. The report adds dated update blocks only where facts or
-judgments changed. Existing analysis must not be silently shortened or replaced;
-corrections keep the old claim and mark it superseded with evidence. The current
-investment call may be rewritten, but the prior call and its reasoning remain
-visible inside the rolling report. Because `output/` is gitignored, resolve the
-exact source and target before renaming and never overwrite an existing target.
+separate dated snapshot. The body of the report holds only the current state —
+keeping superseded prose inline made every inheritance run pay to re-read older
+versions of facts it was about to overwrite. Change tracking lives in §12 개정 이력
+as one line per revision, `- {yyyy-mm-dd}: {정정 | 갱신 | 판단변경} — {요약}`, with the
+evidence (rcept_no, report filename, URL plus as-of date) carried inside the line for
+corrections and reversed calls. Those lines accumulate and are never rolled off,
+because the body no longer holds the past: §12 is the only place the earlier
+judgment survives, which is why step 2 requires reading it in full before writing a
+new call. A prior report still carrying `### YYYY-MM-DD 업데이트` or
+`### {날짜} 기존 분석 (보존)` blocks is migrated on its next inheritance run — each
+block folds into its §12 line first, and only then leaves the body, so an interrupted
+migration loses nothing. Because `output/` is gitignored, that migration happens per
+report as it is next analysed rather than in a commit, and the rename must resolve the
+exact source and target and never overwrite an existing target.
 
 Every external data source is documented in one place — the `market-data` skill.
 It is the single reference for which endpoint serves which value, how the

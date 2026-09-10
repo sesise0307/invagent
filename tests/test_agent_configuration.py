@@ -225,18 +225,45 @@ def test_stock_analysis_template_has_target_price_block() -> None:
     assert [int(section) for section in sections] == list(range(1, 13))
 
 
-def test_analyze_stock_inheritance_is_additive_in_one_rolling_file() -> None:
-    """승계 보고서는 기존 파일명을 바꿔 이어 쓰며 별도 스냅샷을 만들지 않는다."""
+def test_analyze_stock_inheritance_keeps_one_line_change_log() -> None:
+    """승계 보고서는 본문에 현재 상태만 두고 변경은 §12 한 줄 요약으로만 남긴다."""
     skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
     template = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
 
-    assert "### YYYY-MM-DD 업데이트" in skill
     assert "누적 파일 1개만 유지" in skill
     assert "파일명을 목표 경로로 변경" in skill
     assert "복사본을 만들지 않는다" in skill
     assert "불변 스냅샷" not in skill
-    assert "기존 분석을 삭제·축약하지 않는다" in template
-    assert "기존 분석 (보존)" in template
+
+    # 본문은 현재 상태만 — 날짜 업데이트 블록·보존 블록은 폐지됐다.
+    # (폐지된 형식은 옛 보고서를 이관하기 위해 이름으로만 지목한다. 새로 만들라는 지시는 없어야 한다.)
+    assert "블록은 폐지됐다" in skill
+    assert "블록에 추가한다" not in skill
+    assert "기존 분석 (보존)" not in template
+    assert "기존 분석을 삭제·축약하지 않는다" not in template
+    assert "본문 12섹션은 현재 상태만 담는다" in skill
+    assert "본문을 현재 상태로 갱신한다" in template
+
+    # 변경 추적은 §12 한 줄 형식이 정본이다.
+    assert "`- {yyyy-mm-dd}: {구분} — {요약}`" in skill
+    assert "`- {yyyy-mm-dd}: {구분} — {요약 한 줄}`" in template
+    assert "정정 / 갱신 / 판단변경" in skill
+    assert "정정 / 갱신 / 판단변경" in template
+    assert "정정·판단변경은 근거" in skill
+    assert "정정·판단변경은 근거" in template
+
+
+def test_analyze_stock_inheritance_reads_and_migrates_revision_log() -> None:
+    """승계 시 §12를 반드시 읽고, 옛 보존 본문은 §12로 옮긴 뒤 본문에서 뺀다."""
+    skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+
+    # 본문을 현재 상태로 덮으므로 과거 판단은 §12에만 남는다 — 읽기가 필수다.
+    assert "`## 12. 개정 이력` 전체" in skill
+    assert "반드시 읽는다" in skill
+
+    # 이관 순서: §12에 먼저 올린 뒤 본문에서 뺀다.
+    assert "먼저 올린 뒤" in skill
+    assert "본문만 지우고 §12에 안 올리면" in skill
 
 
 def test_project_codex_config_is_credential_free() -> None:
@@ -2178,7 +2205,9 @@ def test_find_prior_report_main_reports_new_and_inherited(
     assert "과거 중복 후보 1건" in out
     assert "승계 파일명을 목표 경로로 먼저 변경" in out
     assert "복사본을 만들지 마라" in out
-    assert "기존 본문을 삭제·축약하지 않는다" in out
+    assert "`## 12. 개정 이력`을 반드시 읽어라" in out
+    assert "§12에 한 줄로 옮긴 뒤 본문에서 뺀다" in out
+    assert "- YYYY-MM-DD: 구분 — 요약" in out
 
     assert module.main(["카카오", "--today", "2026-09-01"]) == 0
     new_out = capsys.readouterr().out
