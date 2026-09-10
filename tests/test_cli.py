@@ -184,8 +184,8 @@ def test_daily_prep_render_keeps_partial_output_and_its_warnings():
     assert "(수집 실패 — cookie 없음)" in text
 
 
-def test_fetch_messages_passes_todays_blog_dir(tmp_path):
-    """fetch-messages는 raw와 같은 날짜의 blogs 폴더를 넘기고 저장한 글 수를 알린다"""
+def test_fetch_messages_passes_todays_link_dir(tmp_path):
+    """fetch-messages는 raw와 같은 날짜의 links 폴더를 넘기고 저장한 링크 수를 알린다"""
     from datetime import datetime
     from invagent.core.config import Config
 
@@ -211,5 +211,5 @@ def test_fetch_messages_passes_todays_blog_dir(tmp_path):
 
     today = datetime.now().strftime("%Y-%m-%d")
     assert result.exit_code == 0, result.output
-    assert captured["blog_dir"] == tmp_path / "daily-digest/blogs" / today
-    assert "Blog posts saved: 0" in result.output
+    assert captured["link_dir"] == tmp_path / "daily-digest/links" / today
+    assert "Links saved: 0" in result.output

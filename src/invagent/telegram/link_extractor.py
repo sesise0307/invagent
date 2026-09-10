@@ -49,10 +49,10 @@ MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 # 네이버 블로그 글 페이지는 본문을 iframe 안의 PostView 문서로 싣는다. 글 주소를 그대로
 # 받으면 껍데기의 제목만 남으므로, 글 주소는 본문이 들어 있는 PostView 주소로 바꿔 받는다.
 NAVER_BLOG_HOSTS = ("blog.naver.com", "m.blog.naver.com")
-# raw에 남기는 링크 본문 길이. 블로그 글은 결론이 끝에 오는 경우가 많아(2026-09-10 글은
-# 핵심 경고가 1,500자 뒤에 있었다) 네이버 글에만 더 길게 남긴다.
-MAX_CONTENT_CHARS = 1500
-NAVER_BLOG_MAX_CONTENT_CHARS = 10000
+# 링크 본문 길이 상한. 본문은 raw가 아니라 링크 원문 파일로 가고 브리핑은 요약만 읽으므로
+# 길게 받아도 브리핑 컨텍스트가 늘지 않는다. 글의 결론은 끝에 오는 경우가 많아(2026-09-10
+# 블로그 글은 핵심 경고가 1,500자 뒤에 있었다) 넉넉하게 둔다.
+MAX_CONTENT_CHARS = 10000
 _NAVER_POST_PATH = re.compile(r"^/([A-Za-z0-9_-]+)/(\d+)/?$")
 
 
@@ -214,7 +214,7 @@ class LinkExtractor:
         except BlockedURLError as e:
             return f"[차단된 URL: {e}]"
 
-        limit = NAVER_BLOG_MAX_CONTENT_CHARS if target != normalized else MAX_CONTENT_CHARS
+        limit = MAX_CONTENT_CHARS
 
         try:
             # 1차: trafilatura로 본문 추출
@@ -364,7 +364,7 @@ class LinkExtractor:
         """응답 본문을 `MAX_RESPONSE_BYTES`까지만 읽어 문자열로 만든다.
 
         본문 전체를 메모리에 올리면 거대한 응답 하나로 수집이 멈춘다. 어차피
-        뒤에서 1500자로 자르므로 앞부분만 있으면 충분하다.
+        뒤에서 `MAX_CONTENT_CHARS`로 자르므로 앞부분만 있으면 충분하다.
         """
         chunks: list[bytes] = []
         size = 0

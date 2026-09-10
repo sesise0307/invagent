@@ -6,15 +6,17 @@
 """
 
 import asyncio
+import hashlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto
 
 from invagent.core.config import Config
 from invagent.core.client import TelegramClientManager
-from invagent.telegram.link_extractor import LinkExtractor, naver_post_id
+from invagent.telegram.link_extractor import LinkExtractor, naver_post_id, normalize_url
 
 
 # 이미지 판정/다운로드 한계값. 링크 추출기의 MAX_RESPONSE_BYTES와 같은 성격의
@@ -43,10 +45,10 @@ MAX_CONCURRENT_LINK_MESSAGES = 5
 # 이미지를 하나도 못 찾는다.
 PENDING_IMAGE_MARKER = "[분석 대기]"
 
-# 네이버 블로그 글 원문 대신 raw에 남는 요약 대기 마커. 원문은 길어서 raw에 그대로 두면
-# 브리핑을 쓰는 에이전트의 컨텍스트를 채우므로 파일로 빼고, daily-digest 스킬 1-5단계가
-# 이 문자열을 찾아 요약으로 치환한다. PENDING_IMAGE_MARKER와 같은 SKILL.md 계약이다.
-PENDING_BLOG_SUMMARY_MARKER = "[요약 대기]"
+# 링크 본문 대신 raw에 남는 요약 대기 마커. 본문은 길어서 raw에 그대로 두면 브리핑을 쓰는
+# 에이전트의 컨텍스트를 채우므로 파일로 빼고, daily-digest 스킬 1-5단계가 이 문자열을 찾아
+# 요약으로 치환한다. PENDING_IMAGE_MARKER와 같은 SKILL.md 계약이다.
+PENDING_LINK_SUMMARY_MARKER = "[요약 대기]"
 
 
 def _is_image_message(message) -> bool:
@@ -70,6 +72,15 @@ def _is_image_message(message) -> bool:
     return False
 
 
+def _link_file_stem(url: str) -> str:
+    """링크 원문 파일 이름. 네이버 글은 블로그 ID와 글 번호, 나머지는 도메인과 URL 해시."""
+    post = naver_post_id(url)
+    if post is not None:
+        return f"{post[0]}_{post[1]}"
+    host = urlparse(normalize_url(url)).hostname or "link"
+    return f"{host}_{hashlib.sha1(url.encode('utf-8')).hexdigest()[:10]}"
+
+
 class MessageFetcher:
     """저장된 메시지 조회 및 포맷팅 기능을 제공하는 클래스."""
 
@@ -90,7 +101,7 @@ class MessageFetcher:
         days: int = 1,
         fetch_links: bool = False,
         media_dir: Optional[Path] = None,
-        blog_dir: Optional[Path] = None,
+        link_dir: Optional[Path] = None,
     ) -> list[dict]:
         """
         저장된 메시지를 조회합니다.
@@ -103,9 +114,9 @@ class MessageFetcher:
             fetch_links: True일 경우 링크 내용을 추출. 기본값: False
             media_dir: 첨부 이미지를 내려받을 디렉토리. None이면 다운로드하지 않고
                 이미지 존재 여부만 기록한다.
-            blog_dir: 네이버 블로그 글 원문을 저장할 디렉토리. 주어지면 글 원문은 여기
-                파일로 저장하고 링크 내용에는 경로와 요약 대기 마커만 남긴다. None이면
-                원문을 링크 내용에 그대로 둔다.
+            link_dir: 링크 본문을 저장할 디렉토리. 주어지면 읽기에 성공한 링크 본문은
+                여기 파일로 저장하고 링크 내용에는 경로와 요약 대기 마커만 남긴다. None이면
+                본문을 링크 내용에 그대로 둔다.
 
         Returns:
             메시지 리스트. 각 메시지는 다음 구조의 딕셔너리:
@@ -169,12 +180,12 @@ class MessageFetcher:
             messages.append(msg_dict)
 
         if fetch_links:
-            await self._attach_link_contents(messages, blog_dir)
+            await self._attach_link_contents(messages, link_dir)
 
         return messages
 
     async def _attach_link_contents(
-        self, messages: list[dict], blog_dir: Optional[Path] = None
+        self, messages: list[dict], link_dir: Optional[Path] = None
     ) -> None:
         """메시지별 링크 본문을 동시에 받아 각자의 자리에 채운다.
 
@@ -187,7 +198,7 @@ class MessageFetcher:
             async with semaphore:
                 result = await self.link_extractor.extract_and_fetch(msg_dict["text"])
             links_contents = [
-                self._link_entry(url, content, blog_dir)
+                self._link_entry(url, content, link_dir)
                 for url, content in result.get("contents", {}).items()
                 if content
             ]
@@ -196,16 +207,15 @@ class MessageFetcher:
         await asyncio.gather(*(fill(m) for m in messages))
 
     @staticmethod
-    def _link_entry(url: str, content: str, blog_dir: Optional[Path]) -> str:
-        """링크 1건의 raw 항목. 네이버 글 원문은 파일로 빼고 경로와 요약 대기 마커만 남긴다."""
-        post = naver_post_id(url) if blog_dir is not None else None
+    def _link_entry(url: str, content: str, link_dir: Optional[Path]) -> str:
+        """링크 1건의 raw 항목. 본문은 파일로 빼고 경로와 요약 대기 마커만 남긴다."""
         # 링크 추출기의 실패 결과는 대괄호 센티널이다. 요약할 원문이 없으므로 그대로 둔다.
-        if post is None or content.startswith("["):
+        if link_dir is None or content.startswith("["):
             return f"URL: {url}\n{content}"
-        blog_dir.mkdir(parents=True, exist_ok=True)
-        path = blog_dir / f"{post[0]}_{post[1]}.md"
+        link_dir.mkdir(parents=True, exist_ok=True)
+        path = link_dir / f"{_link_file_stem(url)}.md"
         path.write_text(f"URL: {url}\n\n{content}\n", encoding="utf-8")
-        return f"URL: {url}\n파일: {path}\n{PENDING_BLOG_SUMMARY_MARKER}"
+        return f"URL: {url}\n파일: {path}\n{PENDING_LINK_SUMMARY_MARKER}"
 
     async def _download_image(
         self, client, message, media_dir: Path, downloaded_so_far: int

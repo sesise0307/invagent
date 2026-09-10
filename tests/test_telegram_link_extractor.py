@@ -419,8 +419,8 @@ async def test_fetch_content_leaves_non_post_naver_urls_alone(public_dns, url):
 
 
 @pytest.mark.asyncio
-async def test_fetch_content_keeps_longer_body_for_naver_blog_posts(public_dns):
-    """네이버 블로그 글은 10,000자까지, 다른 링크는 1,500자까지 남긴다"""
+async def test_fetch_content_keeps_up_to_10000_chars_for_every_link(public_dns):
+    """본문은 파일로 가므로 네이버 글이든 다른 링크든 10,000자까지 남긴다"""
     extractor = LinkExtractor()
     long_text = "가" * 12000
 
@@ -433,7 +433,7 @@ async def test_fetch_content_keeps_longer_body_for_naver_blog_posts(public_dns):
         other = await extractor.fetch_content("https://example.com/post")
 
     assert naver == "가" * 10000 + "..."
-    assert other == "가" * 1500 + "..."
+    assert other == "가" * 10000 + "..."
 
 
 @pytest.mark.asyncio

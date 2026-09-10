@@ -2733,34 +2733,103 @@ def test_image_pending_marker_matches_the_fetcher_constant() -> None:
     assert f"`{PENDING_IMAGE_MARKER}`로 남은 항목만 처리" in skill
 
 
-def test_blog_summary_marker_matches_the_fetcher_constant() -> None:
+def test_link_summary_marker_matches_the_fetcher_constant() -> None:
     """SKILL.md가 찾는 요약 대기 마커와 fetch.py가 쓰는 마커가 같아야 한다.
 
-    한쪽만 바꾸면 스킬이 요약할 글을 하나도 못 찾고, 원문 파일만 쌓인 채 조용히 넘어간다.
+    한쪽만 바꾸면 스킬이 요약할 링크를 하나도 못 찾고, 원문 파일만 쌓인 채 조용히 넘어간다.
     """
-    from invagent.telegram.fetch import PENDING_BLOG_SUMMARY_MARKER
+    from invagent.telegram.fetch import PENDING_LINK_SUMMARY_MARKER
 
     skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
 
-    assert PENDING_BLOG_SUMMARY_MARKER == "[요약 대기]"
+    assert PENDING_LINK_SUMMARY_MARKER == "[요약 대기]"
     assert "\\[요약 대기\\]" in skill
-    assert f"`{PENDING_BLOG_SUMMARY_MARKER}`로 남은 항목만 처리" in skill
+    assert f"`{PENDING_LINK_SUMMARY_MARKER}`로 남은 항목만 처리" in skill
 
 
-def test_daily_digest_documents_blog_summary_step() -> None:
+def test_daily_digest_documents_link_summary_step() -> None:
     skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
 
-    assert "### 1-5단계: 네이버 블로그 요약" in skill
-    # 원문은 fetch 단계가 파일로 빼 두고, 요약은 서브에이전트가 한다
-    assert "output/daily-digest/blogs/" in skill
+    assert "### 1-5단계: 링크 본문 요약" in skill
+    # 원문은 fetch 단계가 파일로 빼 두고, 요약은 파일 8개당 서브에이전트 하나가 병렬로 한다
+    assert "output/daily-digest/links/" in skill
     assert "서브에이전트" in skill
+    assert "8개" in skill
     assert "1,000자" in skill
     # 실패 경로와 2단계 출처 표기
     assert "[요약 실패]" in skill
-    assert "(블로그 요약)" in skill
+    assert "(링크 요약)" in skill
     # 7단계가 원문 파일도 정리하고 오늘 것은 남긴다
-    assert "output/daily-digest/blogs \\" in skill
-    assert "output/daily-digest/blogs/{today}/**" in skill
+    assert "output/daily-digest/links \\" in skill
+    assert "output/daily-digest/links/{today}/**" in skill
+
+
+def _load_apply_link_summaries_module():
+    script_path = SKILLS_ROOT / "daily-digest" / "scripts" / "apply_link_summaries.py"
+    spec = importlib.util.spec_from_file_location("apply_link_summaries", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_apply_link_summaries_replaces_marker_with_sidecar(tmp_path) -> None:
+    """요약 대기 마커를 원문 옆 요약 파일 내용으로 바꾸고 파일 줄은 남긴다"""
+    module = _load_apply_link_summaries_module()
+    body = tmp_path / "example.com_43ecaebf74.md"
+    body.write_text("URL: https://example.com/report\n\n원문\n", encoding="utf-8")
+    (tmp_path / "example.com_43ecaebf74.summary.md").write_text(
+        "요약: 예시 「리포트」\n- 핵심: 매출 +10%\n- 결론: 유지\n", encoding="utf-8"
+    )
+    raw = tmp_path / "raw.md"
+    raw.write_text(
+        "링크:\n> URL: https://example.com/report\n"
+        f"> 파일: {body}\n> [요약 대기]\n\n다음 메시지\n",
+        encoding="utf-8",
+    )
+
+    assert module.main([str(raw)]) == 0
+
+    assert raw.read_text(encoding="utf-8") == (
+        "링크:\n> URL: https://example.com/report\n"
+        f"> 파일: {body}\n"
+        "> 요약: 예시 「리포트」\n> - 핵심: 매출 +10%\n> - 결론: 유지\n\n다음 메시지\n"
+    )
+
+
+def test_apply_link_summaries_leaves_marker_when_summary_is_missing(tmp_path) -> None:
+    """요약 파일이 아직 없으면 마커를 그대로 두어 다시 돌려도 안전하다"""
+    module = _load_apply_link_summaries_module()
+    body = tmp_path / "news.example_0123456789.md"
+    body.write_text("URL: https://news.example/a\n\n원문\n", encoding="utf-8")
+    original = f"> 파일: {body}\n> [요약 대기]\n"
+    raw = tmp_path / "raw.md"
+    raw.write_text(original, encoding="utf-8")
+
+    assert module.main([str(raw)]) == 0
+
+    assert raw.read_text(encoding="utf-8") == original
+
+
+def test_apply_link_summaries_reports_counts_without_summary_text(tmp_path, capsys) -> None:
+    """출력은 반영·대기 건수와 대기 중인 원문 경로뿐이고 요약 내용은 찍지 않는다"""
+    module = _load_apply_link_summaries_module()
+    done = tmp_path / "done.example_aaaaaaaaaa.md"
+    done.write_text("원문", encoding="utf-8")
+    (tmp_path / "done.example_aaaaaaaaaa.summary.md").write_text(
+        "요약: 비밀 요약 문장\n", encoding="utf-8"
+    )
+    pending = tmp_path / "wait.example_bbbbbbbbbb.md"
+    pending.write_text("원문", encoding="utf-8")
+    raw = tmp_path / "raw.md"
+    raw.write_text(
+        f"> 파일: {done}\n> [요약 대기]\n\n> 파일: {pending}\n> [요약 대기]\n",
+        encoding="utf-8",
+    )
+
+    assert module.main([str(raw)]) == 0
+
+    assert capsys.readouterr().out == f"반영 1건 · 대기 1건\n대기: {pending}\n"
 
 
 def test_peak_drawdown_thresholds_match_documented_bands() -> None:

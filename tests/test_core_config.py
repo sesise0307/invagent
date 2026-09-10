@@ -72,8 +72,8 @@ def test_config_digest_media_dir_is_sibling_of_raw_dir():
     )
 
 
-def test_config_digest_blog_dir_is_sibling_of_raw_dir():
-    """네이버 블로그 원문 디렉토리도 raw 디렉토리의 형제로 날짜별 하위 폴더를 쓴다"""
+def test_config_digest_link_dir_is_sibling_of_raw_dir():
+    """링크 원문 디렉토리도 raw 디렉토리의 형제로 날짜별 하위 폴더를 쓴다"""
     config = Config(
         api_id=123,
         api_hash="abc123",
@@ -81,6 +81,6 @@ def test_config_digest_blog_dir_is_sibling_of_raw_dir():
         output_dir=Path("/tmp/outputs"),
     )
 
-    assert config.digest_blog_dir("2026-09-10") == Path(
-        "/tmp/outputs/daily-digest/blogs/2026-09-10"
+    assert config.digest_link_dir("2026-09-10") == Path(
+        "/tmp/outputs/daily-digest/links/2026-09-10"
     )

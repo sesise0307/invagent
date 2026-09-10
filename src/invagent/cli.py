@@ -11,7 +11,7 @@ from invagent import daily_prep
 from invagent.core.auth import authenticate
 from invagent.core.client import TelegramClientManager
 from invagent.telegram import MessageFetcher
-from invagent.telegram.fetch import PENDING_BLOG_SUMMARY_MARKER
+from invagent.telegram.fetch import PENDING_LINK_SUMMARY_MARKER
 from invagent.tracking.stock_tracker import StockTracker
 
 
@@ -66,18 +66,18 @@ def fetch_messages_cmd(days, fetch_links, download_images):
 
     Retrieves messages from Telegram 'Saved Messages' channel.
     Saves formatted output to output/daily-digest/raw/<YYYY-MM-DD>_raw.md,
-    attached images to output/daily-digest/media/<YYYY-MM-DD>/ and Naver blog
-    post bodies to output/daily-digest/blogs/<YYYY-MM-DD>/
+    attached images to output/daily-digest/media/<YYYY-MM-DD>/ and fetched link
+    bodies to output/daily-digest/links/<YYYY-MM-DD>/
     """
     try:
         config = Config.from_env()
         click.echo(f"📨 Fetching messages from last {days} day(s)...")
 
-        # The raw file name and the media/blog directories must share one date
+        # The raw file name and the media/link directories must share one date
         # string, or the skill's cleanup step retires them on different days.
         today = datetime.now().strftime("%Y-%m-%d")
         media_dir = config.digest_media_dir(today) if download_images else None
-        blog_dir = config.digest_blog_dir(today) if fetch_links else None
+        link_dir = config.digest_link_dir(today) if fetch_links else None
 
         client_manager = TelegramClientManager()
         fetcher = MessageFetcher(config, client_manager)
@@ -88,7 +88,7 @@ def fetch_messages_cmd(days, fetch_links, download_images):
                     days,
                     fetch_links=fetch_links,
                     media_dir=media_dir,
-                    blog_dir=blog_dir,
+                    link_dir=link_dir,
                 )
             )
         finally:
@@ -116,11 +116,11 @@ def fetch_messages_cmd(days, fetch_links, download_images):
         click.echo(f"   Messages: {len(messages)}")
         click.echo(f"   Links fetched: {'yes' if fetch_links else 'no'}")
         click.echo(f"   Images saved: {image_count}")
-        blog_count = sum(
-            msg.get("links_content", "").count(PENDING_BLOG_SUMMARY_MARKER)
+        link_count = sum(
+            msg.get("links_content", "").count(PENDING_LINK_SUMMARY_MARKER)
             for msg in messages
         )
-        click.echo(f"   Blog posts saved: {blog_count}")
+        click.echo(f"   Links saved: {link_count}")
 
     except ValueError as e:
         click.echo(f"❌ Configuration Error: {e}", err=True)

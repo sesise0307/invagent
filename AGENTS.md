@@ -195,7 +195,7 @@ until it is moved. `uv run invagent fetch-messages` writes the raw export to
 `themes/archive/`. The index and theme files are the accumulated memory that
 `analyze-stock` searches, so they are appended to and rolled off, never rewritten
 from scratch. At the end of a run the skill deletes every raw file except today's
-and every dated media and blog directory except today's (`raw/`, `media/` and `blogs/`
+and every dated media and link directory except today's (`raw/`, `media/` and `links/`
 only, `-maxdepth 1`); nothing outside those three directories is ever deleted. Market
 indices come from `.agents/skills/daily-digest/scripts/fetch_market_signals.py`,
 which reads the StockEasy market endpoints through `invagent.datafeed.stockeasy`; the module owns
@@ -214,9 +214,10 @@ interpreted rather than transcribed, which a text-only OCR pass cannot do. The
 marker string is a contract between `PENDING_IMAGE_MARKER` in
 `src/invagent/telegram/fetch.py` and the grep in `daily-digest/SKILL.md`
 step 1-4 — change both together, and a test asserts they match, because a
-one-sided edit makes the skill find nothing and skip silently. That grep needs
-`-a`: raw exports contain NUL bytes whenever a fetched link returned a binary
-body, so plain `grep` treats the file as binary and prints nothing. An image that
+one-sided edit makes the skill find nothing and skip silently. That grep keeps
+`-a`: raw exports written before link bodies moved out to `links/` (2026-09-10) contain NUL
+bytes from binary link bodies, and plain `grep` treats such a file as binary and prints
+nothing. An image that
 cannot be downloaded or read never blocks the run — the fetcher records a
 bracketed sentinel the way `LinkExtractor` does, and the briefing falls back to
 caption and context marked `(이미지 미확인)`. A message carrying only an image
@@ -407,19 +408,25 @@ briefing as a bare title. Those two URL shapes are rewritten to
 rewritten address goes through the same SSRF checks as any other; any other Naver URL (a blog
 home, Naver News) is fetched as given. From the PostView document only the `.se-main-container`
 body is kept, because trafilatura otherwise mixes the page's layer notices and embedded JSON into
-the text, and a post keeps up to `NAVER_BLOG_MAX_CONTENT_CHARS` (10,000) characters instead of
-`MAX_CONTENT_CHARS` (1,500) — blog conclusions tend to come last.
+the text. Every link body, posts included, is kept up to `MAX_CONTENT_CHARS` (10,000)
+characters — conclusions tend to come last, and the body lands in a file rather than the raw
+export.
 
-That body is too long to sit in the raw export: step 2 of `daily-digest` reads raw in full, so
-several posts would fill the context the briefing is written in. When `fetch-messages` runs with
-links, each successfully fetched post body is written to
-`output/daily-digest/blogs/<yyyy-mm-dd>/<blogId>_<logNo>.md` (`Config.digest_blog_dir`), and the
-raw link block keeps only the saved URL, a `파일:` path and the marker `[요약 대기]`; a failed fetch
-stays inline as its bracketed sentinel. Step 1-5 of the skill hands every pending file to one
-subagent, which replaces each marker with a summary of at most 1,000 characters, so the agent that
-writes the briefing reads summaries and never the posts. The marker is a contract between
-`PENDING_BLOG_SUMMARY_MARKER` in `src/invagent/telegram/fetch.py` and the grep in step 1-5, asserted
-by a test exactly as the image marker is.
+Link bodies do not sit in the raw export: step 2 of `daily-digest` reads raw in full, so a day's
+worth of 10,000-character bodies would fill the context the briefing is written in. When
+`fetch-messages` runs with links, every successfully fetched body is written to
+`output/daily-digest/links/<yyyy-mm-dd>/` (`Config.digest_link_dir`) — `<blogId>_<logNo>.md` for a
+Naver post, `<host>_<first 10 hex of the URL's SHA-1>.md` for anything else — and the raw link
+block keeps only the saved URL, a `파일:` path and the marker `[요약 대기]`; a failed fetch stays
+inline as its bracketed sentinel. Step 1-5 of the skill splits the pending files into batches of
+eight, one subagent per batch in parallel, and each subagent writes only a sidecar
+`<name>.summary.md` of at most 1,000 characters. The subagents leave the raw export alone because
+parallel edits to one file lose each other's writes;
+`.agents/skills/daily-digest/scripts/apply_link_summaries.py` then swaps every marker for its
+sidecar in one pass and prints only counts, so the agent writing the briefing meets the summaries
+in raw and never the bodies. The marker is a contract between `PENDING_LINK_SUMMARY_MARKER` in
+`src/invagent/telegram/fetch.py` and the grep in step 1-5, asserted by a test exactly as the image
+marker is.
 
 Write every implementation — a new feature, a bug fix, a behavior change in a
 skill script — through the installed `tdd` skill (mattpocock's, at
