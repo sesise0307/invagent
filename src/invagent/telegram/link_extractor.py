@@ -46,6 +46,28 @@ MAX_REDIRECTS = 3
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 
+# 네이버 블로그 글 페이지는 본문을 iframe 안의 PostView 문서로 싣는다. 글 주소를 그대로
+# 받으면 껍데기의 제목만 남으므로, 글 주소는 본문이 들어 있는 PostView 주소로 바꿔 받는다.
+NAVER_BLOG_HOSTS = ("blog.naver.com", "m.blog.naver.com")
+# raw에 남기는 링크 본문 길이. 블로그 글은 결론이 끝에 오는 경우가 많아(2026-09-10 글은
+# 핵심 경고가 1,500자 뒤에 있었다) 네이버 글에만 더 길게 남긴다.
+MAX_CONTENT_CHARS = 1500
+NAVER_BLOG_MAX_CONTENT_CHARS = 6000
+_NAVER_POST_PATH = re.compile(r"^/([A-Za-z0-9_-]+)/(\d+)/?$")
+
+
+def _naver_postview_url(url: str) -> str:
+    """네이버 블로그 글 주소면 PostView 주소를, 아니면 받은 주소를 그대로 돌려준다."""
+    parsed = urlparse(url)
+    if parsed.hostname not in NAVER_BLOG_HOSTS:
+        return url
+    match = _NAVER_POST_PATH.match(parsed.path)
+    if not match:
+        return url
+    blog_id, log_no = match.groups()
+    return f"https://blog.naver.com/PostView.naver?blogId={blog_id}&logNo={log_no}"
+
+
 class BlockedURLError(ValueError):
     """공개 인터넷 대상이 아니어서 요청을 거부한 URL."""
 
@@ -180,10 +202,13 @@ class LinkExtractor:
             return ""
 
         try:
-            target = normalize_url(url)
+            normalized = normalize_url(url)
+            target = _naver_postview_url(normalized)
             assert_public_url(target)
         except BlockedURLError as e:
             return f"[차단된 URL: {e}]"
+
+        limit = NAVER_BLOG_MAX_CONTENT_CHARS if target != normalized else MAX_CONTENT_CHARS
 
         try:
             # 1차: trafilatura로 본문 추출
@@ -192,6 +217,21 @@ class LinkExtractor:
                 None,
                 functools.partial(trafilatura.fetch_url, target, config=self._trafilatura_config),
             )
+            if downloaded and target != normalized:
+                # PostView 문서에는 블로그 화면의 레이어 문구와 페이지 데이터가 함께 실려
+                # 있어 trafilatura가 본문 앞뒤로 섞어 낸다. 본문 영역만 떼어 쓴다.
+                body = BeautifulSoup(downloaded, "html.parser").select_one(".se-main-container")
+                if body:
+                    # 문단 안 강조 조각은 한 줄로 잇고, 편집기가 줄바꿈용으로 넣는
+                    # 보이지 않는 공백(U+200B)만 있는 문단은 버린다.
+                    paragraphs = (
+                        " ".join(p.get_text().replace("​", "").split())
+                        for p in body.find_all("p")
+                    )
+                    stripped = "\n".join(line for line in paragraphs if line)
+                    if stripped:
+                        return stripped[:limit] + ("..." if len(stripped) > limit else "")
+
             if downloaded:
                 text = trafilatura.extract(
                     downloaded,
@@ -202,7 +242,7 @@ class LinkExtractor:
                 if text:
                     stripped = text.strip()
                     if stripped:
-                        return stripped[:1500] + ("..." if len(stripped) > 1500 else "")
+                        return stripped[:limit] + ("..." if len(stripped) > limit else "")
 
             # 2차 fallback: BeautifulSoup
             status_code, html = await loop.run_in_executor(None, self._fetch_sync, target)
@@ -258,7 +298,7 @@ class LinkExtractor:
             if content:
                 if result:
                     result += "\n"
-                result += content[:1500] + ("..." if len(content) > 1500 else "")
+                result += content[:limit] + ("..." if len(content) > limit else "")
 
             return result if result else "[내용을 읽을 수 없습니다]"
 

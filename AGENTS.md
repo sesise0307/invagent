@@ -399,6 +399,18 @@ own, and caps both response size (`MAX_RESPONSE_BYTES`) and per-URL wall time
 (`hard_timeout`). Keep those checks when changing the module, and add cases to
 `tests/test_telegram_link_extractor.py` for any new fetch path.
 
+Naver blog posts need one extra step. A post page (`blog.naver.com/<id>/<logNo>` or the
+`m.blog.naver.com` form) is only a frame around a `PostView.naver` document, so fetching it as
+given returns the frame's title and nothing else — which is why saved blog links used to reach the
+briefing as a bare title. Those two URL shapes are rewritten to
+`blog.naver.com/PostView.naver?blogId=…&logNo=…` **before** `assert_public_url` runs, so the
+rewritten address goes through the same SSRF checks as any other; any other Naver URL (a blog
+home, Naver News) is fetched as given. From the PostView document only the `.se-main-container`
+body is kept, because trafilatura otherwise mixes the page's layer notices and embedded JSON into
+the text, and a post keeps up to `NAVER_BLOG_MAX_CONTENT_CHARS` (6,000) characters instead of
+`MAX_CONTENT_CHARS` (1,500) — blog conclusions tend to come last. The raw export still records
+the URL the user saved.
+
 Write every implementation — a new feature, a bug fix, a behavior change in a
 skill script — through the installed `tdd` skill (mattpocock's, at
 `~/.claude/skills/tdd`; invoke it with the Skill tool as `tdd`). Invoke it before

@@ -359,3 +359,122 @@ def test_read_capped_stops_at_max_response_bytes():
 
     assert len(body) == MAX_RESPONSE_BYTES
     response.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_reads_naver_blog_post_through_postview(public_dns):
+    """네이버 블로그 글 주소는 본문이 들어 있는 PostView 주소로 받아 온다"""
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url") as mock_fetch, \
+         patch("invagent.telegram.link_extractor.trafilatura.extract") as mock_extract:
+        mock_fetch.return_value = "<html></html>"
+        mock_extract.return_value = "HD현대중공업 발전엔진 증설 팔로업입니다."
+
+        content = await extractor.fetch_content("https://blog.naver.com/chacha36/224407253026")
+
+    assert mock_fetch.call_args.args[0] == (
+        "https://blog.naver.com/PostView.naver?blogId=chacha36&logNo=224407253026"
+    )
+    assert "발전엔진 증설" in content
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_reads_mobile_naver_blog_post_through_postview(public_dns):
+    """모바일 글 주소도 같은 PostView 주소로 받아 온다"""
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url") as mock_fetch, \
+         patch("invagent.telegram.link_extractor.trafilatura.extract") as mock_extract:
+        mock_fetch.return_value = "<html></html>"
+        mock_extract.return_value = "확신이 없으면 쉬어가도 된다."
+
+        await extractor.fetch_content("https://m.blog.naver.com/kimcharger/224407666480")
+
+    assert mock_fetch.call_args.args[0] == (
+        "https://blog.naver.com/PostView.naver?blogId=kimcharger&logNo=224407666480"
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://blog.naver.com/chacha36",
+        "https://n.news.naver.com/article/001/0016302405?sid=101",
+    ],
+)
+@pytest.mark.asyncio
+async def test_fetch_content_leaves_non_post_naver_urls_alone(public_dns, url):
+    """네이버라도 블로그 글 주소가 아니면 받은 주소 그대로 요청한다"""
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url") as mock_fetch, \
+         patch("invagent.telegram.link_extractor.trafilatura.extract") as mock_extract:
+        mock_fetch.return_value = "<html></html>"
+        mock_extract.return_value = "본문"
+
+        await extractor.fetch_content(url)
+
+    assert mock_fetch.call_args.args[0] == url
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_keeps_longer_body_for_naver_blog_posts(public_dns):
+    """네이버 블로그 글은 6,000자까지, 다른 링크는 1,500자까지 남긴다"""
+    extractor = LinkExtractor()
+    long_text = "가" * 7000
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url") as mock_fetch, \
+         patch("invagent.telegram.link_extractor.trafilatura.extract") as mock_extract:
+        mock_fetch.return_value = "<html></html>"
+        mock_extract.return_value = long_text
+
+        naver = await extractor.fetch_content("https://blog.naver.com/chacha36/224407253026")
+        other = await extractor.fetch_content("https://example.com/post")
+
+    assert naver == "가" * 6000 + "..."
+    assert other == "가" * 1500 + "..."
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_keeps_only_the_naver_post_body(public_dns):
+    """네이버 글은 본문 영역만 남기고 블로그 화면의 부속 문구·페이지 데이터는 버린다"""
+    extractor = LinkExtractor()
+    postview_html = (
+        "<html><body>"
+        "<div class='layer'>블로그 마켓 판매자의 이력 관리를 위해 블로그 주소 변경이 불가합니다.</div>"
+        "<div class='se-main-container'><p>확신이 없으면 쉬어가도 된다.</p>"
+        "<p>남의 확신을 빌려서 산 포지션은 가장 먼저 손절하게 된다.</p></div>"
+        "<div class='post_footer'>[{\"title\":\"확신이 없으면 쉬어가도 된다\"}]</div>"
+        "</body></html>"
+    )
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value=postview_html):
+        content = await extractor.fetch_content("https://blog.naver.com/kimcharger/224407666480")
+
+    assert content == (
+        "확신이 없으면 쉬어가도 된다.\n"
+        "남의 확신을 빌려서 산 포지션은 가장 먼저 손절하게 된다."
+    )
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_joins_naver_paragraph_spans_and_drops_blank_paragraphs(public_dns):
+    """문단 안의 강조 조각은 한 줄로 잇고, 보이지 않는 공백만 있는 문단은 버린다"""
+    extractor = LinkExtractor()
+    postview_html = (
+        "<div class='se-main-container'>"
+        "<p class='se-text-paragraph'><span>그동안 계속 확인하려 했던 ‘</span>"
+        "<b>추가 증설</b><span>’이 실제로 나왔습니다.</span></p>"
+        "<p class='se-text-paragraph'><span>\u200b</span></p>"
+        "<p class='se-text-paragraph'><span>여기에 </span><span>미국 데이터센터향 수주까지</span></p>"
+        "</div>"
+    )
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value=postview_html):
+        content = await extractor.fetch_content("https://blog.naver.com/chacha36/224407253026")
+
+    assert content == (
+        "그동안 계속 확인하려 했던 ‘추가 증설’이 실제로 나왔습니다.\n"
+        "여기에 미국 데이터센터향 수주까지"
+    )
