@@ -223,7 +223,13 @@ caption and context marked `(이미지 미확인)`. A message carrying only an i
 and no caption is now kept; it used to be dropped whole at the fetch loop's
 empty-text check, which is why chart captures never reached a briefing.
 `MAX_IMAGE_BYTES` and `MAX_IMAGES_PER_RUN` cap what one run can spend on disk and
-on reading, and live as constants at the top of the fetch module. Link bodies are
+on reading, and live as constants at the top of the fetch module. Each image download is
+bounded by `IMAGE_DOWNLOAD_TIMEOUT_SECONDS` (30s) and tried `IMAGE_DOWNLOAD_ATTEMPTS` (2) times,
+because a photo stored on another Telegram data centre makes telethon open a second connection
+that can stall forever — on 2026-09-10 one zero-byte file held the whole run for twelve minutes.
+An image that times out on every attempt leaves a `[이미지 저장 실패: 시간 초과 …]` sentinel, and
+the rest of that run's images are skipped as `[이미지 건너뜀: 앞선 다운로드 시간 초과]` rather than
+each waiting out its own timeout on what is most likely the same dead connection. Link bodies are
 fetched for up to `MAX_CONCURRENT_LINK_MESSAGES` messages at once rather than one message at a
 time: a single message can burn the extractor's `hard_timeout`, so a serial loop multiplies that
 by the message count on a catch-up run. Results are written back into each message's own dict, so

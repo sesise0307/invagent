@@ -23,6 +23,16 @@ from invagent.telegram.link_extractor import LinkExtractor
 IMAGE_MIME_PREFIX = "image/"
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_IMAGES_PER_RUN = 60
+# 이미지 1장 다운로드의 시간 상한(초). 사진이 다른 데이터센터(미디어 DC)에 있으면
+# telethon이 그쪽 연결을 새로 열고 기다리는데, 그 연결이 멈추면 끝없이 대기해
+# 실행 전체가 서 버린다(2026-09-10에 0바이트 파일 하나에서 12분 정지).
+IMAGE_DOWNLOAD_TIMEOUT_SECONDS = 30
+# 시간 초과가 난 이미지를 몇 번까지 시도할지. 멈춤이 일시적이면 두 번째 시도에서 받힌다.
+IMAGE_DOWNLOAD_ATTEMPTS = 2
+# 시간 초과 센티널의 앞부분. 한 장이 끝내 시간 초과되면 같은 연결의 나머지도 멈출
+# 공산이 커서, 이번 실행의 남은 이미지는 기다리지 않고 건너뛴다.
+_DOWNLOAD_TIMEOUT_SENTINEL = "[이미지 저장 실패: 시간 초과"
+_SKIPPED_AFTER_TIMEOUT_SENTINEL = "[이미지 건너뜀: 앞선 다운로드 시간 초과]"
 # 링크 본문을 동시에 받는 메시지 수. 1건이 최대 `hard_timeout`(기본 30초)을 쓰므로
 # 직렬로는 메시지 수만큼 그 시간이 쌓인다. 상한을 두는 이유는 링크 추출기가 메시지 *안의*
 # URL을 이미 동시에 받기 때문에, 여기에 곱해진 만큼 동시 연결이 늘기 때문이다.
@@ -107,6 +117,7 @@ class MessageFetcher:
 
         messages = []
         downloaded_images = 0
+        media_stalled = False
 
         # 저장된 메시지("me" 채널)에서 메시지 조회
         async for message in client.iter_messages("me"):
@@ -136,11 +147,15 @@ class MessageFetcher:
 
             # 이미지 다운로드
             if has_image and media_dir is not None:
-                saved, consumed = await self._download_image(
-                    client, message, media_dir, downloaded_images
-                )
-                msg_dict["images"].append(saved)
-                downloaded_images += consumed
+                if media_stalled:
+                    msg_dict["images"].append(_SKIPPED_AFTER_TIMEOUT_SENTINEL)
+                else:
+                    saved, consumed = await self._download_image(
+                        client, message, media_dir, downloaded_images
+                    )
+                    msg_dict["images"].append(saved)
+                    downloaded_images += consumed
+                    media_stalled = saved.startswith(_DOWNLOAD_TIMEOUT_SENTINEL)
 
             messages.append(msg_dict)
 
@@ -199,8 +214,23 @@ class MessageFetcher:
             media_dir.mkdir(parents=True, exist_ok=True)
             # 확장자 없는 경로를 주면 telethon이 mime에 맞는 확장자를 붙이고
             # 실제 저장 경로를 돌려준다.
-            saved = await client.download_media(
-                message.media, file=str(media_dir / str(message.id))
+            for attempt in range(IMAGE_DOWNLOAD_ATTEMPTS):
+                try:
+                    saved = await asyncio.wait_for(
+                        client.download_media(
+                            message.media, file=str(media_dir / str(message.id))
+                        ),
+                        timeout=IMAGE_DOWNLOAD_TIMEOUT_SECONDS,
+                    )
+                    break
+                except TimeoutError:
+                    if attempt == IMAGE_DOWNLOAD_ATTEMPTS - 1:
+                        raise
+        except TimeoutError:
+            return (
+                f"{_DOWNLOAD_TIMEOUT_SENTINEL} {IMAGE_DOWNLOAD_TIMEOUT_SECONDS}초"
+                f" × {IMAGE_DOWNLOAD_ATTEMPTS}회]",
+                0,
             )
         except Exception as e:  # noqa: BLE001 - 이미지 실패가 실행을 막으면 안 된다
             return f"[이미지 저장 실패: {str(e)[:50]}]", 0

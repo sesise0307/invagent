@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,6 +10,7 @@ from telethon.tl.types import (
 )
 from invagent.core.config import Config
 from invagent.core.client import TelegramClientManager
+from invagent.telegram import fetch as fetch_module
 from invagent.telegram.fetch import (
     MAX_IMAGE_BYTES,
     MAX_IMAGES_PER_RUN,
@@ -404,6 +407,88 @@ async def test_message_fetcher_survives_download_failure(tmp_path):
     assert messages[0]["text"] == "차트"
     assert messages[0]["images"][0].startswith("[이미지 저장 실패:")
     assert "disk full" in messages[0]["images"][0]
+
+
+async def _never_finishes(media, file):
+    """미디어 DC 연결이 멈춘 다운로드를 흉내 낸다."""
+    await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+async def test_message_fetcher_gives_up_on_stalled_image_download(tmp_path, monkeypatch):
+    """끝나지 않는 다운로드는 시간 초과 센티널을 남기고 실행을 끝낸다"""
+    monkeypatch.setattr(fetch_module, "IMAGE_DOWNLOAD_TIMEOUT_SECONDS", 0.05)
+    manager = TelegramClientManager()
+    fetcher = MessageFetcher(_image_config(), manager)
+
+    with patch.object(manager, "get_client") as mock_get_client:
+        mock_client = _patched_client(manager, _photo_message(text="차트"))
+        mock_client.download_media = AsyncMock(side_effect=_never_finishes)
+        mock_get_client.return_value = mock_client
+
+        messages = await asyncio.wait_for(
+            fetcher.fetch_saved_messages(days=1, media_dir=tmp_path), timeout=2
+        )
+
+    assert len(messages) == 1
+    assert messages[0]["text"] == "차트"
+    assert messages[0]["images"][0].startswith("[이미지 저장 실패: 시간 초과")
+
+
+@pytest.mark.asyncio
+async def test_message_fetcher_retries_stalled_image_download_once(tmp_path, monkeypatch):
+    """첫 시도가 멈춰도 한 번 더 시도해 받으면 경로를 남긴다"""
+    monkeypatch.setattr(fetch_module, "IMAGE_DOWNLOAD_TIMEOUT_SECONDS", 0.05)
+    manager = TelegramClientManager()
+    fetcher = MessageFetcher(_image_config(), manager)
+    saved_path = str(tmp_path / "1.jpg")
+    attempts = []
+
+    async def stall_then_succeed(media, file):
+        attempts.append(file)
+        if len(attempts) == 1:
+            await asyncio.Event().wait()
+        return saved_path
+
+    with patch.object(manager, "get_client") as mock_get_client:
+        mock_client = _patched_client(manager, _photo_message(text="차트"))
+        mock_client.download_media = AsyncMock(side_effect=stall_then_succeed)
+        mock_get_client.return_value = mock_client
+
+        messages = await asyncio.wait_for(
+            fetcher.fetch_saved_messages(days=1, media_dir=tmp_path), timeout=2
+        )
+
+    assert messages[0]["images"] == [saved_path]
+    assert mock_client.download_media.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_message_fetcher_skips_remaining_images_after_timeout(tmp_path, monkeypatch):
+    """한 이미지가 끝내 시간 초과되면 이번 실행의 나머지 이미지는 받지 않는다"""
+    monkeypatch.setattr(fetch_module, "IMAGE_DOWNLOAD_TIMEOUT_SECONDS", 0.05)
+    manager = TelegramClientManager()
+    fetcher = MessageFetcher(_image_config(), manager)
+
+    with patch.object(manager, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+
+        async def async_gen(*args, **kwargs):
+            yield _photo_message(msg_id=1, text="첫 차트")
+            yield _photo_message(msg_id=2, text="둘째 차트")
+
+        mock_client.iter_messages = async_gen
+        mock_client.download_media = AsyncMock(side_effect=_never_finishes)
+        mock_get_client.return_value = mock_client
+
+        messages = await asyncio.wait_for(
+            fetcher.fetch_saved_messages(days=1, media_dir=tmp_path), timeout=2
+        )
+
+    assert len(messages) == 2
+    assert messages[0]["images"][0].startswith("[이미지 저장 실패: 시간 초과")
+    assert messages[1]["images"] == ["[이미지 건너뜀: 앞선 다운로드 시간 초과]"]
+    assert mock_client.download_media.await_count == 2
 
 
 @pytest.mark.asyncio
