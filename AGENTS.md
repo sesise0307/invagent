@@ -407,7 +407,7 @@ briefing as a bare title. Those two URL shapes are rewritten to
 rewritten address goes through the same SSRF checks as any other; any other Naver URL (a blog
 home, Naver News) is fetched as given. From the PostView document only the `.se-main-container`
 body is kept, because trafilatura otherwise mixes the page's layer notices and embedded JSON into
-the text, and a post keeps up to `NAVER_BLOG_MAX_CONTENT_CHARS` (6,000) characters instead of
+the text, and a post keeps up to `NAVER_BLOG_MAX_CONTENT_CHARS` (10,000) characters instead of
 `MAX_CONTENT_CHARS` (1,500) — blog conclusions tend to come last. The raw export still records
 the URL the user saved.
 

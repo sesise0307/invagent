@@ -52,7 +52,7 @@ NAVER_BLOG_HOSTS = ("blog.naver.com", "m.blog.naver.com")
 # raw에 남기는 링크 본문 길이. 블로그 글은 결론이 끝에 오는 경우가 많아(2026-09-10 글은
 # 핵심 경고가 1,500자 뒤에 있었다) 네이버 글에만 더 길게 남긴다.
 MAX_CONTENT_CHARS = 1500
-NAVER_BLOG_MAX_CONTENT_CHARS = 6000
+NAVER_BLOG_MAX_CONTENT_CHARS = 10000
 _NAVER_POST_PATH = re.compile(r"^/([A-Za-z0-9_-]+)/(\d+)/?$")
 
 

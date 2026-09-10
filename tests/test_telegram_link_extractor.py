@@ -420,9 +420,9 @@ async def test_fetch_content_leaves_non_post_naver_urls_alone(public_dns, url):
 
 @pytest.mark.asyncio
 async def test_fetch_content_keeps_longer_body_for_naver_blog_posts(public_dns):
-    """네이버 블로그 글은 6,000자까지, 다른 링크는 1,500자까지 남긴다"""
+    """네이버 블로그 글은 10,000자까지, 다른 링크는 1,500자까지 남긴다"""
     extractor = LinkExtractor()
-    long_text = "가" * 7000
+    long_text = "가" * 12000
 
     with patch("invagent.telegram.link_extractor.trafilatura.fetch_url") as mock_fetch, \
          patch("invagent.telegram.link_extractor.trafilatura.extract") as mock_extract:
@@ -432,7 +432,7 @@ async def test_fetch_content_keeps_longer_body_for_naver_blog_posts(public_dns):
         naver = await extractor.fetch_content("https://blog.naver.com/chacha36/224407253026")
         other = await extractor.fetch_content("https://example.com/post")
 
-    assert naver == "가" * 6000 + "..."
+    assert naver == "가" * 10000 + "..."
     assert other == "가" * 1500 + "..."
 
 
