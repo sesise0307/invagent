@@ -138,11 +138,11 @@ def test_analyze_stock_wires_detected_signals_to_user_rules() -> None:
     assert "확신도 판정" in content
 
 
-def test_analyze_stock_checks_overhang_before_entry() -> None:
-    """5-1단계 오버행·수급 점검이 필수 수집이고 10단계 진입 게이트까지 배선돼야 한다."""
+def test_analyze_stock_keeps_overhang_as_reference() -> None:
+    """5-1단계 오버행·수급 점검은 참고 사항이다 — 수집·표기는 하되 10단계 판단에는 넣지 않는다."""
     skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
 
-    assert "### 5-1단계 — 오버행 · 수급 점검 (필수)" in skill
+    assert "### 5-1단계 — 오버행 · 수급 점검 (참고)" in skill
     # 물량 출처가 도구 이름으로 고정된다 — 웹 추측으로 대체하지 않는다.
     for tool in ("dilutive_issuance", "treasury_share", "ownership_structure", "risk_events"):
         assert tool in skill
@@ -152,10 +152,11 @@ def test_analyze_stock_checks_overhang_before_entry() -> None:
     assert "회사채면 중립, 메자닌(CB·BW)이면 희석" in skill
     # 스톡옵션 행사를 장내매수로 승격하지 않는다.
     assert "스톡옵션 행사는 내부자 장내매수와 다르다" in skill
-    # 판정이 10단계 진입 게이트의 입력이 된다.
-    assert "오버행 게이트" in skill
-    assert "기본 원칙 5(교집합)" in skill
-    assert "`미수집`은 `해당 없음`이 아니다" in skill
+    # 10단계는 요약을 인용만 한다 — 게이트도, 밸류 게이트 항목도 아니다.
+    assert "오버행 게이트" not in skill
+    assert "오버행 참고 (5-1단계 요약 인용)" in skill
+    value_gate = skill.split("**밸류 게이트**")[1].split("⛔ **기대수익이 크다는 것만으로")[0]
+    assert "오버행" not in value_gate
 
 
 def test_analyze_stock_gates_entry_on_the_scripted_stage() -> None:
@@ -170,7 +171,7 @@ def test_analyze_stock_gates_entry_on_the_scripted_stage() -> None:
     assert "진입 가부의 정본은 `analyze-stock` 10단계" in stage
 
     assert "진입 경로 판정" in skill
-    gate = skill.split("진입 경로 판정")[1].split("오버행 게이트")[0]
+    gate = skill.split("진입 경로 판정")[1].split("오버행 참고")[0]
     assert "`1단계` 또는 `3단계`" in gate and "🟡" in gate
     assert "`4단계`" in gate and "🔴" in gate
     assert "stage_scan" in gate
@@ -201,8 +202,10 @@ def test_stock_analysis_template_has_overhang_section() -> None:
     assert "회사채(중립) / 메자닌(희석) / 미확정" in template
     # 빈칸 대신 해당 없음/미수집을 강제한다.
     assert "빈칸으로 두지 않는다" in template
-    # 미해소 판정은 §10 리스크로 이어진다.
-    assert "§6-A 오버행 판정이 `미해소`면" in template
+    # 참고 사항이다 — §9에 인용만 하고 밸류 게이트·§10 뒤집는 조건으로 올리지 않는다.
+    assert "오버행(§6-A): [요약 한 줄] · 판단 미반영" in template
+    assert "오버행 해소 / 해당 없음 (§6-A)" not in template
+    assert "§6-A 오버행 판정이 `미해소`면" not in template
 
 
 def test_stock_analysis_template_has_target_price_block() -> None:
@@ -3037,6 +3040,21 @@ def test_entry_policy_stage_two_stays_eligible() -> None:
     assert result["max_tranche_fraction"] is None
 
 
+def test_entry_policy_leaves_overhang_out_of_the_decision() -> None:
+    """오버행은 §6-A 참고 사항이다 — 미해소·미수집이어도 action과 1차 수량 상한을 바꾸지 않는다."""
+    module = _load_entry_policy_module()
+
+    unresolved = module.decide(_entry_payload(overhang={"status": "ok", "value": "unresolved"}))
+    unknown = module.decide(_entry_payload(overhang={"status": "missing"}))
+    absent = _entry_payload()
+    del absent["overhang"]
+
+    for result in (unresolved, unknown, module.decide(absent)):
+        assert result["action"] == "eligible"
+        assert result["max_tranche_fraction"] is None
+        assert "overhang" not in result["checks"]
+
+
 def test_entry_policy_withholds_when_stage_is_unknown() -> None:
     """가드 — 알 수 없음은 허가로 승격되지 않는다."""
     module = _load_entry_policy_module()
@@ -3197,7 +3215,7 @@ def test_analyze_stock_opens_a_value_first_entry_path() -> None:
     assert "손익비 ≥ 3.0" in skill
     assert "목표 비중 ÷ 3" in skill
     # 4단계는 밸류 예외가 없다.
-    gate = skill.split("경로 A (추세 확인 진입)")[1].split("오버행 게이트")[0]
+    gate = skill.split("경로 A (추세 확인 진입)")[1].split("오버행 참고")[0]
     assert "밸류 예외 없음" in gate
     assert "기대수익이 크다는 것은 뒤집을 근거가 아니다" in gate
 

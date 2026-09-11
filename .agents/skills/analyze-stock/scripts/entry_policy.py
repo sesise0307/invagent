@@ -7,7 +7,6 @@ Example input::
    "account_pause":{"status":"ok","active":false,"remaining_trading_days":0,
                     "review_complete":true},
    "stage":{"status":"ok","value":2},
-   "overhang":{"status":"ok","value":"none"},
    "event":{"status":"ok","enabled":false},
    "long_bull":{"status":"ok","active":false},
    "earnings":{"status":"ok","surprise":false},
@@ -20,6 +19,9 @@ entry at the planned first tranche::
    "value_gate":{"status":"ok","downside_blocked":true,"reward_risk":3.4,
                  "first_tranche_fraction":0.03,"target_weight_fraction":0.10,
                  "next_tranche_trigger":"직전 순환적 저점 회복 후 스윙 고점 돌파"}}
+
+Overhang (§6-A) is a reference note in the report, not a gate: an ``overhang`` key
+is accepted and ignored, so it never moves ``action`` or ``max_tranche_fraction``.
 
 Fractions use 0..1 (5% is 0.05). Output is policy advice only.
 """
@@ -151,37 +153,6 @@ def decide(payload: Any) -> dict[str, Any]:
             apply("stage", "eligible", "stage 2 is the buy-stage gate", "매매규칙 2(펀더 기반 매수)")
         else:
             apply("stage", "avoid", "stage 4 remains an avoidance stage", "매매규칙 6(-15%, -20% 손절)")
-
-    overhang = _state(payload, "overhang")
-    if not overhang or overhang["status"] != "ok":
-        apply("overhang", "withhold", "overhang evidence is unknown", "기본 원칙 5(교집합)")
-    else:
-        value = overhang.get("value")
-        if value not in {"resolved", "none", "unresolved"}:
-            raise EntryPolicyError("overhang.value must be resolved, none, or unresolved")
-        if value == "unresolved":
-            tranche = overhang.get("first_tranche_fraction")
-            confirmation = overhang.get("confirmation_date")
-            if tranche is None:
-                apply("overhang", "withhold", "unresolved overhang lacks an explicit first-tranche cap",
-                      "매매규칙 4(분할 매수)")
-            else:
-                tranche = _fraction(tranche, "overhang.first_tranche_fraction")
-                if tranche <= 0:
-                    raise EntryPolicyError("overhang.first_tranche_fraction must be greater than zero")
-                cap = min(cap, tranche)
-                if not isinstance(confirmation, str):
-                    apply("overhang", "withhold", "unresolved overhang lacks confirmation_date",
-                          "기본 원칙 5(교집합)")
-                else:
-                    try:
-                        date.fromisoformat(confirmation)
-                    except ValueError as exc:
-                        raise EntryPolicyError("overhang.confirmation_date must be an ISO date") from exc
-                    apply("overhang", "watch", "overhang unresolved; only capped first tranche is described",
-                          "매매규칙 4(분할 매수)")
-        else:
-            apply("overhang", "eligible", f"overhang {value}", "기본 원칙 5(교집합)")
 
     long_bull = _state(payload, "long_bull")
     if not long_bull or long_bull["status"] != "ok":
