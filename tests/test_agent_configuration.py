@@ -192,44 +192,72 @@ def test_analyze_stock_keeps_the_20week_rule_advisory() -> None:
 
 
 def test_stock_analysis_template_has_overhang_section() -> None:
-    """§6-A가 오버행 점검의 출력 정본이고 12섹션 구조를 깨지 않는다."""
+    """§4-A가 오버행 점검의 출력 정본이다."""
     template = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
 
-    assert "### 6-A. 오버행 · 수급 점검" in template
+    assert "### 4-A. 오버행 · 수급 점검" in template
     for row in ("CB · BW · 전환우선주", "보호예수 · 임원 락업", "대량보유(5%) 변동 · 블록딜"):
         assert row in template
     assert "상장주식수 대비" in template
     assert "회사채(중립) / 메자닌(희석) / 미확정" in template
     # 빈칸 대신 해당 없음/미수집을 강제한다.
     assert "빈칸으로 두지 않는다" in template
-    # 참고 사항이다 — §9에 인용만 하고 밸류 게이트·§10 뒤집는 조건으로 올리지 않는다.
-    assert "오버행(§6-A): [요약 한 줄] · 판단 미반영" in template
-    assert "오버행 해소 / 해당 없음 (§6-A)" not in template
-    assert "§6-A 오버행 판정이 `미해소`면" not in template
+    # 참고 사항이다 — §5에 인용만 하고 밸류 게이트·§6 뒤집는 조건으로 올리지 않는다.
+    assert "오버행(§4-A): [요약 한 줄] · 판단 미반영" in template
+    assert "오버행 해소 / 해당 없음" not in template
+    assert "오버행 판정이 `미해소`면" not in template
+
+
+STOCK_REPORT_SECTIONS = [
+    "결론",
+    "밸류에이션 · 목표주가",
+    "포트폴리오 비교",
+    "최신 뉴스 · 촉매 · 수급",
+    "투자 판단",
+    "리스크 · 뒤집는 조건",
+    "사업 구조",
+    "사업보고서 델타 (최신 vs 직전)",
+    "내 아카이브 이력",
+    "Evidence",
+    "개정 이력",
+]
+
+
+def test_stock_analysis_template_leads_with_the_decision_sections() -> None:
+    """결론 다음에 밸류에이션·포트폴리오·촉매·판단·리스크가 오고, 배경 자료는 그 뒤로 간다."""
+    content = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
+
+    headings = re.findall(r"^## (\d+)\. (.+)$", content, re.MULTILINE)
+    assert headings == [(str(n), title) for n, title in enumerate(STOCK_REPORT_SECTIONS, 1)]
 
 
 def test_stock_analysis_template_has_target_price_block() -> None:
-    """§5가 목표주가 산정의 정본이고, 12섹션 구조는 유지된다."""
+    """§2가 목표주가 산정의 정본이고, 리포트 컨센서스는 그 입력이라 §2 안에 들어간다."""
     content = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
 
-    assert "## 5. 밸류에이션 · 목표주가" in content
-    for heading in ("### 5-A.", "### 5-B.", "### 5-C."):
+    assert "## 2. 밸류에이션 · 목표주가" in content
+    for heading in (
+        "### 2-A. 리포트 컨센서스",
+        "### 2-B. 멀티플",
+        "### 2-C. 자체 시나리오",
+        "### 2-D. 종합 목표가",
+    ):
         assert heading in content
+    valuation = content.split("## 2. 밸류에이션 · 목표주가")[1].split("\n## 3. ")[0]
+    assert "target_price_history" in valuation
+    assert "**컨센 요약**" in valuation
     assert "종합 목표주가" in content
     assert "기대수익" in content
     assert "손익비" in content
-    # §5-C·§1 모두 단일값이 아니라 하단/중심/상단을 요구한다.
+    # §2-D·§1 모두 단일값이 아니라 하단/중심/상단을 요구한다.
     for point in ("하단", "중심", "상단"):
         assert point in content
     assert "범위 폭" in content
     assert "실효 손절폭" in content
 
-    sections = re.findall(r"^## (\d+)\.", content, re.MULTILINE)
-    assert [int(section) for section in sections] == list(range(1, 13))
-
 
 def test_analyze_stock_inheritance_keeps_one_line_change_log() -> None:
-    """승계 보고서는 본문에 현재 상태만 두고 변경은 §12 한 줄 요약으로만 남긴다."""
+    """승계 보고서는 본문에 현재 상태만 두고 변경은 §11 한 줄 요약으로만 남긴다."""
     skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
     template = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
 
@@ -244,10 +272,10 @@ def test_analyze_stock_inheritance_keeps_one_line_change_log() -> None:
     assert "블록에 추가한다" not in skill
     assert "기존 분석 (보존)" not in template
     assert "기존 분석을 삭제·축약하지 않는다" not in template
-    assert "본문 12섹션은 현재 상태만 담는다" in skill
+    assert "본문 11섹션은 현재 상태만 담는다" in skill
     assert "본문을 현재 상태로 갱신한다" in template
 
-    # 변경 추적은 §12 한 줄 형식이 정본이다.
+    # 변경 추적은 §11 한 줄 형식이 정본이다.
     assert "`- {yyyy-mm-dd}: {구분} — {요약}`" in skill
     assert "`- {yyyy-mm-dd}: {구분} — {요약 한 줄}`" in template
     assert "정정 / 갱신 / 판단변경" in skill
@@ -257,16 +285,18 @@ def test_analyze_stock_inheritance_keeps_one_line_change_log() -> None:
 
 
 def test_analyze_stock_inheritance_reads_and_migrates_revision_log() -> None:
-    """승계 시 §12를 반드시 읽고, 옛 보존 본문은 §12로 옮긴 뒤 본문에서 뺀다."""
+    """승계 시 §11를 반드시 읽고, 옛 보존 본문은 §11로 옮긴 뒤 본문에서 뺀다."""
     skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
 
-    # 본문을 현재 상태로 덮으므로 과거 판단은 §12에만 남는다 — 읽기가 필수다.
-    assert "`## 12. 개정 이력` 전체" in skill
+    # 본문을 현재 상태로 덮으므로 과거 판단은 §11에만 남는다 — 읽기가 필수다.
+    assert "`개정 이력` 절 전체" in skill
     assert "반드시 읽는다" in skill
 
-    # 이관 순서: §12에 먼저 올린 뒤 본문에서 뺀다.
+    # 이관 순서: §11에 먼저 올린 뒤 본문에서 뺀다.
     assert "먼저 올린 뒤" in skill
-    assert "본문만 지우고 §12에 안 올리면" in skill
+    assert "본문만 지우고 §11에 안 올리면" in skill
+    # 옛 12섹션 배치는 다음 승계 때 템플릿 순서로 옮긴다 — `output/`은 커밋으로 이관할 수 없다.
+    assert "템플릿 순서로\n  재배치" in skill
 
 
 def test_project_codex_config_is_credential_free() -> None:
@@ -2208,9 +2238,12 @@ def test_find_prior_report_main_reports_new_and_inherited(
     assert "과거 중복 후보 1건" in out
     assert "승계 파일명을 목표 경로로 먼저 변경" in out
     assert "복사본을 만들지 마라" in out
-    assert "`## 12. 개정 이력`을 반드시 읽어라" in out
-    assert "§12에 한 줄로 옮긴 뒤 본문에서 뺀다" in out
-    assert "- YYYY-MM-DD: 구분 — 요약" in out
+    # 옛 보고서는 `## 12. 개정 이력`, 현 템플릿은 `## 11. 개정 이력` — 번호가 아니라 절 이름으로 찾는다.
+    assert "승계본의 `개정 이력` 절을 반드시 읽어라" in out
+    assert "템플릿 섹션 순서로 재배치" in out
+    assert "§11에 한 줄로 옮긴 뒤 본문에서 뺀다" in out
+    assert "`## 11. 개정 이력`에 `- YYYY-MM-DD: 구분 — 요약` 한 줄" in out
+    assert "## 12." not in out.replace("옛 배치는 `## 12.`", "")
 
     assert module.main(["카카오", "--today", "2026-09-01"]) == 0
     new_out = capsys.readouterr().out
@@ -3229,12 +3262,9 @@ def test_stock_analysis_template_has_entry_path_and_trailing_stop() -> None:
     # 「매매규칙 15」가 요구하는 것 — 미리 정한 선 + 매주 재검토.
     assert "매매규칙 3·15" in template
     assert "매주 재검토" in template
-    # §9에 밸류 게이트 체크리스트가 붙는다.
+    # §5에 밸류 게이트 체크리스트가 붙는다.
     assert "### 🚪 진입 경로 판정" in template
     assert "max_tranche_fraction" in template
-    # 12섹션 구조는 그대로다.
-    sections = re.findall(r"^## (\d+)\.", template, re.MULTILINE)
-    assert [int(section) for section in sections] == list(range(1, 13))
 
 
 def test_trailing_stop_uses_the_closing_price_basis() -> None:

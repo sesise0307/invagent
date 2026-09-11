@@ -192,7 +192,7 @@ uv run python .agents/skills/stage-analysis/scripts/technical_score.py <일봉 J
 - 지수·업종 판정은 이 스킬 범위 밖이다. 개별 종목만 본다.
 - 목표주가·기대수익 산정은 하지 않는다 → `analyze-stock` 9단계.
 - 보고서 파일을 만들지 않는다. 판정은 대화로 답하고, 보고서에 남길 때는 `analyze-stock`이
-  §9 「📈 추세」에 스테이지 줄을 넣는다.
+  §5 「📈 추세」에 스테이지 줄을 넣는다.
 
 ## 한계
 

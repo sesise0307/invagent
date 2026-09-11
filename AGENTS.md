@@ -54,22 +54,27 @@ the same rule as the PDF archive, via `find_reports.chosung_dir()`),
 `산업/<yyyy-mm-dd>_<주제>.md` for sector or theme comparisons, and
 `기타/<yyyy-mm-dd>_<주제>.md` for everything else. The target path is computed by
 `.agents/skills/analyze-stock/scripts/find_prior_report.py`, not by hand, and
-the section layout is owned by `template/stock_analysis.md`. When a report for
+the section layout is owned by `template/stock_analysis.md`, which puts the
+decision first — 결론, then 밸류에이션 · 목표주가 with the broker consensus folded in
+as §2-A, then 포트폴리오 비교, 촉매, 투자 판단 and 리스크 — and the background (사업 구조,
+사업보고서 델타, 아카이브, Evidence, 개정 이력) after it. A report still in the older
+twelve-section order is re-laid out on its next inheritance run, because `output/`
+is gitignored and cannot be migrated in a commit. When a report for
 the same stock already exists, the skill inherits it instead of starting over.
 It reads the prior report, collects only what is newer than that report's date,
 renames that existing file to today's target path, and then edits the renamed
 file in place. Keep one rolling report per stock; do not create or retain a
 separate dated snapshot. The body of the report holds only the current state —
 keeping superseded prose inline made every inheritance run pay to re-read older
-versions of facts it was about to overwrite. Change tracking lives in §12 개정 이력
+versions of facts it was about to overwrite. Change tracking lives in §11 개정 이력
 as one line per revision, `- {yyyy-mm-dd}: {정정 | 갱신 | 판단변경} — {요약}`, with the
 evidence (rcept_no, report filename, URL plus as-of date) carried inside the line for
 corrections and reversed calls. Those lines accumulate and are never rolled off,
-because the body no longer holds the past: §12 is the only place the earlier
+because the body no longer holds the past: §11 is the only place the earlier
 judgment survives, which is why step 2 requires reading it in full before writing a
 new call. A prior report still carrying `### YYYY-MM-DD 업데이트` or
 `### {날짜} 기존 분석 (보존)` blocks is migrated on its next inheritance run — each
-block folds into its §12 line first, and only then leaves the body, so an interrupted
+block folds into its §11 line first, and only then leaves the body, so an interrupted
 migration loses nothing. Because `output/` is gitignored, that migration happens per
 report as it is next analysed rather than in a commit, and the rename must resolve the
 exact source and target and never overwrite an existing target.
@@ -126,7 +131,7 @@ fixed, so holding the price constant determines the average's future path, and t
 needed to cross within N (< 150) trading days has the closed form
 `(MA - S/150) / (1 - N/150)`. It is a calculation under a stated price assumption, not a
 forecast, and the skill requires saying so alongside any date it produces.
-`analyze-stock` step 6 runs the same script and quotes its verdict verbatim in §9.
+`analyze-stock` step 6 runs the same script and quotes its verdict verbatim in §5.
 
 The `[컨센 요약]` line aggregates **the latest report per broker**, not every row
 in `target_price_history`. One broker publishing six times a year would otherwise
@@ -150,26 +155,26 @@ grade. The verdict is tied to `context/my_rules.md`: the centre against the
 and the low point against the -20% final stop of 「매매규칙 6」, which together set the
 effective stop width used for the reward/risk ratio and the 「기본 원칙 4」 2%-rule
 position cap. The calculation rules live in `analyze-stock/SKILL.md` step 9; the
-output layout lives in `template/stock_analysis.md` §5.
+output layout lives in `template/stock_analysis.md` §2.
 
 `analyze-stock` step 5-1 is an overhang and share-supply check whose output is
 reference only. It pulls convertibles, rights issues and
 their refixing dates from OpenDART `dilutive_issuance`, large-holder and blockdeal
 moves from `ownership_structure`, buybacks from `treasury_share`, and lockup
 expiries from the StockEasy news pass, converts every block to a percentage of
-shares outstanding, and puts the dated ones on the §6 catalyst calendar as well.
+shares outstanding, and puts the dated ones on the §4 catalyst calendar as well.
 A funding method the company has left open ("internal reserves or external
 financing") stays 미확정 rather than 없음 — straight debt is neutral, mezzanine
 dilutes — and an insider's stock-option exercise is never promoted to the signal
 strength of an open-market purchase. The summary line (해소 / 미해소 / 해당 없음)
-is quoted once under the §9 verdict and changes nothing in step 10 — not the
+is quoted once under the §5 verdict and changes nothing in step 10 — not the
 buy / watch / avoid call, the confidence grade, the entry path, the value gate,
 or the tranche size — because the user treats overhang as context rather than a
 deciding factor. `entry_policy.py` therefore has no overhang gate, and a test
 asserts that an unresolved or uncollected overhang leaves its output unchanged.
 It used to gate entry (미해소 downgraded a buy call to the first tranche); the
 check lives in `analyze-stock/SKILL.md` step 5-1; the output layout lives in
-`template/stock_analysis.md` §6-A.
+`template/stock_analysis.md` §4-A.
 
 `uv run invagent daily-prep` (`src/invagent/daily_prep.py`) is the single entry point for the
 briefing's independent prep steps — market signals and, when today's snapshot already exists,

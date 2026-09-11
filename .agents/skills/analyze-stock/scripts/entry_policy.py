@@ -20,7 +20,7 @@ entry at the planned first tranche::
                  "first_tranche_fraction":0.03,"target_weight_fraction":0.10,
                  "next_tranche_trigger":"직전 순환적 저점 회복 후 스윙 고점 돌파"}}
 
-Overhang (§6-A) is a reference note in the report, not a gate: an ``overhang`` key
+Overhang (§4-A) is a reference note in the report, not a gate: an ``overhang`` key
 is accepted and ignored, so it never moves ``action`` or ``max_tranche_fraction``.
 
 Fractions use 0..1 (5% is 0.05). Output is policy advice only.
