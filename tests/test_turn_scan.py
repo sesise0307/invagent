@@ -112,6 +112,31 @@ def test_a_modest_close_well_past_the_breakout_is_also_past_the_early_stage():
     assert result["state"] == "extended"
 
 
+def test_after_a_breakout_the_early_stage_is_measured_from_the_breakout_line():
+    """V자 반등은 저점 높임(136)부터 이미 저점 +36%다 — 저점 기준이면 초입 창이 처음부터 없다.
+
+    돌파 뒤에는 돌파선 140 대비로만 잰다: 145(+3.6%)는 돌파 초입, 고개 들기다
+    (2026-09-12 사용자 확정, 산일전기 실데이터).
+    """
+    result = turn_scan.analyze_turn(
+        _bars(_path([(0, 200.0), (100, 100.0), (110, 140.0), (120, 136.0), (140, 145.0)]))
+    )
+
+    assert result["rise_from_low_pct"] > turn_scan.EXTENDED_FROM_LOW_PCT
+    assert result["state"] == "turning"
+
+
+def test_a_throwback_under_the_breakout_line_is_basing_not_extended():
+    """돌파(146) 뒤 돌파선 140 아래(139)로 되돌아오면 추격 금지가 아니라 되돌림 — 바닥 다지기다."""
+    result = turn_scan.analyze_turn(
+        _bars(_path([(0, 200.0), (100, 100.0), (110, 140.0), (120, 136.0), (130, 146.0),
+                     (140, 139.0)]))
+    )
+
+    assert result["state"] == "basing"
+    assert "돌파선 종가 돌파" in result["missing"]
+
+
 def test_a_brief_undercut_that_recovers_is_a_spring_not_a_new_fall():
     """와이코프 Spring — 바닥 100을 98(-2%)까지 잠깐 깼다가 종가로 되찾으면 하락 중이 아니다.
 

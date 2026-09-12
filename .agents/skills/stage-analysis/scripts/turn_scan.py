@@ -61,7 +61,8 @@ STATE_ACTION = {
               "(「기본 원칙 8(풍림화산)」 대기).",
     "turning": "「매매규칙 2」의 '고개 드는 초반' — 밸류 게이트 통과 시 「매매규칙 4」 사전 계획의 "
                "1차(목표 비중 ÷ 3). 진입 가부의 정본은 `analyze-stock` 10단계.",
-    "extended": "추격 금지 — 초입을 지났다. 20일선·앵커드 VWAP 눌림에서 저점 높임을 확인한 뒤 재판정.",
+    "extended": "추격 금지 — 초입을 지났다. 돌파 후면 돌파선 +10% 이내로 눌렸을 때, 돌파 전이면 "
+                "저점 높임이 확정된 뒤 재판정.",
 }
 
 
@@ -193,9 +194,15 @@ def analyze_turn(bars: list[dict]) -> dict:
 
     rise_from_low_pct = (close / base_low["price"] - 1) * 100
     past_pivot_pct = (close / breakout - 1) * 100 if breakout else None
-    extended = rise_from_low_pct > EXTENDED_FROM_LOW_PCT or (
-        past_pivot_pct is not None and past_pivot_pct > EXTENDED_FROM_PIVOT_PCT
+    # 돌파 후엔 돌파선 기준으로만 잰다 (2026-09-12 사용자 확정). V자 반등은 저점 높임부터 이미
+    # 저점 +35%를 넘어서, 저점 기준을 계속 쓰면 초입 창이 처음부터 없다 (산일전기 실데이터).
+    broke_out = higher_low is not None and any(
+        c > breakout for c in closes[higher_low["index"] + 1 :]
     )
+    if broke_out:
+        extended = past_pivot_pct > EXTENDED_FROM_PIVOT_PCT
+    else:
+        extended = rise_from_low_pct > EXTENDED_FROM_LOW_PCT
 
     if base_low["age"] < BASE_MIN_AGE:
         state = "falling"
@@ -223,6 +230,7 @@ def analyze_turn(bars: list[dict]) -> dict:
         "invalidation": min(closes[low_index:]),
         "higher_low": higher_low,
         "breakout": breakout,
+        "broke_out": broke_out,
         "rise_from_low_pct": rise_from_low_pct,
         "past_pivot_pct": past_pivot_pct,
         "ma20": ma20_now,
@@ -275,7 +283,10 @@ def print_result(name: str, code: str, r: dict) -> None:
     print(f"  저점 높임: " + (f"{_won(hl['price'])} ({hl['date']})" if hl else "없음 (확정된 스윙 저점 없음)"))
     if r["breakout"] is not None:
         crossed = "종가 돌파" if r["close"] > r["breakout"] else "미돌파"
-        print(f"  돌파선: {_won(r['breakout'])} — {crossed} (돌파선 대비 {r['past_pivot_pct']:+.1f}%)")
+        ceiling = r["breakout"] * (1 + EXTENDED_FROM_PIVOT_PCT / 100)
+        after = " · 돌파 후라 초입은 돌파선 기준" if r["broke_out"] else ""
+        print(f"  돌파선: {_won(r['breakout'])} — {crossed} (돌파선 대비 {r['past_pivot_pct']:+.1f}%, "
+              f"초입 상한 {_won(ceiling)}{after})")
     else:
         print("  돌파선: - (저점 높임이 확정돼야 정해진다)")
     print(

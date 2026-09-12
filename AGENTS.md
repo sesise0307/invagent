@@ -144,7 +144,10 @@ highest close, so a stock that rallied and then crashed is not measured from its
 pre-rally low), `basing`,
 `turning` (a higher short-term swing low, a close above the rebound high between the low
 and that higher low, a rising 20-day line under the close, and a close above the VWAP
-anchored at the low) or `extended` (+35% off the low or +10% past the breakout).
+anchored at the low) or `extended` (+35% off the low before a breakout; once a close has
+cleared the breakout line, only +10% past that line counts, because a V-shaped rebound's
+higher low already sits more than 35% off the low and measuring from the low would leave
+no early window at all — user decision, 2026-09-12).
 Breakout volume, up/down volume since the low, RSI divergence and a spring raise
 confidence only; they never change the state. `analyze-stock` routes by stage: stage 2
 keeps the trend-confirmed path A, while stages 1, 3 and 4 open path B only when the turn
