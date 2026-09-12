@@ -30,7 +30,7 @@ import urllib.request
 from datetime import date, timedelta
 from pathlib import Path
 
-from invagent.datafeed import cache as http_cache, naver, stockeasy, tickers
+from invagent.datafeed import cache as http_cache, naver, series, stockeasy, tickers
 from invagent.datafeed.naver import fetch_bars, parse_sise
 from invagent.datafeed.naver import parse_date as _parse_date
 from invagent.datafeed.series import sma
@@ -200,15 +200,8 @@ def price_vs_ma(
 
 
 def swing_pivots(bars: list[dict], k: int = PIVOT_K) -> tuple[list[dict], list[dict]]:
-    """좌우 k봉 프랙탈 고점·저점. 최근 k봉은 확정되지 않아 제외된다."""
-    highs, lows = [], []
-    for i in range(k, len(bars) - k):
-        window = bars[i - k : i + k + 1]
-        if bars[i]["high"] >= max(b["high"] for b in window):
-            highs.append({"date": bars[i]["date"], "price": bars[i]["high"], "index": i})
-        if bars[i]["low"] <= min(b["low"] for b in window):
-            lows.append({"date": bars[i]["date"], "price": bars[i]["low"], "index": i})
-    return highs, lows
+    """좌우 k봉 프랙탈 고점·저점 (장중 고저). 최근 k봉은 확정되지 않아 제외된다."""
+    return series.swing_pivots(bars, k)
 
 
 def swing_trend(pivot_highs: list[dict], pivot_lows: list[dict]) -> str:

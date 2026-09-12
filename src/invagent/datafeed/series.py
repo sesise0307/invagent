@@ -17,3 +17,20 @@ def sma(values: list[float], window: int) -> list[float | None]:
             total -= values[i - window]
         out.append(total / window if i >= window - 1 else None)
     return out
+
+
+def swing_pivots(
+    bars: list[dict], k: int, high_key: str = "high", low_key: str = "low"
+) -> tuple[list[dict], list[dict]]:
+    """좌우 k봉 프랙탈 고점·저점. 최근 k봉은 오른쪽 창이 안 차서 확정되지 않아 빠진다.
+
+    기본은 장중 고가·저가로 잡는다. 종가 기준 판정이면 두 키를 `"close"`로 넘긴다.
+    """
+    highs, lows = [], []
+    for i in range(k, len(bars) - k):
+        window = bars[i - k : i + k + 1]
+        if bars[i][high_key] >= max(b[high_key] for b in window):
+            highs.append({"date": bars[i]["date"], "price": bars[i][high_key], "index": i})
+        if bars[i][low_key] <= min(b[low_key] for b in window):
+            lows.append({"date": bars[i]["date"], "price": bars[i][low_key], "index": i})
+    return highs, lows
