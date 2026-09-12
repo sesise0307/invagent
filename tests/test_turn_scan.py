@@ -55,6 +55,29 @@ def test_a_fresh_low_is_still_falling():
     assert result["label"] == "하락 중"
 
 
+def test_a_crash_from_a_fresh_peak_is_judged_against_its_own_low():
+    """100 → 200으로 오른 뒤 128까지 -36% 무너진 종목의 바닥은 랠리 전 100이 아니라 이번 하락의 저점이다.
+
+    2026-09-12 실데이터 — SK하이닉스가 고점 대비 -38%인데 랠리 전 저점 기준 +124%라 「초입 지남」이 나왔다.
+    """
+    result = turn_scan.analyze_turn(
+        _bars(_path([(0, 120.0), (30, 100.0), (70, 200.0), (120, 130.0), (140, 128.0)]))
+    )
+
+    assert result["state"] == "falling"
+    assert result["base_low"]["price"] == 128.0
+
+
+def test_a_modest_pullback_in_an_uptrend_is_not_a_new_base():
+    """고점 대비 -10% 눌림은 새 바닥이 아니다 — 랠리 전 저점 기준으로 이미 초입을 지났다."""
+    result = turn_scan.analyze_turn(
+        _bars(_path([(0, 150.0), (30, 100.0), (100, 200.0), (140, 180.0)]))
+    )
+
+    assert result["state"] == "extended"
+    assert result["base_low"]["price"] == 100.0
+
+
 def test_a_higher_low_then_a_close_above_the_rebound_high_is_turning():
     """Sperandeo 1-2-3 — 저점을 높인 뒤(102 > 100) 직전 반등 고점 108을 종가로 넘으면 고개 들기."""
     result = turn_scan.analyze_turn(_bars(_path(BASE + [(140, 112.0)])))
@@ -206,7 +229,7 @@ def test_every_threshold_is_documented_with_its_value():
     skill = (REPO_ROOT / ".agents" / "skills" / "stage-analysis" / "SKILL.md").read_text(encoding="utf-8")
     section = skill.split("## 단기 바닥 전환 판정")[1].split("\n## ")[0]
 
-    for name in ("MIN_BARS", "BASE_LOOKBACK", "BASE_MIN_AGE", "TURN_PIVOT_K", "MA_SHORT",
+    for name in ("MIN_BARS", "BASE_LOOKBACK", "DECLINE_MIN_PCT", "BASE_MIN_AGE", "TURN_PIVOT_K", "MA_SHORT",
                  "MA_SHORT_RISE_DAYS", "MA_MID", "MA_MID_SLOPE_DAYS", "EXTENDED_FROM_LOW_PCT",
                  "EXTENDED_FROM_PIVOT_PCT", "SPRING_TOL_PCT", "BREAKOUT_VOL_RATIO",
                  "VOLUME_AVG_DAYS", "BASE_VOL_RATIO", "RSI_PERIOD"):

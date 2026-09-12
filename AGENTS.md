@@ -137,8 +137,11 @@ The stage verdict is too slow to time a value or neglected stock's bottom — 15
 confirmation arrives months after the low, or leaves the stock in stage 4 the whole
 way — so 「매매규칙 2」's "buy once the base is in and the price starts to lift" is judged
 by `.agents/skills/stage-analysis/scripts/turn_scan.py` instead, on 20–60-day daily
-windows and on closes only. It returns one of four states: `falling` (a fresh 120-day
-closing low within 15 sessions, a Wyckoff spring of up to 3% excepted), `basing`,
+windows and on closes only. It returns one of four states: `falling` (a fresh base low
+within 15 sessions, a Wyckoff spring of up to 3% excepted — the base is the 120-day closing
+low, or the low of the current decline once that decline is 20% or more off the window's
+highest close, so a stock that rallied and then crashed is not measured from its
+pre-rally low), `basing`,
 `turning` (a higher short-term swing low, a close above the rebound high between the low
 and that higher low, a rising 20-day line under the close, and a close above the VWAP
 anchored at the low) or `extended` (+35% off the low or +10% past the breakout).

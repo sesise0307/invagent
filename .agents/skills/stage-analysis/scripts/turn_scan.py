@@ -31,6 +31,7 @@ from invagent.datafeed import cache as http_cache, naver, series, tickers
 # 이 스킬이 정한 운영 기준이다. 바꾸려면 SKILL.md 「단기 바닥 전환 판정」 표의 근거도 함께 고친다.
 MIN_BARS = 130           # 바닥 탐색 120일 + 스윙 확정 여유. 이보다 짧으면 판정하지 않는다
 BASE_LOOKBACK = 120      # 바닥 저점 탐색 구간 (거래일 ≈ 6개월)
+DECLINE_MIN_PCT = 20.0   # 구간 최고 종가 대비 이만큼 무너졌으면 바닥은 그 하락 안에서 찾는다
 BASE_MIN_AGE = 15        # 저점 이후 신저가 없이 버텨야 하는 최소 거래일 (≈ 3주)
 TURN_PIVOT_K = 5         # 단기 스윙 프랙탈 반경 (좌우 거래일). stage_scan의 10일의 절반
 MA_SHORT = 20            # 단기 추세선
@@ -142,6 +143,11 @@ def analyze_turn(bars: list[dict]) -> dict:
     closes = [float(b["close"]) for b in bars]
     close = closes[-1]
     start = max(0, len(closes) - BASE_LOOKBACK)
+    # 랠리 뒤 급락한 종목을 랠리 전 저점으로 재면 고점 대비 -40%인데도 「초입 지남」이 된다.
+    # 구간 최고 종가 이후 DECLINE_MIN_PCT 이상 무너졌으면 바닥은 그 하락 안에서 찾는다.
+    peak_index = max(range(start, len(closes)), key=lambda i: closes[i])
+    if min(closes[peak_index:]) <= closes[peak_index] * (1 - DECLINE_MIN_PCT / 100):
+        start = peak_index
     low_index = min(range(start, len(closes)), key=lambda i: closes[i])
 
     # Spring: 최근 저점이 그 전 바닥을 SPRING_TOL_PCT 이내로만 깼고 종가가 그 바닥 위로 돌아왔으면
