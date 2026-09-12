@@ -12,13 +12,17 @@ Example input::
    "earnings":{"status":"ok","surprise":false},
    "instrument":{"status":"ok","kind":"stock","leveraged":false}}
 
-Stage 1 and stage 3 open only through ``value_gate`` (가치 우선 진입), which caps the
-entry at the planned first tranche::
+Stages 1, 3 and 4 open only when ``turn`` (turn_scan.py's short-term bottom state) is
+``turning`` and ``value_gate`` (가치 우선 진입) passes, which caps the entry at the planned
+first tranche. ``falling`` avoids; ``basing``, ``extended`` or an unknown turn withhold::
 
-  {"stage":{"status":"ok","value":1},
+  {"stage":{"status":"ok","value":4},
+   "turn":{"status":"ok","value":"turning"},
    "value_gate":{"status":"ok","downside_blocked":true,"reward_risk":3.4,
                  "first_tranche_fraction":0.03,"target_weight_fraction":0.10,
-                 "next_tranche_trigger":"직전 순환적 저점 회복 후 스윙 고점 돌파"}}
+                 "next_tranche_trigger":"저점 높임 유지 + 60일선 상향 전환"}}
+
+Stage 2 is the trend-confirmed path and does not consult ``turn``.
 
 Overhang (§4-A) is a reference note in the report, not a gate: an ``overhang`` key
 is accepted and ignored, so it never moves ``action`` or ``max_tranche_fraction``.
@@ -40,6 +44,13 @@ EVENT_LIMIT = 0.05
 VALUE_GATE_MIN_REWARD_RISK = 3.0
 VALUE_PATH_TRANCHE_RATIO = 1 / 3
 ACTION_PRIORITY = {"eligible": 0, "watch": 1, "withhold": 2, "avoid": 3}
+# turn_scan.py의 `state` 값. 고개 들기(turning)만 경로 B를 연다.
+TURN_STATES = {
+    "falling": "still falling",
+    "basing": "still basing — wait for the turn above the breakout close",
+    "turning": "turning up",
+    "extended": "past the early stage — wait for a pullback",
+}
 
 
 class EntryPolicyError(ValueError):
@@ -140,19 +151,34 @@ def decide(payload: Any) -> dict[str, Any]:
         value = stage.get("value")
         if value not in {1, 2, 3, 4}:
             raise EntryPolicyError("stage.value must be 1, 2, 3, or 4")
-        if value in {1, 3}:
-            tranche = _value_first_tranche(_state(payload, "value_gate"))
-            if tranche is None:
-                apply("stage", "withhold", f"stage {value} without a passing value gate",
-                      "매매규칙 2(펀더 기반 매수)")
-            else:
-                cap = min(cap, tranche)
-                apply("stage", "watch", f"stage {value} value-first entry: capped first tranche only",
-                      "매매규칙 4(분할 매수)")
-        elif value == 2:
+        if value == 2:
             apply("stage", "eligible", "stage 2 is the buy-stage gate", "매매규칙 2(펀더 기반 매수)")
         else:
-            apply("stage", "avoid", "stage 4 remains an avoidance stage", "매매규칙 6(-15%, -20% 손절)")
+            # 1·3·4단계는 단기 바닥 전환 판정(turn_scan)이 타이밍 게이트다. 고개를 든 뒤에만
+            # 밸류 게이트가 1차 분할을 연다 — 4단계도 같다 (2026-09-12 사용자 확정).
+            turn = _state(payload, "turn")
+            turn_value = turn.get("value") if turn and turn["status"] == "ok" else None
+            if turn_value is not None and turn_value not in TURN_STATES:
+                raise EntryPolicyError("turn.value must be falling, basing, turning, or extended")
+            if turn_value is None:
+                apply("stage", "withhold", f"stage {value} with unknown short-term turn evidence",
+                      "매매규칙 2(펀더 기반 매수)")
+            elif turn_value == "falling":
+                apply("stage", "avoid", f"stage {value} and still falling — no buying into a decline",
+                      "매매규칙 2(펀더 기반 매수)")
+            elif turn_value != "turning":
+                apply("stage", "withhold", f"stage {value} {TURN_STATES[turn_value]}",
+                      "매매규칙 2(펀더 기반 매수)")
+            else:
+                tranche = _value_first_tranche(_state(payload, "value_gate"))
+                if tranche is None:
+                    apply("stage", "withhold", f"stage {value} turning without a passing value gate",
+                          "매매규칙 2(펀더 기반 매수)")
+                else:
+                    cap = min(cap, tranche)
+                    apply("stage", "watch",
+                          f"stage {value} turning, value-first entry: capped first tranche only",
+                          "매매규칙 4(분할 매수)")
 
     long_bull = _state(payload, "long_bull")
     if not long_bull or long_bull["status"] != "ok":

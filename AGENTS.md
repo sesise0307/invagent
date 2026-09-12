@@ -133,6 +133,27 @@ needed to cross within N (< 150) trading days has the closed form
 forecast, and the skill requires saying so alongside any date it produces.
 `analyze-stock` step 6 runs the same script and quotes its verdict verbatim in §5.
 
+The stage verdict is too slow to time a value or neglected stock's bottom — 150-day
+confirmation arrives months after the low, or leaves the stock in stage 4 the whole
+way — so 「매매규칙 2」's "buy once the base is in and the price starts to lift" is judged
+by `.agents/skills/stage-analysis/scripts/turn_scan.py` instead, on 20–60-day daily
+windows and on closes only. It returns one of four states: `falling` (a fresh 120-day
+closing low within 15 sessions, a Wyckoff spring of up to 3% excepted), `basing`,
+`turning` (a higher short-term swing low, a close above the rebound high between the low
+and that higher low, a rising 20-day line under the close, and a close above the VWAP
+anchored at the low) or `extended` (+35% off the low or +10% past the breakout).
+Breakout volume, up/down volume since the low, RSI divergence and a spring raise
+confidence only; they never change the state. `analyze-stock` routes by stage: stage 2
+keeps the trend-confirmed path A, while stages 1, 3 and 4 open path B only when the turn
+is `turning` and the value gate passes — stage 4 included, since a stock that has turned
+up is no longer falling (user decision, 2026-09-12). `entry_policy.py` takes the state as
+`turn`; unknown withholds and `falling` avoids. The remaining tranches follow the scan's
+watch lines, a third of the target weight each: the second on a held higher low plus a
+rising 60-day line, the third on a stage-2 verdict or a rising 20-week line. The
+thresholds are this skill's operating choices, live as constants at the top of the
+script, and are tabled with their rationale in `stage-analysis/SKILL.md`; a test compares
+the two.
+
 The `[컨센 요약]` line aggregates **the latest report per broker**, not every row
 in `target_price_history`. One broker publishing six times a year would otherwise
 count six times, and targets cut since publication would drag the average toward

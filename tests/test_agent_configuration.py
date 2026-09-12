@@ -172,10 +172,34 @@ def test_analyze_stock_gates_entry_on_the_scripted_stage() -> None:
 
     assert "진입 경로 판정" in skill
     gate = skill.split("진입 경로 판정")[1].split("오버행 참고")[0]
-    assert "`1단계` 또는 `3단계`" in gate and "🟡" in gate
-    assert "`4단계`" in gate and "🔴" in gate
+    assert "`1단계` · `3단계` · `4단계`" in gate and "🟡" in gate
+    assert "`하락 중` → 🔴" in gate
     assert "stage_scan" in gate
     assert "기대수익이 크다는 것은 뒤집을 근거가 아니다" in gate
+
+
+def test_value_path_waits_for_the_scripted_turn() -> None:
+    """「매매규칙 2」의 '고개 드는 초반'은 turn_scan이 정본이다 — 6단계가 돌리고 10단계·템플릿·advice가 인용한다.
+
+    150일선 스테이지로 읽으면 가치주 바닥은 저점 +30~50% 뒤에야 2단계가 된다 (2026-09-12).
+    """
+    skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+    step6 = skill.split("### 6단계")[1].split("### 7단계")[0]
+    assert "stage-analysis/scripts/turn_scan.py" in step6
+    for code in ("`falling`", "`basing`", "`turning`", "`extended`"):
+        assert code in step6
+
+    gate = skill.split("경로 B (가치 우선 진입)")[1].split("오버행 참고")[0]
+    assert "`turn_scan` 판정이 `고개 들기`일 때만" in gate
+    assert "2차 = 저점 높임 가격 위 종가 유지 + 60일선 상향 전환" in gate
+
+    template = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
+    assert "- 단기 바닥 전환:" in template
+    assert "turn_scan" in template.split("### 🚪 진입 경로 판정")[1]
+
+    advice = (SKILLS_ROOT / "advice" / "SKILL.md").read_text(encoding="utf-8")
+    row = next(ln for ln in advice.splitlines() if ln.startswith("| 진입 국면"))
+    assert "turn_scan" in row and "고개 들기" in row
 
 
 def test_analyze_stock_keeps_the_20week_rule_advisory() -> None:
@@ -941,6 +965,7 @@ def test_no_cache_flag_forces_a_fresh_fetch(
     # 네트워크를 타는 스크립트 셋 모두 플래그를 노출하고 실제로 끈다.
     for name in ("analyze-stock/scripts/fetch_stock_info.py",
                  "stage-analysis/scripts/stage_scan.py",
+                 "stage-analysis/scripts/turn_scan.py",
                  "daily-digest/scripts/peak_drawdown.py"):
         text = (SKILLS_ROOT / name).read_text(encoding="utf-8")
         assert "--no-cache" in text, f"{name}에 --no-cache가 없다"
@@ -1685,6 +1710,8 @@ def test_every_mechanically_checkable_rule_has_a_script() -> None:
     checks = {
         "레버리지 규칙 3": ("daily-digest/scripts/fetch_market_signals.py", "leverage_liquidation"),
         "기술적 분석 규칙 1": ("stage-analysis/scripts/stage_scan.py", "MA_20WEEK"),
+        # '바닥을 다진 후 고개를 들기 시작하는 초반' — 바닥 저점이 버틴 거래일 수로 확정한다.
+        "매매규칙 2": ("stage-analysis/scripts/turn_scan.py", "BASE_MIN_AGE"),
         "기본 원칙 13": ("daily-digest/scripts/peak_drawdown.py", "ACCOUNT_MDD_BANDS"),
         "매매규칙 6": ("daily-digest/scripts/extract_portfolio.py", "STOP_FULL_PCT"),
     }
@@ -3053,6 +3080,7 @@ def _entry_payload(**overrides) -> dict:
             "review_complete": True,
         },
         "stage": {"status": "ok", "value": 2},
+        "turn": {"status": "ok", "value": "turning"},
         "overhang": {"status": "ok", "value": "none"},
         "event": {"status": "ok", "enabled": False},
         "long_bull": {"status": "ok", "active": False},
@@ -3143,15 +3171,78 @@ def test_entry_policy_treats_stage_three_like_stage_one() -> None:
     assert closed["action"] == "withhold"
 
 
-def test_entry_policy_keeps_stage_four_closed_to_the_value_gate() -> None:
-    """「매매규칙 2」는 하락하는 와중의 매수를 금지한다 — 밸류가 4단계를 열지 못한다."""
+def test_entry_policy_opens_stage_four_only_once_the_stock_turns_up() -> None:
+    """가치주 바닥은 150일선상 4단계인 채로 온다. 단기로 고개를 들었으면 '하락하는 와중'이 아니다.
+
+    2026-09-12 사용자 확정 — 4단계도 「고개 들기」 + 밸류 게이트면 1차 분할이 열린다.
+    바닥을 다지는 중이거나 밸류 게이트가 없으면 여전히 닫혀 있다.
+    """
+    module = _load_entry_policy_module()
+    stage4 = {"status": "ok", "value": 4}
+
+    turned = module.decide(_entry_payload(stage=stage4, value_gate=dict(VALUE_GATE_PASS)))
+    basing = module.decide(
+        _entry_payload(stage=stage4, value_gate=dict(VALUE_GATE_PASS),
+                       turn={"status": "ok", "value": "basing"})
+    )
+    no_gate = module.decide(_entry_payload(stage=stage4))
+
+    assert turned["action"] == "watch"
+    assert turned["max_tranche_fraction"] == pytest.approx(0.03)
+    assert basing["action"] == "withhold"
+    assert basing["max_tranche_fraction"] is None
+    assert no_gate["action"] == "withhold"
+
+
+def test_entry_policy_waits_for_the_turn_before_the_value_path_opens() -> None:
+    """「매매규칙 2」는 바닥을 다진 '후' 고개 드는 초반에 산다 — 다지는 중이나 초입을 지난 뒤는 수량 0."""
+    module = _load_entry_policy_module()
+
+    for value in ("basing", "extended"):
+        result = module.decide(
+            _entry_payload(stage={"status": "ok", "value": 1}, value_gate=dict(VALUE_GATE_PASS),
+                           turn={"status": "ok", "value": value})
+        )
+        assert result["action"] == "withhold", value
+        assert result["max_tranche_fraction"] is None, value
+
+
+def test_entry_policy_avoids_a_stock_that_is_still_falling() -> None:
+    """방금 신저가를 쓴 종목은 밸류가 아무리 좋아도 하락하는 와중이다."""
     module = _load_entry_policy_module()
 
     result = module.decide(
-        _entry_payload(stage={"status": "ok", "value": 4}, value_gate=dict(VALUE_GATE_PASS))
+        _entry_payload(stage={"status": "ok", "value": 1}, value_gate=dict(VALUE_GATE_PASS),
+                       turn={"status": "ok", "value": "falling"})
     )
 
     assert result["action"] == "avoid"
+    assert result["max_tranche_fraction"] is None
+
+
+def test_entry_policy_withholds_the_value_path_when_the_turn_is_unknown() -> None:
+    """가드 — 단기 판정을 못 받았으면 허가로 승격하지 않는다."""
+    module = _load_entry_policy_module()
+
+    missing = _entry_payload(stage={"status": "ok", "value": 3}, value_gate=dict(VALUE_GATE_PASS))
+    del missing["turn"]
+    errored = _entry_payload(stage={"status": "ok", "value": 3}, value_gate=dict(VALUE_GATE_PASS),
+                             turn={"status": "error"})
+
+    for payload in (missing, errored):
+        result = module.decide(payload)
+        assert result["action"] == "withhold"
+        assert result["max_tranche_fraction"] is None
+
+
+def test_entry_policy_stage_two_does_not_consult_the_turn() -> None:
+    """2단계는 경로 A다 — 단기 판정은 1·3·4단계의 타이밍 게이트일 뿐 주도주 진입을 막지 않는다."""
+    module = _load_entry_policy_module()
+
+    payload = _entry_payload(turn={"status": "ok", "value": "extended"})
+    result = module.decide(payload)
+
+    assert result["action"] == "eligible"
     assert result["max_tranche_fraction"] is None
 
 
