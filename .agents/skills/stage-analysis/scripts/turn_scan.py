@@ -61,8 +61,8 @@ STATE_ACTION = {
               "(「기본 원칙 8(풍림화산)」 대기).",
     "turning": "「매매규칙 2」의 '고개 드는 초반' — 밸류 게이트 통과 시 「매매규칙 4」 사전 계획의 "
                "1차(목표 비중 ÷ 3). 진입 가부의 정본은 `analyze-stock` 10단계.",
-    "extended": "추격 금지 — 초입을 지났다. 돌파 후면 돌파선 +10% 이내로 눌렸을 때, 돌파 전이면 "
-                "저점 높임이 확정된 뒤 재판정.",
+    "extended": "추격 금지 — 초입을 지났다. 돌파선이 있으면 돌파선 +10% 이내로 눌렸을 때, "
+                "없으면(V자 반등) 저점 높임이 확정된 뒤 재판정.",
 }
 
 
@@ -194,12 +194,14 @@ def analyze_turn(bars: list[dict]) -> dict:
 
     rise_from_low_pct = (close / base_low["price"] - 1) * 100
     past_pivot_pct = (close / breakout - 1) * 100 if breakout else None
-    # 돌파 후엔 돌파선 기준으로만 잰다 (2026-09-12 사용자 확정). V자 반등은 저점 높임부터 이미
-    # 저점 +35%를 넘어서, 저점 기준을 계속 쓰면 초입 창이 처음부터 없다 (산일전기 실데이터).
+    # 저점 높임이 확정돼 돌파선이 정해지면 초입은 돌파선 기준으로만 잰다 (2026-09-12 사용자 확정).
+    # 저점 기준 +35%를 계속 쓰면 V자 반등은 저점 높임부터 이미 넘어서 — 돌파 전엔 「초입 지남」,
+    # 돌파하면 「고개 들기」로 뜻이 뒤집힌다 (산일전기·큐리옥스·이수페타시스 실데이터).
+    # 저점 대비 상승률은 저점 높임이 아직 없는 V자 반등에만 쓴다.
     broke_out = higher_low is not None and any(
         c > breakout for c in closes[higher_low["index"] + 1 :]
     )
-    if broke_out:
+    if higher_low is not None:
         extended = past_pivot_pct > EXTENDED_FROM_PIVOT_PCT
     else:
         extended = rise_from_low_pct > EXTENDED_FROM_LOW_PCT
@@ -284,7 +286,7 @@ def print_result(name: str, code: str, r: dict) -> None:
     if r["breakout"] is not None:
         crossed = "종가 돌파" if r["close"] > r["breakout"] else "미돌파"
         ceiling = r["breakout"] * (1 + EXTENDED_FROM_PIVOT_PCT / 100)
-        after = " · 돌파 후라 초입은 돌파선 기준" if r["broke_out"] else ""
+        after = " · 돌파 후" if r["broke_out"] else " · 돌파 대기"
         print(f"  돌파선: {_won(r['breakout'])} — {crossed} (돌파선 대비 {r['past_pivot_pct']:+.1f}%, "
               f"초입 상한 {_won(ceiling)}{after})")
     else:

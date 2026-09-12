@@ -126,6 +126,21 @@ def test_after_a_breakout_the_early_stage_is_measured_from_the_breakout_line():
     assert result["state"] == "turning"
 
 
+def test_below_a_set_breakout_line_the_stock_is_basing_however_far_off_the_low():
+    """저점 높임(140)이 저점 +40%에 잡혀 돌파선(150)이 정해졌으면, 그 아래(145)는 돌파 대기다.
+
+    저점 기준 +35%로 「초입 지남」을 붙이면 돌파 전엔 추격 금지, 돌파하면 고개 들기로 뜻이 뒤집힌다
+    (2026-09-12 큐리옥스·이수페타시스 실데이터, 사용자 확정).
+    """
+    result = turn_scan.analyze_turn(
+        _bars(_path([(0, 200.0), (100, 100.0), (110, 150.0), (120, 140.0), (140, 145.0)]))
+    )
+
+    assert result["rise_from_low_pct"] > turn_scan.EXTENDED_FROM_LOW_PCT
+    assert result["state"] == "basing"
+    assert "돌파선 종가 돌파" in result["missing"]
+
+
 def test_a_throwback_under_the_breakout_line_is_basing_not_extended():
     """돌파(146) 뒤 돌파선 140 아래(139)로 되돌아오면 추격 금지가 아니라 되돌림 — 바닥 다지기다."""
     result = turn_scan.analyze_turn(
