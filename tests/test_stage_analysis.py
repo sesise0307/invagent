@@ -126,6 +126,53 @@ def test_stage_one_returns_to_four_when_prior_cyclical_low_is_broken() -> None:
     assert any("순환적 저점" in r for r in verdict["reasons"])
 
 
+# --- 종가 기준 ---------------------------------------------------------------
+# 가격 판단은 종가로만 채점한다. 장중 꼬리로 잡힌 수준은 종가를 비교하는 경계 규칙과도,
+# 그 저점을 종가 기준 추세 이탈선으로 쓰는 `analyze-stock`과도 어긋난다.
+
+
+def _wicked_v() -> list[dict]:
+    """20,000 → 10,000(i=100) → 13,600(i=190) → 11,800. 저점·고점과 무관한 봉에 긴 꼬리를 단다."""
+    closes = (
+        [20_000 - 100 * i for i in range(101)]
+        + [10_000 + 40 * j for j in range(1, 91)]
+        + [13_600 - 30 * j for j in range(1, 61)]
+    )
+    bars = _bars(closes)
+    bars[50]["high"] = 30_000   # 종가 15,000인 하락 구간 봉의 윗꼬리
+    bars[150]["low"] = 5_000    # 종가 12,000인 상승 구간 봉의 아랫꼬리
+    return bars
+
+
+def test_cyclical_levels_come_from_closes_not_intraday_wicks() -> None:
+    bars = _wicked_v()
+    result = stage_scan.analyze(bars, None, "C")
+
+    assert result["cyclical"]["low"]["price"] == 10_000
+    assert result["cyclical"]["low"]["date"] == bars[100]["date"]
+    assert result["cyclical"]["high"]["price"] == 13_600
+    assert result["cyclical"]["high"]["date"] == bars[190]["date"]
+
+
+def test_box_range_spans_closes_not_intraday_extremes() -> None:
+    bars = _wicked_v()
+    bars[220]["high"] = 30_000   # 박스 60일 안(종가 12,700)의 위·아래 꼬리
+    bars[220]["low"] = 5_000
+    result = stage_scan.analyze(bars, None, "C")
+
+    # 최근 60봉 = i=191..250, 종가 13,570 → 11,800
+    assert result["box"]["top"] == 13_570
+    assert result["box"]["bottom"] == 11_800
+
+
+def test_band_position_measures_against_closes_not_intraday_extremes() -> None:
+    bars = _wicked_v()
+    result = stage_scan.analyze(bars, None, "C")
+
+    # 최근 250봉 = i=1..250. 종가 최고 19,900(i=1) · 최저 10,000(i=100) · 현재 11,800
+    assert result["price"]["band_ratio"] == pytest.approx(1_800 / 9_900)
+
+
 # --- 이평선 쌍 우선 규칙 ----------------------------------------------------
 
 

@@ -201,8 +201,12 @@ def price_vs_ma(
 
 
 def swing_pivots(bars: list[dict], k: int = PIVOT_K) -> tuple[list[dict], list[dict]]:
-    """좌우 k봉 프랙탈 고점·저점 (장중 고저). 최근 k봉은 확정되지 않아 제외된다."""
-    return series.swing_pivots(bars, k)
+    """좌우 k봉 프랙탈 고점·저점 (종가). 최근 k봉은 확정되지 않아 제외된다.
+
+    순환적 고점·저점은 경계 규칙에서 종가와 비교되고 `analyze-stock`의 종가 기준 추세
+    이탈선이 되므로 장중 꼬리가 아니라 종가로 잡는다.
+    """
+    return series.swing_pivots(bars, k, high_key="close", low_key="close")
 
 
 def swing_trend(pivot_highs: list[dict], pivot_lows: list[dict]) -> str:
@@ -220,10 +224,10 @@ def swing_trend(pivot_highs: list[dict], pivot_lows: list[dict]) -> str:
 
 
 def box_range(bars: list[dict], window: int = BOX_WINDOW) -> dict:
-    """최근 구간의 박스권 상·하단과 폭."""
+    """최근 구간의 박스권 상·하단(종가)과 폭."""
     recent = bars[-window:]
-    top = max(b["high"] for b in recent)
-    bottom = min(b["low"] for b in recent)
+    top = max(b["close"] for b in recent)
+    bottom = min(b["close"] for b in recent)
     return {
         "top": top,
         "bottom": bottom,
@@ -245,10 +249,10 @@ def cyclical_levels(
 
 
 def band_position(bars: list[dict], window: int = TREND_WINDOW) -> tuple[str, float | None]:
-    """최근 1년 밴드에서 현재가가 어디인가 → ("하단"/"중단"/"상단", 위치 비율)."""
+    """최근 1년 종가 밴드에서 현재가가 어디인가 → ("하단"/"중단"/"상단", 위치 비율)."""
     recent = bars[-window:]
-    top = max(b["high"] for b in recent)
-    bottom = min(b["low"] for b in recent)
+    top = max(b["close"] for b in recent)
+    bottom = min(b["close"] for b in recent)
     if top == bottom:
         return "중단", None
     ratio = (bars[-1]["close"] - bottom) / (top - bottom)
