@@ -3555,24 +3555,65 @@ def test_weekly_skill_records_all_three_notion_command_behaviours() -> None:
     assert "블록을 지우는 수단은 없다" in skill
 
 
-def test_stock_info_fetches_a_preferred_shares_news_under_its_common_stock(monkeypatch):
-    """우선주 코드로는 뉴스가 거의 안 잡힌다 — 뉴스만 본주 코드로 부른다."""
-    from invagent.datafeed import stockeasy, tickers
+def test_stock_info_splits_a_preferred_share_between_two_tickers(monkeypatch):
+    """우선주는 시세만 자기 코드, 실적·컨센·뉴스·리포트는 본주 코드로 받는다."""
+    from invagent.datafeed import stockeasy
 
     module = _load_stock_info_module()
-    monkeypatch.setattr(tickers, "resolve_code", lambda n, o=None: ("005930", None))
-
+    payloads = {
+        "005935": {"stock_info": {"name": "삼성전자우", "cur_prc": "196900"}},
+        "005930": {
+            "stock_info": {"name": "삼성전자", "cur_prc": "200000"},
+            "financials": {"quarterly": []},
+            "target_price_history": [],
+        },
+    }
     paths: list[str] = []
 
     def fake_fetch(path, params=None, referer=None, cookie=None):
         paths.append(path)
-        return {}, None
+        code = (params or {}).get("stock_code") or path.rstrip("/").split("/")[-1]
+        return payloads.get(code, {"items": []}), None
 
     monkeypatch.setattr(stockeasy, "fetch_stock_json", fake_fetch)
 
-    module.collect_stock_payloads(
-        "005935", name="삼성전자우", news_limit=5, summaries=0, since=None, cookie="x"
+    info, news, reports, own, errors = module.collect_stock_payloads(
+        "005935", news_limit=5, summaries=0, since=None, cookie="x"
     )
 
-    assert "/stock-info/info-tab/005935" in paths, "실적·시세 경로는 건드리지 않는다"
+    assert "/stock-info/info-tab/005930" in paths, "실적은 본주 코드로 받는다"
+    assert "/stock-info/info-tab/005935" in paths, "시세는 우선주 코드로 따로 받는다"
     assert "/news/by-stock-code/005930" in paths, "뉴스는 본주 코드로 받는다"
+    assert info["stock_info"]["name"] == "삼성전자", "info는 본주 페이로드다"
+    assert own["stock_info"]["cur_prc"] == "196900", "own은 우선주 페이로드다"
+
+
+def test_stock_info_summary_keeps_the_preferred_price_and_the_common_fundamentals():
+    module = _load_stock_info_module()
+    summary = module.build_summary(
+        {"stock_code": "005935", "stock_name": "삼성전자우"},
+        {"stock_info": {"name": "삼성전자", "cur_prc": "200000"},
+         "financials": {"quarterly": [1]}, "primary_fs_type": "C"},
+        None,
+        None,
+        own_info={"stock_info": {"name": "삼성전자우", "cur_prc": "196900"}},
+    )
+
+    assert summary["stock_info"]["cur_prc"] == "196900", "시세는 우선주 것이다"
+    assert summary["financials"] == {"quarterly": [1]}, "실적은 본주 것이다"
+    assert summary["preferred_of"] == "005930"
+    assert summary["preferred_discount_pct"] == pytest.approx(-1.55, abs=0.01)
+
+
+def test_stock_info_summary_is_unchanged_for_a_common_share():
+    module = _load_stock_info_module()
+    summary = module.build_summary(
+        {"stock_code": "005930", "stock_name": "삼성전자"},
+        {"stock_info": {"name": "삼성전자", "cur_prc": "200000"}},
+        None,
+        None,
+    )
+
+    assert summary["stock_info"]["cur_prc"] == "200000"
+    assert summary["preferred_of"] is None
+    assert summary["preferred_discount_pct"] is None

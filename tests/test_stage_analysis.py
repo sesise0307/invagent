@@ -537,7 +537,6 @@ def test_main_fetches_the_fundamentals_of_a_preferred_shares_common_stock(monkey
         "resolve_stock",
         lambda q, overrides=None: ({"stock_code": "005935", "stock_name": "삼성전자우"}, None, 0),
     )
-    monkeypatch.setattr(tickers, "resolve_code", lambda n, o=None: ("005930", None))
 
     price_codes: list[str] = []
 
@@ -551,7 +550,8 @@ def test_main_fetches_the_fundamentals_of_a_preferred_shares_common_stock(monkey
 
     def fake_info(path, params=None, referer=stockeasy.PAGE_BASE, cookie=None):
         info_paths.append(path)
-        return {"financials": None, "primary_fs_type": "C"}, None
+        # 본주 코드로 부르면 본주 이름이 돌아온다 — 표시 이름은 우선주로 남아야 한다.
+        return {"financials": None, "primary_fs_type": "C", "stock_info": {"name": "삼성전자"}}, None
 
     monkeypatch.setattr(stockeasy, "fetch_stock_json", fake_info)
     monkeypatch.setattr(stockeasy, "load_cookie", lambda: "x")
@@ -559,4 +559,6 @@ def test_main_fetches_the_fundamentals_of_a_preferred_shares_common_stock(monkey
     assert stage_scan.main(["삼성전자우"]) == 0
     assert price_codes == ["005935"], "일봉은 우선주 자기 시세다"
     assert info_paths == ["/stock-info/info-tab/005930"], "실적은 본주 코드로 받는다"
-    assert "본주 삼성전자(005930)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "본주 삼성전자(005930)" in out, "출처에 본주를 밝힌다"
+    assert "삼성전자우(005935)" in out, "표시 이름은 우선주 그대로다"

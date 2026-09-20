@@ -17,25 +17,25 @@ from invagent.datafeed.env import repo_root
 TICKER_RE = re.compile(r"^\d{6}$")
 OVERRIDES_REL = Path("context") / "ticker_overrides.md"
 
-# 우선주 종목명 접미사 — `우`, `우B`, `2우B`, `3우B`. 본주 이름은 그 앞까지다.
-PREFERRED_SUFFIX_RE = re.compile(r"^(?P<base>.+?)\d*우B?$")
+# 종목코드 6자리의 마지막 자리는 주권 종류다 — 보통주 `0`, 구형 우선주 `5`·`7`·`9`,
+# 신형 우선주(2013년 이후) `K`부터의 알파벳. 2026-09-21 DART 공시에 뜬 보통주 164종목이
+# 예외 없이 `0`으로 끝났고, 삼성물산우B `02826K`의 본주가 `028260`(삼성물산)임도 같은
+# 데이터로 교차검증했다.
+CODE_LEN = 6
+COMMON_LAST_CHAR = "0"
 
 
-def common_name(name: str) -> str | None:
-    """우선주 종목명 → 본주 종목명. 우선주가 아니면 `None`.
+def common_code(code: str) -> str | None:
+    """우선주 티커 → 본주 티커. 우선주가 아니거나 형식이 다르면 `None`.
 
-    우선주는 같은 회사의 다른 주식 종류일 뿐이라 분기 매출·영업이익이 따로 없다. StockEasy
-    `info-tab`을 우선주 코드로 부르면 확정 분기 실적이 비어 `stage_scan`이 가격 전용 판정으로
-    강등된다 — 실적 축은 본주 코드로 따로 받아야 한다 (2026-09-20 삼성전자우, 사용자 확정).
-
-    판별은 **종목명 접미사**로 한다. `삼성전자(우)`처럼 시트 표기가 다르면 잡히지 않고,
-    그때는 실적 축이 예전처럼 비어 판정이 가격 전용으로 남는다 — 틀린 본주를 붙이는 것보다 낫다.
+    마지막 자리만 `0`으로 바꾼다. 구형(`005935`→`005930`)과 신형(`02826K`→`028260`) 둘 다
+    같은 규칙이다. 앞 다섯 자리에 알파벳이 있는 신형 **보통주**(에임드바이오 `0009K0`)는
+    `0`으로 끝나므로 손대지 않는다.
     """
-    m = PREFERRED_SUFFIX_RE.match(name.strip())
-    if not m:
+    code = (code or "").strip()
+    if len(code) != CODE_LEN or code.endswith(COMMON_LAST_CHAR):
         return None
-    base = m.group("base").strip()
-    return base or None
+    return code[: CODE_LEN - 1] + COMMON_LAST_CHAR
 
 
 def overrides_path() -> Path:
@@ -87,28 +87,15 @@ def resolve_stock(query: str, overrides: dict[str, str] | None = None):
     return stockeasy.resolve_stock(query)
 
 
-def fundamentals_code(
-    code: str, name: str | None, overrides: dict[str, str] | None = None
-) -> tuple[str, str | None]:
-    """실적·컨센·뉴스 조회에 쓸 티커. `(티커, 본주명 or None)`.
+def fundamentals_code(code: str) -> tuple[str, bool]:
+    """실적·컨센서스·뉴스 조회에 쓸 티커. `(티커, 우선주였나)`.
 
     우선주면 본주 티커를, 아니면 받은 티커를 그대로 돌려준다. **가격 축에는 쓰지 않는다** —
-    우선주는 본주와 괴리율이 따로 움직이므로 일봉·이동평균·시세는 우선주 자기 것을 써야 한다.
+    우선주는 본주와 괴리율이 따로 움직이므로 일봉·이동평균·현재가는 우선주 자기 것을 써야 한다.
 
-    판별은 두 축이 모두 맞을 때만 성립한다.
-
-    1. 종목명이 우선주 접미사로 끝난다 (`common_name`).
-    2. 티커 끝자리가 `0`이 아니다 — KRX 관례상 보통주 코드는 0으로 끝난다.
-
-    둘째 축은 이름이 '우'로 끝나는 **본주**를 거르기 위한 것이다 (미래에셋대우 006800). 본주
-    해석에 실패하면 받은 티커를 그대로 돌려주고, 호출자는 예전처럼 가격 전용 판정으로 남는다.
+    우선주는 같은 회사의 다른 주식 종류라 분기 실적이 따로 없다. StockEasy `info-tab`을 우선주
+    코드로 부르면 확정 분기가 비어 `stage_scan`이 가격 전용 판정으로 강등됐다 (2026-09-20
+    삼성전자우). 판별은 `common_code`의 코드 축 단독이며 네트워크를 타지 않는다.
     """
-    if not name or code.endswith("0"):
-        return code, None
-    base = common_name(name)
-    if not base:
-        return code, None
-    parent, _ = resolve_code(base, overrides)
-    if not parent or parent == code:
-        return code, None
-    return parent, base
+    parent = common_code(code)
+    return (parent, True) if parent else (code, False)

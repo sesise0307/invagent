@@ -126,18 +126,30 @@ resolve names, so the same name could resolve two ways.
 A **preferred share has no earnings of its own** — it is another class of the same
 company's stock, so StockEasy `info-tab` called with a preferred ticker returns no
 confirmed quarter and the run silently degraded to a price-only verdict (삼성전자우,
-2026-09-20). `datafeed.tickers.fundamentals_code` maps it to the common share's
-ticker, and `stage_scan` uses that for the operating-profit axis only; the price axis
-(daily bars, the 150-day and 20-week lines, the swings) stays on the preferred share's
-own quote, because the two trade at a discount that moves independently. The display
-name stays the preferred one even though `info-tab` now answers with the parent's.
-`fetch_stock_info` applies the same mapping to the news endpoint alone, since articles
-are written under the common share's name; its valuation and consensus still come from
-the preferred ticker. Detection needs **both** axes to agree: the name ends in a
-preferred suffix (`우`, `우B`, `2우B`) **and** the ticker's last digit is not `0`, the
-second test being what keeps a common share whose name merely ends in 우 (미래에셋대우
-006800) from being remapped. A sheet spelling the suffix differently (`삼성전자(우)`)
-is not detected and leaves the verdict price-only, which is the safe failure. The
+2026-09-20). `datafeed.tickers.common_code` maps it to the common share by replacing
+the code's **last character with `0`**: KRX assigns that position to the share class —
+`0` for common, `5`/`7`/`9` for the old preferreds, `K` onward for the ones issued
+since 2013. The 164 common stocks that filed with DART in the week to 2026-09-21 all
+ended in `0` without exception, and 삼성물산우B `02826K` → `028260` (삼성물산) was
+cross-checked against that same data. The rule is a pure string operation, so detection
+costs no request and cannot disagree with itself across skills; it also leaves the
+new-format **common** codes (에임드바이오 `0009K0`) alone, since those end in `0`.
+Note that `TICKER_RE` is still `^\d{6}$` and so rejects both those and the new
+preferreds — widening it is separate work.
+
+The two axes never mix. `stage_scan` takes the operating-profit axis from the common
+share and leaves the price axis (daily bars, the 150-day and 20-week lines, the swings)
+on the preferred share's own quote, because the two trade at a discount that moves
+independently; the display name stays the preferred one and the parent is named in the
+source line. `fetch_stock_info` fetches `info-tab` **twice** for a preferred — the
+common share's for financials, consensus, target prices, grades, news and broker
+reports, and the preferred's own for quote, 52-week band and flow — prints which axis
+came from where plus the discount, and computes consensus upside against the **common
+share's** price, since a target price set for the common share measured against the
+preferred's would overstate upside by the discount (삼성전자우 2026-09-20: -23.8%).
+
+The judgement
+thresholdsThe
 judgement
 thresholds (150-day line, ±1.5%/20-day flat band, 80/20% position ratio, 10-day
 pivot radius, 60-day box, 250-day cycle window) are this skill's own operating

@@ -466,22 +466,34 @@ def build_summary(
     *,
     news_limit: int = 10,
     since: str | None = None,
+    own_info: dict | None = None,
 ) -> dict:
-    """--json 출력용 압축 dict. 차트 계열은 버린다."""
+    """--json 출력용 압축 dict. 차트 계열은 버린다.
+
+    우선주면 `info`는 **본주** 페이로드(실적·컨센·목표주가)이고 `own_info`가 우선주 자기
+    페이로드(시세·52주·수급)다. 둘은 가격이 다르므로 섞지 않고 축별로 갈라 담는다.
+    """
     info = info or {}
+    quote = (own_info or info).get("stock_info")
+    parent_prc = unsigned((info.get("stock_info") or {}).get("cur_prc"))
+    own_prc = unsigned((quote or {}).get("cur_prc")) if own_info else None
     return {
         "stock_code": stock.get("stock_code"),
         "stock_name": stock.get("stock_name"),
         "fetched_at": datetime.now(timezone.utc).isoformat(),
-        "stock_info": info.get("stock_info"),
+        "preferred_of": tickers.common_code(stock.get("stock_code") or ""),
+        "preferred_discount_pct": (
+            (own_prc / parent_prc - 1) * 100 if own_prc and parent_prc else None
+        ),
+        "stock_info": quote,
         "primary_fs_type": info.get("primary_fs_type"),
         "sector_info": info.get("sector_info"),
         "rs_data": info.get("rs_data"),
         "investment": info.get("investment"),
         "target_price_history": info.get("target_price_history"),
+        # 목표주가는 본주에 매겨진다 — 우선주 주가에 대면 괴리율만큼 상승여력이 부풀려진다.
         "consensus": build_consensus_summary(
-            info.get("target_price_history") or [],
-            unsigned((info.get("stock_info") or {}).get("cur_prc")),
+            info.get("target_price_history") or [], parent_prc
         ),
         "financials": info.get("financials"),
         "eps_changes": info.get("eps_changes"),
@@ -494,43 +506,49 @@ def build_summary(
 def collect_stock_payloads(
     ticker: str,
     *,
-    name: str | None = None,
     news_limit: int,
     summaries: int,
     since: str | None,
     cookie: str | None,
-) -> tuple[dict | None, dict | None, dict | None, dict[str, str]]:
-    """식별이 끝난 종목의 독립 API를 최대 3개 worker로 동시에 수집한다."""
-    referer = f"{PAGE_BASE}/{ticker}"
+) -> tuple[dict | None, dict | None, dict | None, dict | None, dict[str, str]]:
+    """식별이 끝난 종목의 독립 API를 동시에 수집한다.
+
+    우선주는 실적이 따로 없고 리포트·뉴스도 본주 이름으로 나온다. 그래서 `info_tab`·`news`·
+    `reports`는 **본주 코드**로 부르고, 시세·52주·수급용으로 우선주 자기 `info_tab`을 하나 더
+    부른다(`own_info`). 본주가 아니면 그 호출은 아예 만들지 않는다.
+    """
+    fs_ticker, is_preferred = tickers.fundamentals_code(ticker)
+    referer = f"{PAGE_BASE}/{fs_ticker}"
     jobs: dict[str, tuple[str, dict | None, str]] = {
-        "info_tab": (ENDPOINTS["info_tab"].format(code=ticker), None, referer),
+        "info_tab": (ENDPOINTS["info_tab"].format(code=fs_ticker), None, referer),
     }
-    if news_limit:
-        # 우선주 코드로는 뉴스가 거의 잡히지 않는다 — 기사는 본주 이름으로 쓰인다.
-        # 실적·시세 경로는 그대로 두고 뉴스만 본주 코드로 돌린다.
-        news_ticker, _ = tickers.fundamentals_code(ticker, name)
-        jobs["news"] = (
-            ENDPOINTS["news"].format(code=news_ticker),
-            {"limit": news_limit},
-            f"{PAGE_BASE}/{news_ticker}",
+    if is_preferred:
+        jobs["own_info"] = (
+            ENDPOINTS["info_tab"].format(code=ticker),
+            None,
+            f"{PAGE_BASE}/{ticker}",
         )
+    if news_limit:
+        jobs["news"] = (ENDPOINTS["news"].format(code=fs_ticker), {"limit": news_limit}, referer)
     errors: dict[str, str] = {}
     if summaries:
         if cookie:
-            params = {"stock_code": ticker, "page": 1, "page_size": max(summaries, 10)}
+            params = {"stock_code": fs_ticker, "page": 1, "page_size": max(summaries, 10)}
             if since:
                 params["date_from"] = since
             jobs["reports"] = (ENDPOINTS["reports"], params, REPORTS_PAGE)
         else:
             errors["reports"] = f"{COOKIE_ENV} 미설정 — .env에 브라우저 Cookie 헤더를 넣어야 한다"
 
-    payloads: dict[str, dict | None] = {"info_tab": None, "news": None, "reports": None}
+    payloads: dict[str, dict | None] = {
+        "info_tab": None, "news": None, "reports": None, "own_info": None
+    }
 
     def fetch_job(job: tuple[str, dict | None, str]):
         path, params, job_referer = job
         return stockeasy.fetch_stock_json(path, params, referer=job_referer, cookie=cookie)
 
-    with ThreadPoolExecutor(max_workers=min(3, len(jobs))) as pool:
+    with ThreadPoolExecutor(max_workers=min(4, len(jobs))) as pool:
         futures = {name: pool.submit(fetch_job, job) for name, job in jobs.items()}
         for name, future in futures.items():
             payload, err = future.result()
@@ -539,7 +557,9 @@ def collect_stock_payloads(
                 if name == "reports" and err == "HTTP 401":
                     err += " (쿠키 만료·무효 — .env 갱신 필요)"
                 errors[name] = err
-    return payloads["info_tab"], payloads["news"], payloads["reports"], errors
+    return (
+        payloads["info_tab"], payloads["news"], payloads["reports"], payloads["own_info"], errors
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -575,9 +595,8 @@ def main(argv: list[str] | None = None) -> int:
     # 쿠키는 한 번만 읽어 세 엔드포인트에 함께 넘긴다. 없으면 종전대로 비인증으로 시도한다.
     cookie = stockeasy.load_cookie()
 
-    info, news, reports, errors = collect_stock_payloads(
+    info, news, reports, own_info, errors = collect_stock_payloads(
         ticker,
-        name=stock.get("stock_name"),
         news_limit=args.news,
         summaries=args.summaries,
         since=args.since,
@@ -595,7 +614,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: StockEasy 종목정보 호출 실패 — {detail}", file=sys.stderr)
         return 1
 
-    si = info.get("stock_info") or {}
+    # 우선주면 `info`는 본주 페이로드다 — 시세·52주·수급만 우선주 자기 것(`own_info`)을 쓴다.
+    parent_si = info.get("stock_info") or {}
+    si = (own_info or info).get("stock_info") or {}
+    parent_code, is_preferred = tickers.fundamentals_code(ticker)
     name = stock.get("stock_name") or si.get("name") or ticker
 
     if args.json:
@@ -608,6 +630,7 @@ def main(argv: list[str] | None = None) -> int:
                     reports,
                     news_limit=args.news,
                     since=args.since,
+                    own_info=own_info,
                 ),
                 ensure_ascii=False,
             )
@@ -620,14 +643,25 @@ def main(argv: list[str] | None = None) -> int:
         f"=== StockEasy 종목정보 — {name}({ticker}) {si.get('market') or ''} === "
         f"조회 {date.today().isoformat()} · 출처 {PAGE_BASE}/{ticker}"
     )
+    if is_preferred:
+        own_prc, parent_prc = unsigned(si.get("cur_prc")), unsigned(parent_si.get("cur_prc"))
+        gap = f" · 괴리율 {(own_prc / parent_prc - 1) * 100:+.1f}%" if own_prc and parent_prc else ""
+        print(
+            f"[우선주] 시세·52주·수급은 {ticker} 자기 것 · 멀티플·컨센서스·목표주가·재무·뉴스·"
+            f"리포트는 본주 {parent_si.get('name') or ''}({parent_code}) 기준{gap}"
+        )
     print_quote(si)
-    print_multiples(si)
+    print_multiples(parent_si if is_preferred else si)
     print_52w(si)
     print_flow(si)
     print_sector(info.get("sector_info"), info.get("rs_data"))
     print_grades(info.get("investment"))
+    # 목표주가는 본주에 매겨진다 — 우선주 주가에 대면 상승여력이 괴리율만큼 부풀려진다.
     print_target_prices(
-        info.get("target_price_history") or [], unsigned(si.get("cur_prc")), args.reports, args.since
+        info.get("target_price_history") or [],
+        unsigned(parent_si.get("cur_prc")),
+        args.reports,
+        args.since,
     )
     primary = info.get("primary_fs_type") or "C"
     print_financials(info.get("financials"), primary, yearly=True, actual_n=args.years)
