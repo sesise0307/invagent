@@ -3542,11 +3542,13 @@ def test_weekly_skill_requires_the_next_week_plan() -> None:
     assert "기본 원칙 4" in skill
 
 
-def test_weekly_skill_records_both_notion_command_behaviours() -> None:
-    """드리프트 가드 — 2026-09-20 실측(전체 소실 vs 앵커 무시)을 둘 다 남긴다."""
+def test_weekly_skill_records_all_three_notion_command_behaviours() -> None:
+    """드리프트 가드 — 2026-09-20 실측 3종과 매칭 규칙을 남긴다."""
     skill = _weekly_skill()
 
     assert "insert_content" in skill
     assert "페이지 맨 끝" in skill
-    assert "앵커" in skill
-    assert "안전 우선" in skill
+    assert "update_content" in skill
+    assert "content_updates" in skill
+    assert "블록의 맨 앞부터" in skill
+    assert "평문" in skill
