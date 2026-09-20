@@ -3552,3 +3552,4 @@ def test_weekly_skill_records_all_three_notion_command_behaviours() -> None:
     assert "content_updates" in skill
     assert "블록의 맨 앞부터" in skill
     assert "평문" in skill
+    assert "블록을 지우는 수단은 없다" in skill
