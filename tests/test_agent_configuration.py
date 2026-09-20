@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import time
 import re
@@ -26,6 +27,7 @@ SKILL_NAMES = (
     "monthly-investment-review",
     "opendart",
     "stage-analysis",
+    "weekly-investment-review",
 )
 
 
@@ -3378,3 +3380,173 @@ def test_advice_records_the_entry_stage_conflict_resolution() -> None:
     assert "진입 국면" in table
     assert "매수는 가치, 매도는 추세" in table
     assert "1차 분할 한정" in table
+
+
+def _load_weekly_upsert_module():
+    script_path = SKILLS_ROOT / "weekly-investment-review" / "scripts" / "weekly_upsert.py"
+    spec = importlib.util.spec_from_file_location("weekly_upsert", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_weekly_upsert_guard_rejects_a_lost_heading() -> None:
+    """2026-09-20 사고 고정점 — 본문 헤딩이 하나라도 사라지면 병합 결과를 거부한다."""
+    module = _load_weekly_upsert_module()
+
+    before = "## 19\\~20(주말)\n- 주간 투자 반성\n\n## 18(금)\n- 매매 없음\n"
+    after = "## 19\\~20(주말)\n- 주간 투자 반성\n"
+
+    with pytest.raises(ValueError) as excinfo:
+        module.assert_no_heading_loss(before, after)
+
+    assert "18(금)" in str(excinfo.value)
+
+
+_WEEKLY_BODY = (
+    "- 상단 원칙 불릿\n"
+    "\n"
+    "## 19\\~20(주말)\n"
+    "- 주간 투자 반성\n"
+    "\t- 옛 내용 한 줄\n"
+    "\t\t- 옛 하위 불릿\n"
+    "\n"
+    "## 18(금) {toggle=\"true\"}\n"
+    "\t- 매매 및 시황\n"
+    "\t\t- 매매 없음\n"
+    "\n"
+    "## 14(월) {toggle=\"true\"}\n"
+    "\t- 매도: 알테오젠(80주 전량)\n"
+)
+
+
+def test_weekly_upsert_replaces_only_the_weekly_block() -> None:
+    """주말 헤딩 아래 블록만 갈아끼우고, 다른 날짜 헤딩은 전부 남는다."""
+    module = _load_weekly_upsert_module()
+
+    merged = module.upsert(_WEEKLY_BODY, "- 주간 투자 반성\n\t- 새 내용\n", "19~20")
+
+    assert "새 내용" in merged
+    assert "옛 내용 한 줄" not in merged
+    assert "옛 하위 불릿" not in merged
+    assert module.headings(merged) == ["19~20(주말)", '18(금) {toggle="true"}', '14(월) {toggle="true"}']
+    assert "- 상단 원칙 불릿" in merged
+    assert "매매 없음" in merged
+    assert "매도: 알테오젠(80주 전량)" in merged
+
+
+def test_weekly_upsert_inserts_when_no_prior_block_exists() -> None:
+    """주말 헤딩은 있는데 반성 블록이 아직 없으면 헤딩 바로 뒤에 넣는다."""
+    module = _load_weekly_upsert_module()
+    body = "## 26\\~27(주말)\n\n## 25(금)\n\t- 매매 없음\n"
+
+    merged = module.upsert(body, "- 주간 투자 반성\n\t- 첫 기록\n", "26~27")
+
+    lines = merged.split("\n")
+    assert lines[0].startswith("## 26")
+    assert lines[1] == "- 주간 투자 반성"
+    assert lines[2] == "\t- 첫 기록"
+    assert module.headings(merged) == ["26~27(주말)", "25(금)"]
+    assert "매매 없음" in merged
+
+
+def test_weekly_upsert_refuses_a_missing_weekend_heading() -> None:
+    """헤딩이 없으면 조용히 맨 뒤에 붙이지 않고 거부한다."""
+    module = _load_weekly_upsert_module()
+
+    with pytest.raises(ValueError) as excinfo:
+        module.upsert("## 18(금)\n\t- 매매 없음\n", "- 주간 투자 반성\n", "19~20")
+
+    assert "weekend heading not found" in str(excinfo.value)
+
+
+def test_weekly_upsert_cli_writes_nothing_when_it_refuses(tmp_path: Path) -> None:
+    """거부 시 exit 2이고 --prepared-out은 만들어지지 않는다(반쯤 쓴 본문 금지)."""
+    module = _load_weekly_upsert_module()
+    existing = tmp_path / "body.md"
+    existing.write_text("## 18(금)\n\t- 매매 없음\n", encoding="utf-8")
+    proposed = tmp_path / "week.md"
+    proposed.write_text("- 주간 투자 반성\n", encoding="utf-8")
+    out = tmp_path / "merged.md"
+
+    code = module.main([
+        "--existing", str(existing),
+        "--proposed", str(proposed),
+        "--weekend", "19~20",
+        "--prepared-out", str(out),
+        "--json",
+    ])
+
+    assert code == 2
+    assert not out.exists()
+
+
+def test_weekly_upsert_cli_reports_the_merge(tmp_path: Path, capsys) -> None:
+    """성공 시 exit 0, 병합 본문 기록, 헤딩 수를 보고한다."""
+    module = _load_weekly_upsert_module()
+    existing = tmp_path / "body.md"
+    existing.write_text(_WEEKLY_BODY, encoding="utf-8")
+    proposed = tmp_path / "week.md"
+    proposed.write_text("- 주간 투자 반성\n\t- 새 내용\n", encoding="utf-8")
+    out = tmp_path / "merged.md"
+
+    code = module.main([
+        "--existing", str(existing),
+        "--proposed", str(proposed),
+        "--weekend", "19~20",
+        "--prepared-out", str(out),
+        "--json",
+    ])
+
+    assert code == 0
+    assert "새 내용" in out.read_text(encoding="utf-8")
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["replaced"] is True
+    assert payload["headings"] == 3
+
+
+def _weekly_skill() -> str:
+    return (SKILLS_ROOT / "weekly-investment-review" / "SKILL.md").read_text(encoding="utf-8")
+
+
+def test_weekly_skill_records_the_notion_overwrite_hazard() -> None:
+    """드리프트 가드 — replace_content가 본문 전체를 덮는다는 사실과 백업·검증 순서를 남긴다."""
+    skill = _weekly_skill()
+
+    assert "replace_content" in skill
+    assert "2026-09-20" in skill
+    assert "백업" in skill
+    assert "weekly_upsert.py" in skill
+    assert "전체 본문" in skill
+    assert "헤딩" in skill
+
+
+def test_weekly_skill_reads_the_week_daily_digests() -> None:
+    """드리프트 가드 — 채점 축 2(브리핑 권고 대비 체결)의 입력 경로와 절 이름을 남긴다."""
+    skill = _weekly_skill()
+
+    assert "output/daily-digest/" in skill
+    for section in ("룰 리마인드", "시장 상황", "의사 결정 조언", "투자 조언"):
+        assert section in skill
+
+
+def test_weekly_skill_requires_the_next_week_plan() -> None:
+    """드리프트 가드 — 다음 주 방향 세 칸이 빠지지 않게 한다."""
+    skill = _weekly_skill()
+
+    assert "신규 진입" in skill
+    assert "포지션 사이징" in skill
+    assert "현금 확보" in skill
+    assert "기본 원칙 4" in skill
+
+
+def test_weekly_skill_records_both_notion_command_behaviours() -> None:
+    """드리프트 가드 — 2026-09-20 실측(전체 소실 vs 앵커 무시)을 둘 다 남긴다."""
+    skill = _weekly_skill()
+
+    assert "insert_content" in skill
+    assert "페이지 맨 끝" in skill
+    assert "앵커" in skill
+    assert "안전 우선" in skill

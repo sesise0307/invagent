@@ -1,0 +1,4 @@
+interface:
+  display_name: "Weekly Investment Review"
+  short_description: "Score one week of trades and set next week's direction"
+  default_prompt: "Use $weekly-investment-review to review this week's trades and plan next week."

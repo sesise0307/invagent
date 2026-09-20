@@ -360,9 +360,25 @@ none, which is why `invagent daily-prep` reaches all three steps with the enviro
 rather than a flag. Change the
 constant and the minutes quoted here together; a test compares them.
 
+The `weekly-investment-review` skill scores one week of trades and writes the verdict
+into the Notion journal's `## {dd}~{dd}(주말)` block. It grades each fill on three axes —
+the stock report's execution lines, the same day's briefing stance under
+`output/daily-digest/`, and whether last week's improvement items were actually carried
+out — and then fills three required cells for the week ahead: new entries, position
+sizing under the 2% rule, and the cash target. It reads the briefings section by section
+rather than whole, because one day's file runs 20~40 KB and a week of them buries the
+context the review is written in. Its Notion write is guarded, because
+`notion-update-page`'s `replace_content` overwrites the **entire page body** even when a
+selection is supplied: on 2026-09-20 a one-block edit erased that month's journal. The
+skill therefore requires backing the body up under `output/notion-backup/`, merging
+locally through `.agents/skills/weekly-investment-review/scripts/weekly_upsert.py`, and
+passing the complete merged body as `new_str`. That script refuses — exit 2, no output
+file — when the weekend heading is missing or when any `## ` heading would be lost, and a
+test fixes both refusals.
+
 Canonical project skills live in `.agents/skills/`: `advice`, `analyze-stock`,
-`daily-digest`, `market-data`, `monthly-investment-review`, `opendart`, and
-`stage-analysis`. Each `.claude/skills/<name>` is a symlink to the canonical
+`daily-digest`, `market-data`, `monthly-investment-review`, `opendart`,
+`stage-analysis`, and `weekly-investment-review`. Each `.claude/skills/<name>` is a symlink to the canonical
 directory — edit the canonical files only. Client-side setup that cannot live in
 the repository (Codex plugins, the local OpenDART MCP server, Notion) is
 documented in `docs/agent-setup.md`; keep its skill list in sync when adding a
