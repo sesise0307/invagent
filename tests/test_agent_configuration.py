@@ -3553,3 +3553,26 @@ def test_weekly_skill_records_all_three_notion_command_behaviours() -> None:
     assert "블록의 맨 앞부터" in skill
     assert "평문" in skill
     assert "블록을 지우는 수단은 없다" in skill
+
+
+def test_stock_info_fetches_a_preferred_shares_news_under_its_common_stock(monkeypatch):
+    """우선주 코드로는 뉴스가 거의 안 잡힌다 — 뉴스만 본주 코드로 부른다."""
+    from invagent.datafeed import stockeasy, tickers
+
+    module = _load_stock_info_module()
+    monkeypatch.setattr(tickers, "resolve_code", lambda n, o=None: ("005930", None))
+
+    paths: list[str] = []
+
+    def fake_fetch(path, params=None, referer=None, cookie=None):
+        paths.append(path)
+        return {}, None
+
+    monkeypatch.setattr(stockeasy, "fetch_stock_json", fake_fetch)
+
+    module.collect_stock_payloads(
+        "005935", name="삼성전자우", news_limit=5, summaries=0, since=None, cookie="x"
+    )
+
+    assert "/stock-info/info-tab/005935" in paths, "실적·시세 경로는 건드리지 않는다"
+    assert "/news/by-stock-code/005930" in paths, "뉴스는 본주 코드로 받는다"

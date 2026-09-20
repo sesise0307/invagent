@@ -28,7 +28,8 @@ design notes to `docs/`.
 ones, the `STOCKEASY_COOKIE` session, stock resolution, `fs_rows`), `naver`
 (daily OHLCV), `cache` (the shared response cache), `env` (repository root,
 `output/`, `.env` values), `series` (`sma`), `tickers` (override-first ticker
-resolution) and `snapshot` (portfolio snapshot tables). **Add a new source here,
+resolution plus the preferred-to-common mapping below) and `snapshot` (portfolio
+snapshot tables). **Add a new source here,
 never in a skill script.** A skill script fetches nothing itself; it calls this
 package and spends its own lines on judgement and output. Nothing under
 `.agents/skills/` may import another skill's scripts — that cross-directory
@@ -120,7 +121,24 @@ Ticker resolution, cookie loading, and financial-row selection come from
 `invagent.datafeed` rather than being reimplemented, and ticker resolution goes
 through `datafeed.tickers`, which reads `context/ticker_overrides.md` before the
 search API — that override path used to exist in only one of the two skills that
-resolve names, so the same name could resolve two ways. The judgement
+resolve names, so the same name could resolve two ways.
+
+A **preferred share has no earnings of its own** — it is another class of the same
+company's stock, so StockEasy `info-tab` called with a preferred ticker returns no
+confirmed quarter and the run silently degraded to a price-only verdict (삼성전자우,
+2026-09-20). `datafeed.tickers.fundamentals_code` maps it to the common share's
+ticker, and `stage_scan` uses that for the operating-profit axis only; the price axis
+(daily bars, the 150-day and 20-week lines, the swings) stays on the preferred share's
+own quote, because the two trade at a discount that moves independently. The display
+name stays the preferred one even though `info-tab` now answers with the parent's.
+`fetch_stock_info` applies the same mapping to the news endpoint alone, since articles
+are written under the common share's name; its valuation and consensus still come from
+the preferred ticker. Detection needs **both** axes to agree: the name ends in a
+preferred suffix (`우`, `우B`, `2우B`) **and** the ticker's last digit is not `0`, the
+second test being what keeps a common share whose name merely ends in 우 (미래에셋대우
+006800) from being remapped. A sheet spelling the suffix differently (`삼성전자(우)`)
+is not detected and leaves the verdict price-only, which is the safe failure. The
+judgement
 thresholds (150-day line, ±1.5%/20-day flat band, 80/20% position ratio, 10-day
 pivot radius, 60-day box, 250-day cycle window) are this skill's own operating
 choices, not the report's — they live as constants at the top of the script and are

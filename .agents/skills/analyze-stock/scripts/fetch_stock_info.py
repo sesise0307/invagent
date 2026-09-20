@@ -33,7 +33,7 @@ from datetime import date, datetime, timezone
 from math import isfinite
 from pathlib import Path
 
-from invagent.datafeed import cache as http_cache, stockeasy
+from invagent.datafeed import cache as http_cache, stockeasy, tickers
 
 # 엔드포인트·자격증명 축은 수집 계층이 소유한다. 여기서는 출력문과 SKILL.md가 쓰는
 # 이름만 그대로 다시 노출한다.
@@ -494,6 +494,7 @@ def build_summary(
 def collect_stock_payloads(
     ticker: str,
     *,
+    name: str | None = None,
     news_limit: int,
     summaries: int,
     since: str | None,
@@ -505,10 +506,13 @@ def collect_stock_payloads(
         "info_tab": (ENDPOINTS["info_tab"].format(code=ticker), None, referer),
     }
     if news_limit:
+        # 우선주 코드로는 뉴스가 거의 잡히지 않는다 — 기사는 본주 이름으로 쓰인다.
+        # 실적·시세 경로는 그대로 두고 뉴스만 본주 코드로 돌린다.
+        news_ticker, _ = tickers.fundamentals_code(ticker, name)
         jobs["news"] = (
-            ENDPOINTS["news"].format(code=ticker),
+            ENDPOINTS["news"].format(code=news_ticker),
             {"limit": news_limit},
-            referer,
+            f"{PAGE_BASE}/{news_ticker}",
         )
     errors: dict[str, str] = {}
     if summaries:
@@ -573,6 +577,7 @@ def main(argv: list[str] | None = None) -> int:
 
     info, news, reports, errors = collect_stock_payloads(
         ticker,
+        name=stock.get("stock_name"),
         news_limit=args.news,
         summaries=args.summaries,
         since=args.since,

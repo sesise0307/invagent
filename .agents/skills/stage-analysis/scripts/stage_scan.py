@@ -800,16 +800,23 @@ def main(argv: list[str] | None = None) -> int:
     sources = ["Naver siseJson"]
     financials, primary, name = None, "C", stock.get("stock_name") or ticker
     if not args.no_fundamental:
+        # 우선주는 분기 실적이 따로 없다 — 영업이익 축만 본주 코드로 받는다. 일봉·이동평균은
+        # 위에서 이미 우선주 자기 시세로 받았고, 괴리율이 따로 움직이므로 그대로 둔다.
+        fs_ticker, parent_name = tickers.fundamentals_code(ticker, stock.get("stock_name"))
+        if parent_name:
+            sources.append(f"우선주 실적은 본주 {parent_name}({fs_ticker})")
         cookie = stockeasy.load_cookie()
         info, ie = stockeasy.fetch_stock_json(
-            stockeasy.ENDPOINTS["info_tab"].format(code=ticker),
-            referer=f"{stockeasy.PAGE_BASE}/{ticker}",
+            stockeasy.ENDPOINTS["info_tab"].format(code=fs_ticker),
+            referer=f"{stockeasy.PAGE_BASE}/{fs_ticker}",
             cookie=cookie,
         )
         if info:
             financials = info.get("financials")
             primary = info.get("primary_fs_type") or "C"
-            name = (info.get("stock_info") or {}).get("name") or name
+            # 우선주면 info_tab이 본주 이름을 들고 온다 — 표시 이름은 우선주 그대로 둔다.
+            if not parent_name:
+                name = (info.get("stock_info") or {}).get("name") or name
             sources.append("StockEasy info-tab")
         else:
             hint = "쿠키 만료·무효" if cookie else f"{stockeasy.COOKIE_ENV} 미설정"

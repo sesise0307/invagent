@@ -526,3 +526,37 @@ def test_projection_contact_is_not_a_stage_change(capsys):
     output = capsys.readouterr().out
     assert "단계 전환을 뜻하지 않는다" in output
     assert "N거래일 뒤" in output
+
+
+def test_main_fetches_the_fundamentals_of_a_preferred_shares_common_stock(monkeypatch, capsys):
+    """우선주는 실적이 따로 없다 — info_tab은 본주 코드로, 일봉은 우선주 코드로 부른다."""
+    from invagent.datafeed import stockeasy, tickers
+
+    monkeypatch.setattr(
+        tickers,
+        "resolve_stock",
+        lambda q, overrides=None: ({"stock_code": "005935", "stock_name": "삼성전자우"}, None, 0),
+    )
+    monkeypatch.setattr(tickers, "resolve_code", lambda n, o=None: ("005930", None))
+
+    price_codes: list[str] = []
+
+    def fake_bars(code, days):
+        price_codes.append(code)
+        return _bars([100.0 + i for i in range(400)]), None
+
+    monkeypatch.setattr(stage_scan, "fetch_bars", fake_bars)
+
+    info_paths: list[str] = []
+
+    def fake_info(path, params=None, referer=stockeasy.PAGE_BASE, cookie=None):
+        info_paths.append(path)
+        return {"financials": None, "primary_fs_type": "C"}, None
+
+    monkeypatch.setattr(stockeasy, "fetch_stock_json", fake_info)
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: "x")
+
+    assert stage_scan.main(["삼성전자우"]) == 0
+    assert price_codes == ["005935"], "일봉은 우선주 자기 시세다"
+    assert info_paths == ["/stock-info/info-tab/005930"], "실적은 본주 코드로 받는다"
+    assert "본주 삼성전자(005930)" in capsys.readouterr().out
