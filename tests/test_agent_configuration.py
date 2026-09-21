@@ -3617,3 +3617,33 @@ def test_stock_info_summary_is_unchanged_for_a_common_share():
     assert summary["stock_info"]["cur_prc"] == "200000"
     assert summary["preferred_of"] is None
     assert summary["preferred_discount_pct"] is None
+
+
+def test_daily_digest_marks_importance_inline_instead_of_a_headline_section() -> None:
+    """헤드라인 섹션은 섹터별 정리와 같은 내용을 두 번 쓰게 만들었다 (2026-09-21 제거).
+
+    압축을 위 아래로 나누는 대신, 본문에서 중요한 항목에 🔥를 붙여 같은 자리에서 표시한다.
+    표시는 ⭐가 아니라 🔥다 — 누적 컨텍스트가 테마 진척 강도에 ⭐/⭐⭐를 쓰고 있어, 같은 기호를
+    쓰면 「오늘 중요」와 「테마 진척」이 한 화면에서 구분되지 않는다 (2026-09-21 사용자 결정).
+    템플릿과 SKILL.md가 같이 바뀌어야 한다 — 한쪽만 고치면 모델이 없는 섹션을 채우려 든다.
+    """
+    template = (REPO_ROOT / "template" / "daily_digest.md").read_text(encoding="utf-8")
+    skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
+
+    # 헤드라인 섹션과 그 선별 단계가 두 파일 어디에도 남아 있으면 안 된다
+    assert "헤드라인" not in template, "템플릿에 헤드라인 섹션이 남아 있다"
+    assert "헤드라인" not in skill, "SKILL.md에 헤드라인 선별 단계가 남아 있다"
+    assert "## 🎯" not in template
+
+    # 대체 규칙: 본문 🔥 강조가 템플릿과 SKILL.md 양쪽에 문서화돼야 한다
+    assert "🔥" in template, "템플릿이 🔥 강조 표기를 규정하지 않는다"
+    assert "🔥" in skill, "SKILL.md가 🔥 강조 기준을 규정하지 않는다"
+    assert "### 2-1단계: 오늘의 중요도 표시(🔥) 선별" in skill
+
+    # 누적 컨텍스트 갱신 룰도 사라진 헤드라인이 아니라 🔥 항목을 입력으로 삼아야 한다
+    assert "🔥를 붙인 항목 중" in skill
+
+    # ⭐는 누적 컨텍스트 전용이다. 브리핑의 강조 기호로 되돌아오면 두 층이 다시 섞인다.
+    # (금지 문구 안의 ⭐는 남아 있어야 하므로, 기호로 **쓰인** 자리만 본다.)
+    assert "- ⭐" not in template, "템플릿이 ⭐를 강조 기호로 쓰고 있다"
+    assert "`⭐`는 쓰지 않는다" in template, "템플릿에 ⭐ 금지 사유가 적혀 있지 않다"
