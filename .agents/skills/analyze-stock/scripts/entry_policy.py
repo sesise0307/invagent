@@ -41,7 +41,11 @@ from pathlib import Path
 from typing import Any
 
 EVENT_LIMIT = 0.05
-VALUE_GATE_MIN_REWARD_RISK = 3.0
+# 경로 B의 손익비 문턱. 일반 판정(2.0)보다 높되 「기본 원칙 2」 본문(50%)보다
+# 엄격하지는 않게 둔다 — 3.0은 valuation_decision의 15% 분모와 맞물리면 중심
+# 기대수익 45%, 이전 20% 분모에서는 60%를 요구해 룰 원문을 넘어섰다
+# (사용자 확정 2026-09-22). 바꾸려면 analyze-stock/SKILL.md 밸류 게이트도 같이.
+VALUE_GATE_MIN_REWARD_RISK = 2.5
 VALUE_PATH_TRANCHE_RATIO = 1 / 3
 ACTION_PRIORITY = {"eligible": 0, "watch": 1, "withhold": 2, "avoid": 3}
 # turn_scan.py의 `state` 값. 고개 들기(turning)만 경로 B를 연다.

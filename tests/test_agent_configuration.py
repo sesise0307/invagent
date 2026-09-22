@@ -118,10 +118,14 @@ def test_analyze_stock_downside_drives_stop_and_position_cap() -> None:
     """손익비 분모가 상수 15%면 중심 기대수익의 재진술이 된다 — 실측 하방을 쓴다."""
     content = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
 
-    # 「매매규칙 6」의 최종 이탈선은 -20%다. 15%를 하한으로 쓰면 1회 최대 손실이
-    # 계좌의 2.67%가 되어 「기본 원칙 4」 2%룰을 넘긴다.
+    # 「매매규칙 6」의 최종 이탈선은 -20%다. 2%룰 분모를 15%로 내리면 1회 최대 손실이
+    # 계좌의 2.67%가 되어 「기본 원칙 4」를 넘기므로, 실효 손절폭 하한은 20%로 남는다.
     assert "실효 손절폭  = max(하방, 20%)" in content
-    assert "손익비      = 중심 기대수익 / 실효 손절폭" in content
+    # 손익비 분모는 그와 별개의 값이고, 상수가 아니라 실측 하방과의 max다
+    # (사용자 확정 2026-09-22).
+    assert "손익비 분모  = max(하방, 15%)" in content
+    assert "손익비      = 중심 기대수익 / 손익비 분모" in content
+    assert "두 분모는 다른 것을 잰다. 하나로 합치지 마라" in content
     # 「기본 원칙 2」 단서(하방 막힘 시 30%)가 판정선에 들어와야 한다.
     assert "중심 30~50% & 하방 ≤ 0%" in content
     # 「매매규칙 9」는 두 축이다. 진입 크기를 정하는 것은 매수원금 축뿐이고,
@@ -3263,14 +3267,20 @@ def test_value_gate_requires_a_blocked_downside() -> None:
     assert result["max_tranche_fraction"] is None
 
 
-def test_value_gate_requires_reward_risk_of_three() -> None:
-    """추세 확인 없이 들어가는 대가로 손익비 문턱이 일반 2.0보다 높다."""
+def test_value_gate_requires_a_higher_reward_risk_than_the_general_rule() -> None:
+    """추세 확인 없이 들어가는 대가로 손익비 문턱이 일반 2.0보다 높다.
+
+    문턱은 2.5다 (사용자 확정 2026-09-22). 3.0은 15% 분모와 맞물리면 중심
+    기대수익 45%를 요구해 「기본 원칙 2」 본문의 50%와 겹치고, 20% 분모 시절에는
+    60%를 요구해 룰 원문보다 엄격했다.
+    """
     module = _load_entry_policy_module()
 
+    assert module.VALUE_GATE_MIN_REWARD_RISK == pytest.approx(2.5)
     below = module.decide(
         _entry_payload(
             stage={"status": "ok", "value": 1},
-            value_gate={**VALUE_GATE_PASS, "reward_risk": 2.9},
+            value_gate={**VALUE_GATE_PASS, "reward_risk": 2.49},
         )
     )
     at_threshold = module.decide(
@@ -3338,7 +3348,7 @@ def test_analyze_stock_opens_a_value_first_entry_path() -> None:
     assert "밸류 게이트" in skill
     # 하방 막힘이 필수 조건이다 — 기대수익만으로 열리면 안 된다.
     assert "하방 막힘" in skill
-    assert "손익비 ≥ 3.0" in skill
+    assert "손익비 ≥ 2.5" in skill
     assert "목표 비중 ÷ 3" in skill
     # 4단계는 밸류 예외가 없다.
     gate = skill.split("경로 A (추세 확인 진입)")[1].split("오버행 참고")[0]
@@ -3647,3 +3657,55 @@ def test_daily_digest_marks_importance_inline_instead_of_a_headline_section() ->
     # (금지 문구 안의 ⭐는 남아 있어야 하므로, 기호로 **쓰인** 자리만 본다.)
     assert "- ⭐" not in template, "템플릿이 ⭐를 강조 기호로 쓰고 있다"
     assert "`⭐`는 쓰지 않는다" in template, "템플릿에 ⭐ 금지 사유가 적혀 있지 않다"
+
+
+def _load_valuation_decision_module():
+    script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "valuation_decision.py"
+    spec = importlib.util.spec_from_file_location("valuation_decision", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _downside_blocked_payload() -> dict:
+    """하단 목표가가 현재가보다 높은(하방 막힌) 입력. 두 분모의 차이가 드러나는 자리다."""
+    return {
+        "asof": "2026-09-22",
+        "current_price": 100.0,
+        "consensus": {
+            "low": 110.0, "average": 140.0, "high": 180.0,
+            "coverage": 10, "latest_report_date": "2026-09-11",
+            "recent_report_count": 5, "eps_revision": "flat",
+        },
+        "scenarios": {
+            "bear": 100.0, "base": 140.0, "bull": 190.0,
+            "probabilities": {"bear": 20, "base": 60, "bull": 20},
+        },
+    }
+
+
+def test_reward_risk_denominator_is_separate_from_the_position_sizing_floor() -> None:
+    """손익비 분모(15%)와 2%룰 분모(20%)는 다른 것을 잰다.
+
+    20% 하한은 「매매규칙 6」의 전량 이탈선이라 1회 최대 손실을 정하고, 그래서
+    「기본 원칙 4(2%룰)」의 분모로 남아야 한다. 손익비는 시나리오 하방 대비
+    보상을 재는 값이므로 실행 손절선에 묶이면 기대수익의 재진술이 된다.
+    """
+    module = _load_valuation_decision_module()
+
+    result = module.decide(_downside_blocked_payload())
+
+    center_return = result["expected_returns"]["center"]
+    risk = result["risk"]
+    assert risk["downside"] < 0, "이 입력은 하방이 막혀 있어야 한다"
+    assert risk["reward_risk_denominator"] == pytest.approx(module.MIN_REWARD_RISK_STOP)
+    assert module.MIN_REWARD_RISK_STOP == pytest.approx(0.15)
+    assert risk["reward_risk"] == pytest.approx(center_return / module.MIN_REWARD_RISK_STOP)
+    # 2%룰과 실행 손절선은 그대로 20%에 묶여 있다.
+    assert risk["effective_stop_loss"] == pytest.approx(module.MIN_STOP_LOSS)
+    assert module.MIN_STOP_LOSS == pytest.approx(0.20)
+    assert risk["max_purchase_fraction"] == pytest.approx(
+        module.ACCOUNT_RISK_LIMIT / module.MIN_STOP_LOSS
+    )

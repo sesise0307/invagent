@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Any
 
 MIN_STOP_LOSS = 0.20
+# 손익비 분모의 하한. 실행 손절선(MIN_STOP_LOSS)과 일부러 분리해 둔다 — 20%는
+# 「매매규칙 6」의 전량 이탈선이라 1회 최대 손실을 정하고 「기본 원칙 4(2%룰)」의
+# 분모로 남아야 하지만, 손익비 분모까지 거기 묶으면 손익비가 `중심 기대수익 ÷ 20%`
+# 로 붕괴해 기대수익의 재진술이 된다. 하방이 막힌 종목이 분모를 낮게 받도록 15%를
+# 쓴다 (사용자 확정 2026-09-22). 두 값을 다시 합치지 마라.
+MIN_REWARD_RISK_STOP = 0.15
 MIN_REWARD_RISK = 2.0
 ACCOUNT_RISK_LIMIT = 0.02
 GRADES = ("avoid", "watch", "buy_candidate")
@@ -204,7 +210,8 @@ def decide(payload: Any) -> dict[str, Any]:
                (("low", low), ("center", center), ("high", high))}
     downside = (current - low) / current
     effective_stop = max(downside, MIN_STOP_LOSS)
-    reward_risk = returns["center"] / effective_stop
+    reward_risk_stop = max(downside, MIN_REWARD_RISK_STOP)
+    reward_risk = returns["center"] / reward_risk_stop
     if returns["center"] >= 0.50:
         grade, rule = "buy_candidate", "center return >= 50%"
     elif returns["center"] >= 0.30 and downside <= 0:
@@ -232,6 +239,7 @@ def decide(payload: Any) -> dict[str, Any]:
     width = (high - low) / center
     confidence, confidence_reasons = _confidence(width, consensus, scenario_targets, payload)
     audit.append({"operation": "risk", "downside": downside, "stop_floor": MIN_STOP_LOSS,
+                  "reward_risk_stop": reward_risk_stop,
                   "effective_stop": effective_stop, "center_return": returns["center"],
                   "reward_risk": reward_risk, "position_cap": position_cap})
 
@@ -254,6 +262,7 @@ def decide(payload: Any) -> dict[str, Any]:
                      "downgrades": downgrades, "confidence": confidence,
                      "confidence_reasons": confidence_reasons},
         "risk": {"downside": downside, "effective_stop_loss": effective_stop,
+                 "reward_risk_denominator": reward_risk_stop,
                  "reward_risk": reward_risk, "account_risk_limit": ACCOUNT_RISK_LIMIT,
                  "max_purchase_fraction": position_cap, "entry_price": entry_price,
                  "stop_prices": {"first_partial": entry_price * 0.85,
