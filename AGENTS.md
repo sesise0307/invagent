@@ -266,6 +266,15 @@ indices come from `.agents/skills/daily-digest/scripts/fetch_market_signals.py`,
 which reads the StockEasy market endpoints through `invagent.datafeed.stockeasy`; the module owns
 the rule verdicts (leverage rule 3, the drawdown ladder, the margin-call climax), not the fetch.
 
+When an `analyze-stock` report sets the next add-on tranche for a holding, step 11 registers its
+conditions in `output/watchlist/증량_조건.md`, and `daily-digest` step 1-3-2 checks every entry each
+day against `turn_scan`/`stage_scan` closes and reports met or pending in the decision section. The
+file is gitignored working data; its price lines come from the report's target range as of a stated
+date, so the briefing flags them for recalculation once they age. `context/my_rules.md`
+「매매규칙 16」 caps the AI/semiconductor/substrate/power sector at 65% of evaluated weight; step 8
+of `analyze-stock` reports the room left under that cap instead of treating sector overlap as a
+reason to shrink a position.
+
 The same command downloads attached images to `media/<yyyy-mm-dd>/` and leaves
 them unread, because reading them is not a fetch-time job. `fetch-messages` only
 decides what is an image — photos and `image/*` documents, by whitelist, so a
