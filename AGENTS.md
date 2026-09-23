@@ -266,9 +266,11 @@ indices come from `.agents/skills/daily-digest/scripts/fetch_market_signals.py`,
 which reads the StockEasy market endpoints through `invagent.datafeed.stockeasy`; the module owns
 the rule verdicts (leverage rule 3, the drawdown ladder, the margin-call climax), not the fetch.
 
-When an `analyze-stock` report sets the next add-on tranche for a holding, step 11 registers its
-conditions in `output/watchlist/증량_조건.md`, and `daily-digest` step 1-3-2 checks every entry each
-day against `turn_scan`/`stage_scan` closes and reports met or pending in the decision section. The
+Holding-specific buy and sell triggers — add-on tranches, lifted buying freezes, user-confirmed stops,
+trend-exit lines, remaining profit-taking, earnings-based invalidation — live in
+`output/watchlist/보유_트리거.md`. `analyze-stock` step 11 and user-confirmed briefing decisions register
+them, and `daily-digest` step 1-3-2 checks every entry each day against `turn_scan`/`stage_scan` closes
+and reports sells before buys in the decision section; holdings without their own triggers are skipped. The
 file is gitignored working data; its price lines come from the report's target range as of a stated
 date, so the briefing flags them for recalculation once they age. `context/my_rules.md`
 「매매규칙 16」 caps the AI/semiconductor/substrate/power sector at 65% of evaluated weight; step 8
