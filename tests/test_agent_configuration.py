@@ -3213,6 +3213,52 @@ def test_entry_policy_waits_for_the_turn_before_the_value_path_opens() -> None:
         assert result["max_tranche_fraction"] is None, value
 
 
+ACCUMULATION_PASS = {"status": "ok", "eligible": True, "op_yoy_increased": True}
+
+
+def test_entry_policy_opens_half_a_first_tranche_before_the_turn_for_a_growing_quiet_base() -> None:
+    """경로 C — 「매매규칙 2」 단서. 바닥 30일 + 바닥 +10% 이내 + 영업이익 YoY 증가 + 밸류 게이트면 고개 들기 전에
+    1차 트랜치의 절반을 연다. 4단계도 같다 (2026-09-25 백테스트, 사용자 확정)."""
+    module = _load_entry_policy_module()
+
+    for stage in (1, 3, 4):
+        result = module.decide(
+            _entry_payload(stage={"status": "ok", "value": stage}, value_gate=dict(VALUE_GATE_PASS),
+                           turn={"status": "ok", "value": "basing"}, accumulation=dict(ACCUMULATION_PASS))
+        )
+        assert result["action"] == "watch", stage
+        assert result["max_tranche_fraction"] == pytest.approx(0.015), stage
+        assert "매매규칙 2" in result["checks"]["stage"]["rule"]
+
+
+def test_entry_policy_keeps_the_base_closed_when_any_accumulation_condition_is_missing() -> None:
+    """실적 감소, 가격 조건 미충족, 판정 못 받음, 밸류 게이트 없음 — 하나라도 빠지면 고개 들기를 기다린다."""
+    module = _load_entry_policy_module()
+    basing = {"status": "ok", "value": "basing"}
+    cases = {
+        "영업이익 감소": dict(value_gate=dict(VALUE_GATE_PASS), accumulation={**ACCUMULATION_PASS, "op_yoy_increased": False}),
+        "실적 모름": dict(value_gate=dict(VALUE_GATE_PASS), accumulation={**ACCUMULATION_PASS, "op_yoy_increased": None}),
+        "가격 조건 미충족": dict(value_gate=dict(VALUE_GATE_PASS), accumulation={**ACCUMULATION_PASS, "eligible": False}),
+        "판정 없음": dict(value_gate=dict(VALUE_GATE_PASS), accumulation={"status": "missing"}),
+        "밸류 게이트 없음": dict(accumulation=dict(ACCUMULATION_PASS)),
+    }
+    for label, extra in cases.items():
+        result = module.decide(_entry_payload(stage={"status": "ok", "value": 4}, turn=basing, **extra))
+        assert result["action"] == "withhold", label
+        assert result["max_tranche_fraction"] is None, label
+
+
+def test_entry_policy_never_accumulates_into_a_stock_that_is_still_falling() -> None:
+    module = _load_entry_policy_module()
+
+    result = module.decide(
+        _entry_payload(stage={"status": "ok", "value": 4}, value_gate=dict(VALUE_GATE_PASS),
+                       turn={"status": "ok", "value": "falling"}, accumulation=dict(ACCUMULATION_PASS))
+    )
+
+    assert result["action"] == "avoid"
+
+
 def test_entry_policy_avoids_a_stock_that_is_still_falling() -> None:
     """방금 신저가를 쓴 종목은 밸류가 아무리 좋아도 하락하는 와중이다."""
     module = _load_entry_policy_module()

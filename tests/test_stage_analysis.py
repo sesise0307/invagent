@@ -306,6 +306,32 @@ def test_op_growth_compares_latest_actual_with_next_estimate() -> None:
     assert growth["direction"] == "하락"
 
 
+def test_op_growth_says_whether_the_latest_quarter_beat_the_same_quarter_last_year() -> None:
+    """경로 C의 실적 게이트 — 최근 확정 분기 영업이익이 전년 동기보다 컸는가. 추정치는 보지 않는다."""
+    up = stage_scan.op_growth(_financials(actual=[(2025, 2, 100.0), (2026, 2, 101.0)], estimate=[]), "C")
+    down = stage_scan.op_growth(_financials(actual=[(2025, 2, 100.0), (2026, 2, 99.0)], estimate=[]), "C")
+
+    assert up["latest"]["increased"] is True
+    assert down["latest"]["increased"] is False
+
+
+def test_a_narrowing_loss_counts_as_an_increase_for_the_accumulation_gate() -> None:
+    """적자 축소(-2,038억 → -1,402억)도 증가다 — 2026-09-25 백테스트의 정의(OP_t > OP_t-4)와 같다.
+
+    증가율(%)은 전년 기준이 0 이하라 계산하지 않지만, 증가 여부는 금액 비교라 판정할 수 있다.
+    """
+    growth = stage_scan.op_growth(_financials(actual=[(2024, 1, -2038.0), (2025, 1, -1402.0)], estimate=[]), "C")
+
+    assert growth["latest"]["yoy"] is None
+    assert growth["latest"]["increased"] is True
+
+
+def test_the_accumulation_gate_is_unknown_without_last_years_quarter() -> None:
+    growth = stage_scan.op_growth(_financials(actual=[(2026, 1, 90.0), (2026, 2, 200.0)], estimate=[]), "C")
+
+    assert growth["latest"]["increased"] is None
+
+
 def test_op_growth_is_unavailable_when_prior_year_was_a_loss() -> None:
     fin = _financials(
         actual=[(2025, 2, -50.0), (2026, 2, 200.0)],
@@ -516,6 +542,13 @@ def test_twenty_week_slope_output_uses_one_week(capsys):
     line = next(line for line in capsys.readouterr().out.splitlines() if "20주선(" in line)
     assert "/ 1주" in line
     assert "/ 20일" not in line
+
+
+def test_output_names_the_accumulation_earnings_gate(capsys):
+    fin = _financials(actual=[(2024, 1, -2038.0), (2025, 1, -1402.0)], estimate=[])
+    stage_scan.print_result("test", "000000", _analyze(UPTREND, fin), [])
+
+    assert "전년 동기 대비 증가 (경로 C 실적 게이트 통과)" in capsys.readouterr().out
 
 
 def test_projection_contact_is_not_a_stage_change(capsys):

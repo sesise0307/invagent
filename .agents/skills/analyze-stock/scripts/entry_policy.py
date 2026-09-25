@@ -22,6 +22,13 @@ first tranche. ``falling`` avoids; ``basing``, ``extended`` or an unknown turn w
                  "first_tranche_fraction":0.03,"target_weight_fraction":0.10,
                  "next_tranche_trigger":"저점 높임 유지 + 60일선 상향 전환"}}
 
+A ``basing`` turn opens early accumulation (path C) only when ``accumulation`` passes too —
+turn_scan's price conditions plus a year-on-year operating-profit increase — and then caps the
+entry at half the value-gate first tranche::
+
+  {"turn":{"status":"ok","value":"basing"},
+   "accumulation":{"status":"ok","eligible":true,"op_yoy_increased":true}}
+
 Stage 2 is the trend-confirmed path and does not consult ``turn``.
 
 Overhang (§4-A) is a reference note in the report, not a gate: an ``overhang`` key
@@ -47,6 +54,9 @@ EVENT_LIMIT = 0.05
 # (사용자 확정 2026-09-22). 바꾸려면 analyze-stock/SKILL.md 밸류 게이트도 같이.
 VALUE_GATE_MIN_REWARD_RISK = 2.5
 VALUE_PATH_TRANCHE_RATIO = 1 / 3
+# 경로 C(고개 들기 전 선매집)는 밸류 게이트 1차 수량의 이만큼만 연다 — 2026-09-25 백테스트에서
+# 실적 증가 그룹도 손절률이 53%였다. 나머지는 고개 들기(경로 B) 확인 뒤 채운다.
+ACCUMULATION_TRANCHE_RATIO = 0.5
 ACTION_PRIORITY = {"eligible": 0, "watch": 1, "withhold": 2, "avoid": 3}
 # turn_scan.py의 `state` 값. 고개 들기(turning)만 경로 B를 연다.
 TURN_STATES = {
@@ -104,6 +114,13 @@ def _value_first_tranche(gate: dict[str, Any] | None) -> float | None:
     if tranche <= 0 or tranche > target * VALUE_PATH_TRANCHE_RATIO + 1e-12:
         return None
     return tranche
+
+
+def _accumulation_ready(gate: dict[str, Any] | None) -> bool:
+    """경로 C의 가격 조건(turn_scan `accumulation.eligible`)과 실적 게이트(영업이익 YoY 증가)."""
+    if not gate or gate["status"] != "ok":
+        return False
+    return gate.get("eligible") is True and gate.get("op_yoy_increased") is True
 
 
 def decide(payload: Any) -> dict[str, Any]:
@@ -170,6 +187,17 @@ def decide(payload: Any) -> dict[str, Any]:
             elif turn_value == "falling":
                 apply("stage", "avoid", f"stage {value} and still falling — no buying into a decline",
                       "매매규칙 2(펀더 기반 매수)")
+            elif turn_value == "basing" and _accumulation_ready(_state(payload, "accumulation")):
+                tranche = _value_first_tranche(_state(payload, "value_gate"))
+                if tranche is None:
+                    apply("stage", "withhold", f"stage {value} quiet base without a passing value gate",
+                          "매매규칙 2(펀더 기반 매수)")
+                else:
+                    cap = min(cap, tranche * ACCUMULATION_TRANCHE_RATIO)
+                    apply("stage", "watch",
+                          f"stage {value} quiet base with growing operating profit: "
+                          "early accumulation, half the first tranche",
+                          "매매규칙 2 단서(선매집)")
             elif turn_value != "turning":
                 apply("stage", "withhold", f"stage {value} {TURN_STATES[turn_value]}",
                       "매매규칙 2(펀더 기반 매수)")

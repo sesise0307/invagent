@@ -453,7 +453,12 @@ def op_growth(financials: dict | None, primary: str) -> dict:
     merged = {**values, **est_values}
 
     latest_yoy = _yoy(merged, *latest_key)
-    result["latest"] = {"period": f"{latest_key[0]}.{latest_key[1]}Q", "kind": "확정", "yoy": latest_yoy}
+    # 경로 C의 실적 게이트. 증가율과 달리 금액 비교라 적자 축소도 증가로 판정한다.
+    prior = values.get((latest_key[0] - 1, latest_key[1]))
+    result["latest"] = {
+        "period": f"{latest_key[0]}.{latest_key[1]}Q", "kind": "확정", "yoy": latest_yoy,
+        "increased": None if prior is None else values[latest_key] > prior,
+    }
 
     next_key = (latest_key[0] + 1, 1) if latest_key[1] == 4 else (latest_key[0], latest_key[1] + 1)
     if next_key not in est_values:
@@ -718,6 +723,12 @@ def print_result(name: str, code: str, result: dict, sources: list[str]) -> None
         if g["next"]:
             head += f" → {g['next']['period']} 추정 E {_pct(g['next']['yoy'])} = {g['direction']}"
         print(head)
+        increased = g["latest"]["increased"]
+        print("    전년 동기 대비 " + (
+            "모름 (전년 동기 확정치 없음 — 경로 C 실적 게이트 판정 불가)" if increased is None
+            else "증가 (경로 C 실적 게이트 통과)" if increased
+            else "감소 (경로 C 실적 게이트 미통과)"
+        ))
     if g["note"]:
         print(f"    ⚠️ {g['note']}")
     if result["volume_bias"] is not None:

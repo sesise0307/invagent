@@ -97,6 +97,46 @@ def test_holding_above_the_low_below_the_rebound_high_is_basing():
     assert "돌파선 종가 돌파" in result["missing"]
 
 
+def test_a_long_quiet_base_near_its_low_qualifies_for_early_accumulation():
+    """경로 C — 50% 무너진 뒤 45거래일 신저가 없이 바닥 +8% 박스에 머물면 고개 들기 전 선매집 가격 조건을 채운다.
+
+    2026-09-25 백테스트(관심 종목 8개, 2015~2026): 바닥 30일 이상 + 바닥 +10% 이내 진입 + 바닥 -3% 손절.
+    """
+    result = turn_scan.analyze_turn(_bars(_path(BASE + [(145, 104.0)])))
+
+    assert result["state"] == "basing"
+    acc = result["accumulation"]
+    assert acc["eligible"] is True
+    assert acc["missing"] == []
+    assert acc["stop"] == 97.0
+
+
+def test_a_base_younger_than_thirty_sessions_is_too_early_to_accumulate():
+    """바닥 20거래일은 `falling`은 벗어났지만 선매집 근거로는 짧다 — 백테스트에서 15일 기준은 승률 24%였다."""
+    result = turn_scan.analyze_turn(_bars(_path([(0, 200.0), (120, 100.0), (130, 106.0), (140, 104.0)])))
+
+    assert result["state"] == "basing"
+    assert result["accumulation"]["eligible"] is False
+    assert result["accumulation"]["missing"] == ["바닥 경과 30거래일 이상"]
+
+
+def test_a_close_more_than_ten_percent_off_the_low_is_no_longer_early_accumulation():
+    """바닥 +15%에서 사면 바닥 -3% 손절까지 -16%다 — 선매집이 노리는 짧은 손절선이 아니다."""
+    result = turn_scan.analyze_turn(
+        _bars(_path([(0, 200.0), (100, 100.0), (120, 118.0), (130, 104.0), (150, 115.0)]))
+    )
+
+    assert result["state"] == "basing"
+    assert result["accumulation"]["missing"] == ["현재가 바닥 +10% 이내"]
+
+
+def test_a_shallow_pullback_is_not_a_base_worth_accumulating():
+    """고점 대비 -15%는 무너진 게 아니다 — 경로 C는 하락 뒤 바닥에서만 연다."""
+    result = turn_scan.analyze_turn(_bars(_path([(0, 118.0), (100, 100.0), (110, 106.0), (120, 102.0), (145, 104.0)])))
+
+    assert "고점 대비 -20% 이상 하락 뒤 바닥" in result["accumulation"]["missing"]
+
+
 def test_a_rally_far_off_the_low_is_past_the_early_stage():
     """저점 100에서 +40%인 140은 '고개 드는 초반'이 아니다 — 추격 금지, 눌림 대기."""
     result = turn_scan.analyze_turn(_bars(_path(BASE + [(140, 140.0)])))
@@ -264,6 +304,26 @@ def test_cli_json_carries_the_state_code_entry_policy_reads(monkeypatch, capsys)
     assert payload["stock_code"] == "000001"
 
 
+def test_cli_prints_the_early_accumulation_verdict_with_its_stop(monkeypatch, capsys):
+    """경로 C는 가격 조건만 판정한다 — 실적·밸류 게이트가 남았다는 것과 손절선을 같이 보여 준다."""
+    _fake_feed(monkeypatch, _bars(_path(BASE + [(145, 104.0)])))
+
+    assert turn_scan.main(["가나"]) == 0
+
+    out = capsys.readouterr().out
+    assert "선매집(경로 C) 가격 조건: 충족" in out
+    assert "손절 97원" in out
+    assert "영업이익 YoY 증가" in out
+
+
+def test_cli_names_the_unmet_early_accumulation_condition(monkeypatch, capsys):
+    _fake_feed(monkeypatch, _bars(_path([(0, 200.0), (120, 100.0), (130, 106.0), (140, 104.0)])))
+
+    assert turn_scan.main(["가나"]) == 0
+
+    assert "선매집(경로 C) 가격 조건: 미충족 — 바닥 경과 30거래일 이상" in capsys.readouterr().out
+
+
 def test_every_threshold_is_documented_with_its_value():
     """임계값은 운영 선택이다 — 상수만 바꾸고 SKILL.md 근거 표가 옛 값이면 다음 사람이 못 읽는다."""
     skill = (REPO_ROOT / ".agents" / "skills" / "stage-analysis" / "SKILL.md").read_text(encoding="utf-8")
@@ -272,7 +332,8 @@ def test_every_threshold_is_documented_with_its_value():
     for name in ("MIN_BARS", "BASE_LOOKBACK", "DECLINE_MIN_PCT", "BASE_MIN_AGE", "TURN_PIVOT_K", "MA_SHORT",
                  "MA_SHORT_RISE_DAYS", "MA_MID", "MA_MID_SLOPE_DAYS", "EXTENDED_FROM_LOW_PCT",
                  "EXTENDED_FROM_PIVOT_PCT", "SPRING_TOL_PCT", "BREAKOUT_VOL_RATIO",
-                 "VOLUME_AVG_DAYS", "BASE_VOL_RATIO", "RSI_PERIOD"):
+                 "VOLUME_AVG_DAYS", "BASE_VOL_RATIO", "RSI_PERIOD", "ACC_BASE_MIN_AGE", "ACC_BOX_MAX_PCT",
+                 "ACC_ENTRY_MAX_PCT", "ACC_PEAK_LOOKBACK", "ACC_STOP_PCT"):
         row = next((ln for ln in section.splitlines() if ln.startswith("|") and f"`{name}`" in ln), None)
         assert row, f"{name}이 근거 표에 없다"
         cells = [c.strip() for c in row.split("|")]

@@ -185,7 +185,17 @@ confidence only; they never change the state. `analyze-stock` routes by stage: s
 keeps the trend-confirmed path A, while stages 1, 3 and 4 open path B only when the turn
 is `turning` and the value gate passes — stage 4 included, since a stock that has turned
 up is no longer falling (user decision, 2026-09-12). `entry_policy.py` takes the state as
-`turn`; unknown withholds and `falling` avoids. The remaining tranches follow the scan's
+`turn`; unknown withholds and `falling` avoids. A `basing` stock can still open path C —
+early accumulation before the turn, the proviso added to 「매매규칙 2」 on 2026-09-25 — when
+turn_scan's `accumulation` price check passes (a base at least 30 sessions old after a 20%
+or deeper decline, a box no more than 25% above the low, a close within 10% of it), the
+latest confirmed quarter's operating profit beat the same quarter a year earlier
+(`stage_scan`'s `op_growth.latest.increased`, which counts a narrowing loss as an increase),
+and the value gate passes; `entry_policy.py` then caps the entry at half the first tranche,
+with the stop at the base's closing low minus 3%. A backtest over eight watchlist names
+(2015–2026, fundamentals taken point-in-time) set those numbers: base age barely separated
+outcomes, while year-on-year operating-profit growth lifted the hit rate from 19% to 47%.
+The remaining tranches follow the scan's
 watch lines, a third of the target weight each: the second on a held higher low plus a
 rising 60-day line, the third on a stage-2 verdict or a rising 20-week line. The
 thresholds are this skill's operating choices, live as constants at the top of the

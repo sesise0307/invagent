@@ -46,6 +46,12 @@ BREAKOUT_VOL_RATIO = 1.5  # 돌파일 거래량 ÷ 직전 VOLUME_AVG_DAYS일 평
 VOLUME_AVG_DAYS = 50
 BASE_VOL_RATIO = 1.0      # 바닥 이후 상승일 평균 거래량 ÷ 하락일 평균 거래량
 RSI_PERIOD = 14           # Wilder RSI
+# 경로 C(고개 들기 전 선매집)의 가격 조건 — 2026-09-25 백테스트(관심 종목 8개, 2015~2026)로 정했다.
+ACC_BASE_MIN_AGE = 30     # 바닥 이후 종가 신저가 없이 버틴 거래일. 15일은 승률이 낮았고 60·90일은 더 낫지 않았다
+ACC_BOX_MAX_PCT = 25.0    # 바닥 이후 최고 종가가 바닥 대비 이 폭 이내 — 아직 고개를 들지 않은 박스
+ACC_ENTRY_MAX_PCT = 10.0  # 진입 종가가 바닥 대비 이 폭 이내 — 손절선이 가까워야 선매집의 손익비가 선다
+ACC_PEAK_LOOKBACK = 250   # 바닥 앞의 고점을 찾는 구간 (거래일 ≈ 1년). DECLINE_MIN_PCT 이상 무너진 뒤의 바닥만
+ACC_STOP_PCT = 3.0        # 손절선 = 바닥 종가 × (1 - 이 폭). 종가로만 판정한다
 
 STATE_LABEL = {
     "falling": "하락 중",
@@ -137,6 +143,26 @@ def _evidence(bars: list[dict], closes: list[float], pivot_lows: list[dict], sta
     }
 
 
+def _accumulation(closes: list[float], low_index: int, state: str) -> dict:
+    """경로 C의 가격 조건. 실적(영업이익 YoY 증가)과 밸류 게이트는 entry_policy가 따로 본다."""
+    low = closes[low_index]
+    peak = max(closes[max(0, low_index - ACC_PEAK_LOOKBACK) : low_index + 1])
+    checks = {
+        "바닥 다지기 상태": state == "basing",
+        f"고점 대비 -{DECLINE_MIN_PCT:.0f}% 이상 하락 뒤 바닥": low <= peak * (1 - DECLINE_MIN_PCT / 100),
+        f"바닥 경과 {ACC_BASE_MIN_AGE}거래일 이상": len(closes) - 1 - low_index >= ACC_BASE_MIN_AGE,
+        f"박스 상단 바닥 +{ACC_BOX_MAX_PCT:.0f}% 이내": max(closes[low_index:]) <= low * (1 + ACC_BOX_MAX_PCT / 100),
+        f"현재가 바닥 +{ACC_ENTRY_MAX_PCT:.0f}% 이내": closes[-1] <= low * (1 + ACC_ENTRY_MAX_PCT / 100),
+    }
+    missing = [name for name, ok in checks.items() if not ok]
+    return {
+        "eligible": not missing,
+        "checks": checks,
+        "missing": missing,
+        "stop": low * (1 - ACC_STOP_PCT / 100),
+    }
+
+
 def analyze_turn(bars: list[dict]) -> dict:
     """일봉을 받아 바닥 전환 상태를 판정한다 (네트워크 없음 — 테스트 대상)."""
     if len(bars) < MIN_BARS:
@@ -217,6 +243,7 @@ def analyze_turn(bars: list[dict]) -> dict:
 
     evidence = _evidence(bars, closes, pivot_lows, start, low_index, higher_low, breakout,
                          spring_low is not None)
+    accumulation = _accumulation(closes, low_index, state)
     passed = sum(1 for v in evidence.values() if v is True)
     confidence = "높음" if passed >= 2 else "중간" if passed == 1 else "낮음"
 
@@ -248,6 +275,7 @@ def analyze_turn(bars: list[dict]) -> dict:
         "evidence_passed": passed,
         "evidence_known": sum(1 for v in evidence.values() if v is not None),
         "confidence": confidence,
+        "accumulation": accumulation,
     }
 
 
@@ -305,6 +333,13 @@ def print_result(name: str, code: str, r: dict) -> None:
     )
     if r["state"] == "basing" and r["missing"]:
         print(f"  고개 들기 미충족: {' · '.join(r['missing'])}")
+    if r["state"] == "basing":
+        acc = r["accumulation"]
+        if acc["eligible"]:
+            print(f"  선매집(경로 C) 가격 조건: 충족 · 손절 {_won(acc['stop'])} 종가 이탈 — "
+                  "영업이익 YoY 증가 + 밸류 게이트 통과 시 1차 트랜치의 절반")
+        else:
+            print(f"  선매집(경로 C) 가격 조건: 미충족 — {' · '.join(acc['missing'])}")
     print("감시선 (종가 기준):")
     print(f"  - 무효화: {_won(r['invalidation'])} 종가 이탈 → 하락 중 재판정")
     if r["state"] == "basing" and r["breakout"] is not None:
