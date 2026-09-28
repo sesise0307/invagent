@@ -3,7 +3,7 @@
 
 한 번의 `analyze-stock` 실행은 StockEasy `info-tab`(약 128KB)을 두 번 받는다 —
 `fetch_stock_info.py`가 한 번, 이어서 `stage_scan.py`가 다시 한 번. `peak_drawdown.py`도
-`stage_scan.fetch_bars`를 종목마다 부르고, 브리핑을 다시 돌리면 같은 호출이 통째로 반복된다.
+`stage_scan`이 일봉을 종목마다 부르고, 브리핑을 다시 돌리면 같은 호출이 통째로 반복된다.
 이 모듈은 그 중복만 없앤다.
 
 **TTL이 짧은 이유**: `info-tab`에는 현재가가 들어 있다. 하루 단위로 캐시하면 장 마감 무렵

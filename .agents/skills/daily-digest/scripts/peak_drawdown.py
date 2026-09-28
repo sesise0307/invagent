@@ -4,7 +4,7 @@
 `extract_portfolio.py`가 만든 포트폴리오 스냅샷을 입력으로 받아 종목별 낙폭을 **두 축**으로
 계산하고, 둘 다 -10/-15/-20/-30% 밴드로 경보한다.
 
-1. **52주 시장 고점 축** — 최근 250거래일 최고 **종가**(네이버 일봉) 대비 하락률.
+1. **52주 시장 고점 축** — 최근 250거래일 최고 **종가**(StockEasy 정규장 일봉) 대비 하락률.
    내가 사기 전에 형성된 고점까지 포함하므로 "이 종목이 시장에서 얼마나 밀렸나"를 답한다.
 2. **계좌 기록 고점 축** — `output/portfolio/` 스냅샷 이력에 기록된 최고 **현재가**(시트 수집가)
    대비 하락률. 내가 관측을 시작한 뒤의 고점만 보므로 "내 보유 구간에 얼마나 반납했나"를
@@ -23,7 +23,7 @@
 요구하는 추세 훼손 감지를 이 축들이 담당한다.
 
 데이터 소스:
-- 일봉 OHLCV — 네이버 금융 `siseJson` (무인증). `invagent.datafeed.naver` 재사용.
+- 일봉 OHLCV — `invagent.datafeed.daily` (StockEasy 정규장 우선, 네이버 대체 시 꼬리표).
 - 티커 해석 — `context/ticker_overrides.md` → `analyze-stock/scripts/fetch_stock_info.py` 순.
 - 계좌 기록 고점 — `output/portfolio/*.md` 스냅샷의 `## 보유` 표 (외부 조회 없음).
 
@@ -44,7 +44,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from invagent.datafeed import cache as http_cache, naver
+from invagent.datafeed import cache as http_cache, daily
 from invagent.datafeed.snapshot import CASH_SECTOR, parse_balance, parse_holdings, split_row, to_float
 from invagent.datafeed.tickers import TICKER_RE, load_overrides, resolve_code
 
@@ -175,11 +175,12 @@ def analyze_holdings(
     pending = [e for e in results if e.get("code")]
     if pending:
         def fetch(entry: dict):
-            return naver.fetch_bars(entry["code"], FETCH_CALENDAR_DAYS, asof=today or None)
+            return daily.fetch_daily_bars(entry["code"], FETCH_CALENDAR_DAYS, asof=today or None)
 
         with ThreadPoolExecutor(max_workers=min(MAX_FETCH_WORKERS, len(pending))) as pool:
             fetched = list(pool.map(fetch, pending))
-        for entry, (bars, ferr) in zip(pending, fetched):
+        for entry, (bars, ferr, bar_note) in zip(pending, fetched):
+            entry["bar_note"] = bar_note
             if not bars:
                 entry["error"] = f"시세 수집 실패 — {ferr or '응답 없음'}"
                 continue
@@ -431,7 +432,7 @@ def won(value: float | None) -> str:
 
 
 def ymd(raw: str) -> str:
-    """네이버 일봉의 `20260622` → `2026-06-22`."""
+    """일봉 날짜 `20260622` → `2026-06-22`."""
     return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}" if len(raw) == 8 and raw.isdigit() else raw
 
 
@@ -473,7 +474,7 @@ def render(
     lines = [
         SECTION_TITLE,
         "",
-        f"> **52주 시장 고점** = 최근 {PEAK_WINDOW_DAYS}거래일 최고 **종가**(네이버 일봉). "
+        f"> **52주 시장 고점** = 최근 {PEAK_WINDOW_DAYS}거래일 최고 **종가**(StockEasy 정규장 일봉). "
         f"내가 사기 전 고점까지 포함한다.",
         "> **계좌 기록 고점** = `output/portfolio/` 스냅샷에 기록된 최고 **현재가**(시트 수집가). "
         "내가 관측을 시작한 뒤의 고점만 본다.",
@@ -552,6 +553,13 @@ def render(
             f"담기지 않는다{skip_note}. 매도 후 재매수 구간도 구분하지 않고 전체 기록의 "
             "최고 현재가를 쓴다."
         )
+
+    fallback: dict[str, list[str]] = {}
+    for r in results:
+        if r.get("bar_note") and not r["error"]:
+            fallback.setdefault(r["bar_note"], []).append(r["종목"])
+    for note, names in fallback.items():
+        lines.append(f"- (주의) 52주 시장 축 {', '.join(names)}: {note}")
 
     failed = [r for r in results if r["error"]]
     if failed:

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from invagent.datafeed import naver as datafeed_naver
 from invagent.datafeed import stockeasy as datafeed_stockeasy
 
 
@@ -927,8 +928,8 @@ def test_daily_bars_and_market_signals_share_the_cache(
         return _FakeResponse(body)
 
     monkeypatch.setattr(stage.urllib.request, "urlopen", fake_urlopen)
-    first, err1 = stage.fetch_bars("000660", 400)
-    second, err2 = stage.fetch_bars("000660", 400)
+    first, err1 = datafeed_naver.fetch_bars("000660", 400)
+    second, err2 = datafeed_naver.fetch_bars("000660", 400)
     assert (err1, err2) == (None, None)
     assert first == second and len(calls) == 1
 
@@ -1688,13 +1689,34 @@ def test_market_data_fetch_reports_a_failure_without_raising(
 ) -> None:
     """수집 실패는 비블로킹이라는 공통 원칙을 이 CLI도 따른다 — 사유를 stderr에 남긴다."""
     module = _load_market_data_fetch_module()
-    monkeypatch.setattr(module.naver, "fetch_bars", lambda code, days, asof=None: ([], "HTTP 500"))
+    monkeypatch.setattr(module.daily, "fetch_daily_bars", lambda code, days, asof=None: ([], "HTTP 500", None))
     monkeypatch.setattr(
         module.tickers, "resolve_stock", lambda q: ({"stock_code": "005930"}, None, 0)
     )
 
     assert module.main(["bars", "삼성전자"]) == 1
     assert "HTTP 500" in capsys.readouterr().err
+
+
+def test_market_data_fetch_bars_names_a_naver_fallback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """직통 조회도 판정용 일봉과 같은 경로다 — 네이버 대체면 시간외가 가능성을 밝힌다."""
+    from invagent.datafeed import daily
+
+    module = _load_market_data_fetch_module()
+    note = daily.fallback_note("STOCKEASY_COOKIE 미설정")
+    monkeypatch.setattr(
+        daily,
+        "fetch_daily_bars",
+        lambda code, days, asof=None: ([{"date": "20260928", "close": 121700.0, "volume": 1.0}], None, note),
+    )
+    monkeypatch.setattr(
+        module.tickers, "resolve_stock", lambda q: ({"stock_code": "353200"}, None, 0)
+    )
+
+    assert module.main(["bars", "대덕전자"]) == 0
+    assert note in capsys.readouterr().out
 
 
 def test_market_data_fetch_passes_an_ambiguous_name_back(
@@ -2454,9 +2476,9 @@ def test_peak_drawdown_unresolved_ticker_does_not_block_others(
         ),
     )
     monkeypatch.setattr(
-        module.naver,
-        "fetch_bars",
-        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 60_000.0)]), None),
+        module.daily,
+        "fetch_daily_bars",
+        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 60_000.0)]), None, None),
     )
 
     results = module.analyze_holdings(module.parse_holdings(PEAK_SNAPSHOT), {})
@@ -2466,6 +2488,33 @@ def test_peak_drawdown_unresolved_ticker_does_not_block_others(
     section = module.render(results, {"error": "잔고 이력 없음"})
     assert "베타파마(티커 미해석" in section
     assert "ticker_overrides.md" in section
+
+
+def test_peak_drawdown_flags_holdings_measured_on_naver_fallback_bars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """52주 시장 축은 정규장 종가(StockEasy)로 잰다. 네이버로 대체된 종목은 섹션이 이름째 밝힌다."""
+    from invagent.datafeed import daily
+
+    module = _load_peak_drawdown_module()
+    monkeypatch.setattr(
+        datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+    )
+    note = daily.fallback_note("STOCKEASY_COOKIE 미설정")
+    monkeypatch.setattr(
+        daily,
+        "fetch_daily_bars",
+        lambda code, days, asof=None: (
+            _bars([("20260601", 100_000.0), ("20260828", 60_000.0)]), None, note
+        ),
+    )
+
+    results = module.analyze_holdings(module.parse_holdings(PEAK_SNAPSHOT), {})
+    section = module.render(results, {"error": "잔고 이력 없음"})
+
+    assert results[0]["drawdown"] == pytest.approx(-40.0)
+    flagged = [line for line in section.splitlines() if note in line]
+    assert flagged and "알파전자" in flagged[0]
 
 
 def test_peak_drawdown_overrides_win_over_api(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2494,7 +2543,7 @@ def test_peak_drawdown_fetch_failure_is_non_blocking(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(
         datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
     )
-    monkeypatch.setattr(module.naver, "fetch_bars", lambda code, days, asof=None: ([], "HTTP 500"))
+    monkeypatch.setattr(module.daily, "fetch_daily_bars", lambda code, days, asof=None: ([], "HTTP 500", None))
 
     results = module.analyze_holdings(module.parse_holdings(PEAK_SNAPSHOT), {})
 
@@ -2573,9 +2622,9 @@ def test_render_lists_stock_approaches_per_axis(monkeypatch: pytest.MonkeyPatch)
     )
     # 52주 축 = -9.0%(-10% 임박) / 기록 축 = -9.5%(-10% 임박)
     monkeypatch.setattr(
-        module.naver,
-        "fetch_bars",
-        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 91_000.0)]), None),
+        module.daily,
+        "fetch_daily_bars",
+        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 91_000.0)]), None, None),
     )
     history = {"알파전자": [("2026-08-10", 77_348.0)]}  # 현재가 ₩70,000 → -9.5%
 
@@ -2598,9 +2647,9 @@ def test_render_omits_approach_line_when_nothing_is_close(
         datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
     )
     monkeypatch.setattr(
-        module.naver,
-        "fetch_bars",
-        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 99_000.0)]), None),
+        module.daily,
+        "fetch_daily_bars",
+        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 99_000.0)]), None, None),
     )
 
     section = module.render(
@@ -2705,9 +2754,9 @@ def test_peak_drawdown_fetches_holdings_concurrently_keeping_order(
         time.sleep(0.05)
         with lock:
             live -= 1
-        return [{"date": "20260903", "close": 100.0}], None
+        return [{"date": "20260903", "close": 100.0}], None, None
 
-    monkeypatch.setattr(module.naver, "fetch_bars", slow_fetch)
+    monkeypatch.setattr(module.daily, "fetch_daily_bars", slow_fetch)
 
     holdings = [
         {"종목": f"종목{i}", "섹터": "반도체", "현재가": "90", "수익률": "0%", "비중": "1%"}
@@ -2769,9 +2818,9 @@ def test_peak_drawdown_append_is_idempotent(
         datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
     )
     monkeypatch.setattr(
-        module.naver,
-        "fetch_bars",
-        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 90_000.0)]), None),
+        module.daily,
+        "fetch_daily_bars",
+        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 90_000.0)]), None, None),
     )
     snapshot = tmp_path / "2026-08-28.md"
     snapshot.write_text(PEAK_SNAPSHOT, encoding="utf-8")
@@ -3071,9 +3120,9 @@ def test_render_names_both_axes_and_forbids_summing(monkeypatch: pytest.MonkeyPa
         datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
     )
     monkeypatch.setattr(
-        module.naver,
-        "fetch_bars",
-        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 60_000.0)]), None),
+        module.daily,
+        "fetch_daily_bars",
+        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 60_000.0)]), None, None),
     )
     # 52주 축은 -40%(⛔), 기록 축은 -12.5%(🟡) — 두 축이 두 밴드만큼 어긋나는 상황
     history = {"알파전자": [("2026-08-10", 80_000.0)], "베타파마": [("2026-08-10", 80_000.0)]}

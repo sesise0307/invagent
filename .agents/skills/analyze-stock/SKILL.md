@@ -200,7 +200,7 @@ uv run python .agents/skills/analyze-stock/scripts/fetch_stock_info.py "<종목�
 uv run python .agents/skills/stage-analysis/scripts/stage_scan.py "<5단계가 확정한 티커>"
 ```
 
-- 일봉은 네이버 `siseJson`(무인증), 영업이익 증가율은 StockEasy `info-tab`이다. 쿠키가 없으면
+- 일봉은 StockEasy `info-tab` 정규장 일봉(쿠키 필요, 없거나 실패하면 네이버 `siseJson`으로 대체하고 출력에 꼬리표), 영업이익 증가율은 StockEasy `info-tab`이다. 네이버 대체 꼬리표가 붙으면 가격선 거리를 6단계 StockEasy 종가로 다시 잰다. 쿠키가 없으면
   **가격 전용 판정으로 강등**되고 그 꼬리표가 출력에 붙는다 — 꼬리표째 §5로 옮긴다.
 - 출력의 `판정`·`직전 순환적 고점/저점` 줄은 10단계 📈 추세 관점과 §5 첫 불릿의 입력이다.
 - 실패하면(exit 1, 일봉 부족·조회 실패) §5 스테이지 줄에 `미수집 — …`만 남기고 진행한다.
@@ -215,7 +215,7 @@ uv run python .agents/skills/stage-analysis/scripts/stage_scan.py "<5단계가 �
 uv run python .agents/skills/stage-analysis/scripts/turn_scan.py "<5단계가 확정한 티커>"
 ```
 
-- 일봉만 쓴다 (네이버 `siseJson`, 무인증) — 쿠키가 없어도 판정은 그대로다.
+- 일봉만 쓴다 — StockEasy `info-tab` 정규장 일봉(쿠키 필요, 없거나 실패하면 네이버 `siseJson`으로 대체하고 출력에 꼬리표). 쿠키가 없어도 판정은 돈다.
 - 출력의 `판정`·`감시선` 줄은 §5 📈 「단기 바닥 전환」 불릿과 10단계 진입 경로·증량 트리거의 입력이다.
   상태 코드를 `entry_policy.py`의 `turn`으로 넘긴다 — 하락 중 `falling` / 바닥 다지기 `basing` /
   고개 들기 `turning` / 초입 지남 `extended`.

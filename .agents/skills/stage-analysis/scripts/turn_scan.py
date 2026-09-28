@@ -14,7 +14,8 @@
 
 근거 기법은 `references/turn_theory.md` (와이코프 매집 · Sperandeo 1-2-3 · 앵커드 VWAP).
 
-데이터 소스: 네이버 금융 `siseJson` 일봉 (무인증, `invagent.datafeed.naver`).
+데이터 소스: StockEasy `info-tab` 정규장 일봉, 쿠키가 없거나 실패하면 네이버 `siseJson`으로 대체
+(`invagent.datafeed.daily` — 네이버 종가는 장 마감 후 시간외가가 섞일 수 있어 대체 시 꼬리표를 붙인다).
 종료 코드: 0 정상 / 1 시세 수집 실패·일봉 부족 / 2 종목명 후보 다수.
 """
 
@@ -25,7 +26,7 @@ import json
 import sys
 from datetime import date
 
-from invagent.datafeed import cache as http_cache, naver, series, tickers
+from invagent.datafeed import cache as http_cache, daily, series, tickers
 
 # --- 판정 임계값 -----------------------------------------------------------
 # 이 스킬이 정한 운영 기준이다. 바꾸려면 SKILL.md 「단기 바닥 전환 판정」 표의 근거도 함께 고친다.
@@ -290,11 +291,11 @@ def _mark(value: bool | None) -> str:
     return "?" if value is None else "✓" if value else "✗"
 
 
-def print_result(name: str, code: str, r: dict) -> None:
+def print_result(name: str, code: str, r: dict, source: str = "StockEasy 일봉") -> None:
     base = r["base_low"]
     print(
         f"=== 단기 바닥 전환 — {name}({code}) === 조회 {date.today().isoformat()} · "
-        f"최종봉 {r['last_date']} · 출처 Naver siseJson"
+        f"최종봉 {r['last_date']} · 출처 {source}"
     )
     unknown = 4 - r["evidence_known"]
     print(
@@ -373,9 +374,10 @@ def main(argv: list[str] | None = None) -> int:
     ticker = stock["stock_code"]
     name = stock.get("stock_name") or ticker
 
-    bars, e = naver.fetch_bars(ticker, args.days)
+    bars, e, bar_note = daily.fetch_daily_bars(ticker, args.days)
+    source = bar_note or "StockEasy 일봉"
     if e or not bars:
-        print(f"ERROR: 시세 수집 실패 — {e or '빈 응답'} (네이버 siseJson, {ticker})", file=sys.stderr)
+        print(f"ERROR: 시세 수집 실패 — {e or '빈 응답'} ({source}, {ticker})", file=sys.stderr)
         return 1
     if len(bars) < MIN_BARS:
         print(
@@ -388,11 +390,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(
             {"stock_code": ticker, "stock_name": name, "fetched_at": date.today().isoformat(),
-             "source": "Naver siseJson", **result},
+             "source": source, **result},
             ensure_ascii=False, default=str,
         ))
         return 0
-    print_result(name, ticker, result)
+    print_result(name, ticker, result, source)
     return 0
 
 

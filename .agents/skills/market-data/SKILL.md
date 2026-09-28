@@ -33,7 +33,7 @@ StockEasy와 Naver가 함께 `<urlopen error [Errno 8] nodename nor servname pro
 | 증권사별 목표주가·컨센서스·EPS 리비전·리포트 요약 | 같음 (`securities-reports`) | 필요 |
 | 종목 뉴스 | 같음 (`news/by-stock-code`) | 필요 |
 | 종목명·티커 해석 | `invagent.datafeed.tickers` (오버라이드 우선) | 검색만 무인증 |
-| 일봉 OHLCV | `invagent.datafeed.naver` (`api.finance.naver.com/siseJson.naver`) | 불필요 |
+| 일봉 OHLCV (판정용) | `invagent.datafeed.daily.fetch_daily_bars` — StockEasy `info-tab`의 `chart`(3년치 정규장 1일봉)가 정본. 쿠키가 없거나 실패하면 `invagent.datafeed.naver`(`siseJson`)로 대체하고 대체 사유를 돌려준다. **네이버 종가는 장 마감 후 시간외가가 섞인다**(2026-09-28 사용자 확정) — 대체 꼬리표가 붙은 가격선은 StockEasy 종가로 다시 잰다 | 필요 (대체는 불필요) |
 | 시장 지표(지수·빅픽처·breadth·신용잔고) | `invagent.datafeed.stockeasy.fetch_market_json` → `daily-digest/scripts/fetch_market_signals.py` | 불필요 |
 | 텔레그램 저장 메시지·첨부 이미지·링크 본문 | `uv run invagent fetch-messages` | 텔레그램 세션 |
 | 보유 포트폴리오 | Google Drive MCP → `daily-digest/scripts/extract_portfolio.py` | MCP |

@@ -24,8 +24,8 @@ uv run python .agents/skills/stage-analysis/scripts/stage_scan.py "<종목명 �
 ```
 
 - 종료 코드: `0` 정상(부분 누락 포함) / `1` 시세 수집 실패 / `2` 종목명 후보 다수.
-- 데이터 소스는 둘이다. **일봉은 네이버 금융 `siseJson`(무인증), 영업이익은 StockEasy
-  `info-tab`(로그인 쿠키 필요)**.
+- 데이터 소스는 둘이다. **일봉은 StockEasy `info-tab` 정규장 일봉(쿠키 필요, 없거나 실패하면 네이버 `siseJson`으로 대체하고 출력에 꼬리표), 영업이익은 StockEasy
+  `info-tab`(로그인 쿠키 필요)**. 수집 경로는 `market-data`.
 - **우선주는 실적이 따로 없다.** 티커 끝자리가 `0`이 아니면 우선주이므로 영업이익 축만
   **본주 코드**(끝자리를 `0`으로 바꾼 값)로 받는다 (`datafeed.tickers.fundamentals_code`).
   가격 축(일봉·150일선·20주선·스윙)은 우선주 자기 시세를 그대로 쓴다 — 괴리율이 따로 움직이므로
@@ -213,7 +213,7 @@ uv run python .agents/skills/stage-analysis/scripts/turn_scan.py "<종목명 또
 ```
 
 - 종료 코드: `0` 정상 / `1` 시세 수집 실패·일봉 부족(130봉 미만) / `2` 종목명 후보 다수.
-- 일봉만 쓴다 (네이버 `siseJson`, 무인증) — 쿠키가 없어도 판정은 그대로다. 수집 경로는 `market-data`.
+- 일봉만 쓴다 — StockEasy `info-tab` 정규장 일봉(쿠키 필요, 없거나 실패하면 네이버 `siseJson`으로 대체하고 출력에 꼬리표). 쿠키가 없어도 판정은 돈다. 수집 경로는 `market-data`.
 - **상태는 스크립트가 확정한다.** 모델이 차트를 눈대중해 바꾸지 않는다.
 
 ### 상태

@@ -26,10 +26,15 @@ design notes to `docs/`.
 `http.get_json` is the single request path and every other module goes through it:
 `stockeasy` (the `/stockdata/api/v1/**` stock endpoints and the `.../market/**`
 ones, the `STOCKEASY_COOKIE` session, stock resolution, `fs_rows`), `naver`
-(daily OHLCV), `cache` (the shared response cache), `env` (repository root,
+(daily OHLCV), `daily` (the bars every price judgement reads — see below), `cache` (the shared response cache), `env` (repository root,
 `output/`, `.env` values), `series` (`sma`), `tickers` (override-first ticker
 resolution plus the preferred-to-common mapping below) and `snapshot` (portfolio
-snapshot tables). **Add a new source here,
+snapshot tables). `daily.fetch_daily_bars` takes the regular-session bars from the StockEasy
+`info-tab` `chart` (three years of 1-day OHLCV) and falls back to Naver only when the cookie is
+missing or the call fails, returning a fallback note that every script prints: Naver's `siseJson`
+close carries the after-hours price (대덕전자 from 2026-09-14 on, e.g. 9/14 95,600 vs a
+regular close of 97,000원), and rule triggers are judged on the regular close (user decision,
+2026-09-28). **Add a new source here,
 never in a skill script.** A skill script fetches nothing itself; it calls this
 package and spends its own lines on judgement and output. Nothing under
 `.agents/skills/` may import another skill's scripts — that cross-directory
@@ -89,7 +94,7 @@ collection mechanics; they cite it. Judgement stays with the skill that asked.
 The collection code itself lives in the `invagent.datafeed` package, not in a
 skill: `stockeasy` (both the `/stockdata/api/v1/**` stock endpoints and the
 `.../market/**` ones, plus the cookie and stock resolution), `naver` (daily
-OHLCV), `http` (the one request-plus-cache path), `cache`, `env`, `series`,
+OHLCV), `daily` (judgement bars), `http` (the one request-plus-cache path), `cache`, `env`, `series`,
 `tickers` and `snapshot`. Skill scripts import it normally, so no script reaches
 into another skill's directory through `sys.path` any more.
 
@@ -112,9 +117,8 @@ sits in, following DB Securities' 2026-08-25 「Stage Analysis 마스터하기�
 version — Weinstein's price/150-day-moving-average axis plus Minervini's operating
 -profit-growth axis. `.agents/skills/stage-analysis/scripts/stage_scan.py` fixes the
 stage **deterministically**; the model interprets boundaries and maps the verdict to
-`context/my_rules.md`, it does not re-grade the number. Daily OHLCV comes from Naver
-Finance's open `api.finance.naver.com/siseJson.naver` endpoint (no auth, response is
-a single-quoted literal rather than strict JSON), and the quarterly operating-profit
+`context/my_rules.md`, it does not re-grade the number. Daily OHLCV comes from
+`datafeed.daily` (StockEasy regular-session bars, Naver as a labelled fallback), and the quarterly operating-profit
 series comes from the same StockEasy `info-tab` payload described above, so a missing
 `STOCKEASY_COOKIE` degrades the run to a price-only verdict instead of failing it.
 Ticker resolution, cookie loading, and financial-row selection come from
@@ -360,8 +364,8 @@ prints as -13.0%, which reads as 2.0 points from -15%, and withholding the
 warning over the unrounded 2.031 would contradict the table; this is the same
 class of mismatch `BAND_EPS` exists to prevent. `--append` writes the
 result back into the snapshot, replacing its own section so reruns stay
-idempotent. Daily bars come from the same unauthenticated Naver `siseJson`
-endpoint as `stage-analysis`, through `invagent.datafeed.naver.fetch_bars`, and ticker resolution
+idempotent. Daily bars come from the same `invagent.datafeed.daily.fetch_daily_bars` as
+`stage-analysis`, and a holding measured on the Naver fallback is named in the section; ticker resolution
 goes through `invagent.datafeed.tickers` — neither is reimplemented, and neither skill reaches
 into the other's script directory any more. The peak
 window and the band list are this skill's own operating choices and live as

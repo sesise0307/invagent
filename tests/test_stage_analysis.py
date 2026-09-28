@@ -563,7 +563,7 @@ def test_projection_contact_is_not_a_stage_change(capsys):
 
 def test_main_fetches_the_fundamentals_of_a_preferred_shares_common_stock(monkeypatch, capsys):
     """우선주는 실적이 따로 없다 — info_tab은 본주 코드로, 일봉은 우선주 코드로 부른다."""
-    from invagent.datafeed import stockeasy, tickers
+    from invagent.datafeed import daily, stockeasy, tickers
 
     monkeypatch.setattr(
         tickers,
@@ -573,11 +573,11 @@ def test_main_fetches_the_fundamentals_of_a_preferred_shares_common_stock(monkey
 
     price_codes: list[str] = []
 
-    def fake_bars(code, days):
+    def fake_bars(code, days, asof=None):
         price_codes.append(code)
-        return _bars([100.0 + i for i in range(400)]), None
+        return _bars([100.0 + i for i in range(400)]), None, None
 
-    monkeypatch.setattr(stage_scan, "fetch_bars", fake_bars)
+    monkeypatch.setattr(daily, "fetch_daily_bars", fake_bars)
 
     info_paths: list[str] = []
 
@@ -595,3 +595,43 @@ def test_main_fetches_the_fundamentals_of_a_preferred_shares_common_stock(monkey
     out = capsys.readouterr().out
     assert "본주 삼성전자(005930)" in out, "출처에 본주를 밝힌다"
     assert "삼성전자우(005935)" in out, "표시 이름은 우선주 그대로다"
+
+
+def test_main_labels_a_naver_fallback_because_its_close_may_be_after_hours(monkeypatch, capsys):
+    """판정용 일봉은 StockEasy 정규장이 정본이다. 네이버로 대체됐으면 출력이 그 사실을 밝힌다."""
+    from invagent.datafeed import daily, stockeasy, tickers
+
+    monkeypatch.setattr(
+        tickers,
+        "resolve_stock",
+        lambda q, overrides=None: ({"stock_code": "353200", "stock_name": "대덕전자"}, None, 0),
+    )
+    note = daily.fallback_note("STOCKEASY_COOKIE 미설정")
+    monkeypatch.setattr(
+        daily,
+        "fetch_daily_bars",
+        lambda code, days, asof=None: (_bars([100.0 + i for i in range(400)]), None, note),
+    )
+
+    assert stage_scan.main(["353200", "--no-fundamental"]) == 0
+    out = capsys.readouterr().out
+    assert note in out
+
+
+def test_main_names_stockeasy_as_the_bar_source_when_it_served_the_bars(monkeypatch, capsys):
+    from invagent.datafeed import daily, tickers
+
+    monkeypatch.setattr(
+        tickers,
+        "resolve_stock",
+        lambda q, overrides=None: ({"stock_code": "353200", "stock_name": "대덕전자"}, None, 0),
+    )
+    monkeypatch.setattr(
+        daily,
+        "fetch_daily_bars",
+        lambda code, days, asof=None: (_bars([100.0 + i for i in range(400)]), None, None),
+    )
+
+    assert stage_scan.main(["353200", "--no-fundamental"]) == 0
+    header = capsys.readouterr().out.splitlines()[0]
+    assert "StockEasy 일봉" in header and "Naver" not in header

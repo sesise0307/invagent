@@ -272,13 +272,13 @@ def test_the_sixty_day_line_turns_up_only_after_a_sustained_grind():
 
 
 def _fake_feed(monkeypatch, bars: list[dict]) -> None:
-    from invagent.datafeed import naver, tickers
+    from invagent.datafeed import daily, tickers
 
     monkeypatch.setattr(
         tickers, "resolve_stock",
         lambda q: ({"stock_code": "000001", "stock_name": "가나"}, None, 0),
     )
-    monkeypatch.setattr(naver, "fetch_bars", lambda code, days, asof=None: (bars, None))
+    monkeypatch.setattr(daily, "fetch_daily_bars", lambda code, days, asof=None: (bars, None, None))
 
 
 def test_cli_prints_the_state_with_its_watch_lines(monkeypatch, capsys):
@@ -348,3 +348,24 @@ def test_cli_refuses_to_judge_a_short_history(monkeypatch, capsys):
 
     assert turn_scan.main(["가나"]) == 1
     assert "일봉" in capsys.readouterr().err
+
+
+def test_cli_labels_a_naver_fallback_because_its_close_may_be_after_hours(monkeypatch, capsys):
+    """판정 선이 시간외가로 그어졌을 수 있으면 출력과 JSON 양쪽이 밝힌다."""
+    import json
+
+    from invagent.datafeed import daily, tickers
+
+    note = daily.fallback_note("STOCKEASY_COOKIE 미설정")
+    monkeypatch.setattr(
+        tickers, "resolve_stock",
+        lambda q: ({"stock_code": "000001", "stock_name": "가나"}, None, 0),
+    )
+    bars = _bars(_path(BASE + [(140, 112.0)]))
+    monkeypatch.setattr(daily, "fetch_daily_bars", lambda code, days, asof=None: (bars, None, note))
+
+    assert turn_scan.main(["가나"]) == 0
+    assert note in capsys.readouterr().out
+
+    assert turn_scan.main(["가나", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["source"] == note

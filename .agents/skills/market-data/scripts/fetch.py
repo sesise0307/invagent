@@ -17,7 +17,7 @@ import argparse
 import json
 import sys
 
-from invagent.datafeed import naver, stockeasy, tickers
+from invagent.datafeed import daily, stockeasy, tickers
 
 
 def _resolve(query: str) -> tuple[str | None, int]:
@@ -70,12 +70,12 @@ def cmd_bars(args) -> int:
     if not ticker:
         return code
 
-    bars, err = naver.fetch_bars(ticker, args.days)
+    bars, err, note = daily.fetch_daily_bars(ticker, args.days)
     if err or not bars:
         print(f"ERROR: 일봉 수집 실패 — {err or '빈 응답'}", file=sys.stderr)
         return 1
 
-    print(f"{ticker}\t{len(bars)}봉\t{bars[0]['date']} ~ {bars[-1]['date']}")
+    print(f"{ticker}\t{len(bars)}봉\t{bars[0]['date']} ~ {bars[-1]['date']}\t{note or 'StockEasy 일봉'}")
     for bar in bars[-args.tail:]:
         print(f"{bar['date']}\t{bar['close']:,.0f}\t{bar['volume']:,.0f}")
     return 0
