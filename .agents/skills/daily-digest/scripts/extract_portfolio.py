@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Google Sheets '주식 포트폴리오' → 「포트폴리오」 시트 스냅샷 추출기.
 
-Drive MCP `read_file_content`가 워크북 전 시트를 마크다운 표로 이어붙여 반환하고,
-크기 초과로 `{"fileContent": "..."}` JSON 덤프 파일에 저장한다. 이 스크립트는 그 덤프를
-파싱해 첫 시트(보유 종목 + 섹터 집계)만 뽑고, `context/my_rules.md` 임계값 기준으로
+입력 정본은 Drive MCP `download_file_content`(exportMimeType=text/csv) 응답 JSON이다 —
+`content`가 첫 시트의 base64 CSV다. 평문 CSV와 예전 `read_file_content` 덤프
+(`{"fileContent": "..."}`, 전 시트 마크다운)도 받는다. 첫 시트(보유 종목 + 섹터 집계)만 뽑아
+보유 행 합계를 시트 잔고와 대조하고(잘린 입력 거부), `context/my_rules.md` 임계값 기준으로
 룰 위반·근접 항목을 계산한다.
 
 네트워크 접근 없음. 의존성: stdlib만 사용.
@@ -11,7 +12,10 @@ Drive MCP `read_file_content`가 워크북 전 시트를 마크다운 표로 이
 """
 
 import argparse
+import base64
+import csv
 import datetime as dt
+import io
 import json
 import re
 import sys
@@ -36,6 +40,9 @@ MAX_WEIGHT_PCT = 35.0
 WEIGHT_WARN_PCT = 30.0  # 상한 근접 경고선
 MIN_HOLDINGS = 5  # 매매규칙 9: 5~12종목
 MAX_HOLDINGS = 12
+
+# 보유 행 평가금액 합계와 시트 잔고의 허용 오차(%). 반올림·수집 시차만 흡수한다.
+BALANCE_TOLERANCE_PCT = 0.5
 
 
 
@@ -275,6 +282,24 @@ def render(holdings: list[dict], sectors: list[dict], totals: dict[str, str], to
     return "\n".join(lines)
 
 
+def check_balance(holdings: list[dict], totals: dict[str, str]) -> None:
+    """보유 행 평가금액 합계가 시트의 잔고와 맞는지 확인한다. 잔고가 없으면 건너뛴다.
+
+    입력이 잘려 행이 빠지면 그 종목이 「전량 청산」으로 읽힌다(2026-09-28). 가장 작은 보유
+    종목도 잔고의 1% 이상이므로 `BALANCE_TOLERANCE_PCT` 안의 차이는 반올림으로 본다.
+    """
+    balance = to_float(totals.get("잔고"))
+    if not balance:
+        return
+    total = sum(to_float(h["평가금액"]) or 0.0 for h in holdings)
+    gap_pct = abs(total - balance) / balance * 100
+    if gap_pct > BALANCE_TOLERANCE_PCT:
+        raise ValueError(
+            f"보유 행 평가금액 합계 ₩{total:,.0f}가 잔고 {totals['잔고']}와 {gap_pct:.1f}% 어긋난다 "
+            "— 입력이 잘렸거나 행이 빠졌을 수 있다"
+        )
+
+
 def build_snapshot(content: str, today: str) -> str:
     """덤프 본문 → 스냅샷 마크다운."""
     blocks = portfolio_blocks(content)
@@ -283,22 +308,55 @@ def build_snapshot(content: str, today: str) -> str:
     holdings, totals = parse_holdings(blocks[0])
     if not holdings:
         raise ValueError("보유 종목 행을 하나도 파싱하지 못했다")
+    check_balance(holdings, totals)
     sectors = parse_sectors(blocks[1]) if len(blocks) > 1 else []
     return render(holdings, sectors, totals, today)
 
 
+def csv_to_markdown(text: str) -> str:
+    """시트 CSV 내보내기 → `read_file_content` 덤프와 같은 마크다운 표.
+
+    CSV는 첫 시트(「포트폴리오」)만 담으므로 표 하나로 끝난다. 셀 안의 `|`는 행 분할을
+    깨뜨리므로 `/`로 바꾼다.
+    """
+    rows = [row for row in csv.reader(io.StringIO(text)) if any(cell.strip() for cell in row)]
+    if not rows:
+        return ""
+    width = max(len(row) for row in rows)
+    lines = [
+        "| " + " | ".join(cell.replace("|", "/") for cell in row + [""] * (width - len(row))) + " |"
+        for row in rows
+    ]
+    lines.insert(1, "| " + " | ".join([":-:"] * width) + " |")
+    return "\n".join(lines) + "\n"
+
+
 def load_content(path: Path) -> str:
-    """MCP 덤프(JSON) 또는 원문 마크다운 모두 허용."""
+    """입력 파일 → 마크다운 표 본문.
+
+    허용하는 입력 세 가지:
+    - Drive MCP `download_file_content`(exportMimeType=text/csv) 응답 JSON — `content`가 base64 CSV
+    - 평문 CSV
+    - Drive MCP `read_file_content` 덤프 JSON(`fileContent`) 또는 그 마크다운 원문 (레거시)
+    """
     raw = path.read_text(encoding="utf-8")
     try:
-        return json.loads(raw)["fileContent"]
-    except (json.JSONDecodeError, KeyError, TypeError):
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        if "fileContent" in payload:
+            return payload["fileContent"]
+        if "content" in payload:
+            return csv_to_markdown(base64.b64decode(payload["content"]).decode("utf-8"))
+    if raw.lstrip().startswith("|"):
         return raw
+    return csv_to_markdown(raw)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("dump", type=Path, help="Drive MCP read_file_content가 저장한 덤프 경로")
+    parser.add_argument("dump", type=Path, help="Drive CSV 내보내기 응답 JSON · 평문 CSV · 레거시 read_file_content 덤프 경로")
     parser.add_argument("--out", type=Path, help="스냅샷 저장 경로 (예: output/portfolio/2026-08-09.md)")
     parser.add_argument("--date", default=dt.date.today().isoformat(), help="스냅샷 날짜 (기본: 오늘)")
     args = parser.parse_args()

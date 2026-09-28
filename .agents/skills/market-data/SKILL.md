@@ -19,6 +19,12 @@ description: 외부 데이터를 어디서 어떻게 가져오는지에 대한 �
    만들지 않는다.
 4. **자격증명은 출력하지 않는다.** 쿠키·키 값은 로그·보고서·커밋 어디에도 남기지 않는다.
 
+### 실행 환경 DNS 장애 구분
+
+StockEasy와 Naver가 함께 `<urlopen error [Errno 8] nodename nor servname provided, or not known>`로 실패하면, 먼저 두 호스트와 무관한 공개 호스트의 DNS를 같은 실행 환경에서 확인한다. 세 호스트가 모두 실패하면 소스 장애나 쿠키 만료로 판정하지 않는다. **동일한 읽기 전용 CLI를 네트워크가 허용된 실행 환경에서 다시 실행해 성공 여부를 확인한다.** Codex의 `workspace-write` 샌드박스에서는 DNS가 차단될 수 있으므로 승인된 `require_escalated` 실행이 이 비교에 해당한다. 외부 환경에서 성공하면 수집 코드 변경 없이 그 실행 결과를 쓰고, 두 환경 모두 실패하면 호스트 DNS·VPN을 점검한다. 인증값은 어떤 진단 출력에도 포함하지 않는다.
+
+`uv run`이 사용자 홈의 uv 캐시에 `Operation not permitted`를 내면 이것도 실행 환경 권한 문제다. 저장소 `.venv/bin/python`으로 재현 신호를 분리하고, 최종 수집은 접근이 허용된 환경에서 문서화된 `uv run` 명령으로 다시 검증한다.
+
 ## 소스별 경로
 
 | 데이터 | 경로 | 인증 |
@@ -79,13 +85,20 @@ SSRF 방어(스킴 제한, 비공개 대역 거부, 홉마다 재검증, 응답 
 
 ### 포트폴리오 (Google Sheets)
 
-Drive MCP로 `주식 포트폴리오` 파일(시트 `포트폴리오`)을 찾아 내용을 읽고, 덤프를 파서에 넘긴다.
+Drive MCP로 `주식 포트폴리오` 파일을 정확 일치 검색으로 찾고, `download_file_content`를
+`exportMimeType = text/csv`로 호출해 첫 시트(`포트폴리오`)를 CSV로 받는다. 응답
+`{"content": "<base64 CSV>", ...}` JSON을 **그대로** 파일에 저장해 파서에 넘긴다.
 파일 ID는 어느 문서에도 하드코딩하지 않는다.
 
 ```bash
-uv run python .agents/skills/daily-digest/scripts/extract_portfolio.py <덤프 경로> \
+uv run python .agents/skills/daily-digest/scripts/extract_portfolio.py <CSV 응답 파일> \
   --out output/portfolio/$(date +%Y-%m-%d).md
 ```
+
+- `read_file_content`는 2026-09-28부터 셀 값을 잘라 쓴 요약만 돌려준다 — 포트폴리오 수집에 쓰지 않는다.
+  파서는 예전 덤프(`fileContent`)와 평문 CSV도 계속 받는다.
+- **잘림 가드**: 보유 행 평가금액 합계가 시트 `잔고`와 0.5% 넘게 어긋나면 파서가 exit 1로 거부한다.
+  응답을 옮겨 적다 base64가 잘리면 마지막 행이 빠지기 때문이다(2026-09-28). 거부되면 다시 받는다.
 
 같은 날 스냅샷이 이미 있으면 다시 받지 않고 그것을 읽는다.
 

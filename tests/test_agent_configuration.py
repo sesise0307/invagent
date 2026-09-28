@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import os
@@ -1230,7 +1231,7 @@ def test_stock_info_unknown_name_exits_1(
 
 PORTFOLIO_DUMP = """|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
 | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
-| 구분 |  계좌 | 섹터 | 종목 | 보유 | 평단 | 현재가 | 매수금액 | 평가금액 | 수익률 | 손익 | 비중 |  | 잔고 | ₩100,000,000 | 수익률 | 25.53% |
+| 구분 |  계좌 | 섹터 | 종목 | 보유 | 평단 | 현재가 | 매수금액 | 평가금액 | 수익률 | 손익 | 비중 |  | 잔고 | ₩210,220,000 | 수익률 | 25.53% |
 | B | 삼성 | 반도체 | 알파전자 | 95 | ₩703,575 | ₩1,466,000 | ₩66,839,625 | ₩139,270,000 | 108.36% | ₩72,430,375 | 26.3% | 슈퍼 사이클 |  |  |  |  |
 | B | 삼성 | 바이오 | 베타파마 | 900 | ₩68,845 | ₩57,500 | ₩61,960,500 | ₩51,750,000 | \\-16.48% | \\-₩10,210,500 | 9.8% | 신약 |  |  |  |  |
 | C | 삼성 | 소비재 | 감마엔터 | 500 | ₩30,278 | ₩28,400 | ₩15,139,000 | ₩14,200,000 | \\-9.20% | \\-₩939,000 | 2.7% | 신작 |  |  |  |  |
@@ -1264,7 +1265,7 @@ def test_portfolio_parser_extracts_first_sheet_only() -> None:
     snapshot = module.build_snapshot(PORTFOLIO_DUMP, "2026-08-09")
 
     assert "# 포트폴리오 스냅샷 — 2026-08-09" in snapshot
-    assert "잔고 ₩100,000,000 · 수익률 25.53%" in snapshot
+    assert "잔고 ₩210,220,000 · 수익률 25.53%" in snapshot
     assert "## 보유 (3종목 + 현금)" in snapshot
     # 다음 시트(매매기록)는 잘라낸다
     assert "델타중공업" not in snapshot
@@ -1290,6 +1291,59 @@ def test_portfolio_parser_unescapes_and_flags_rules() -> None:
     # 현금은 종목 수·룰 판정에서 제외
     assert "매매규칙 9(종목 수 5~12): 3종목 ← **미달**" in snapshot
     assert "현금 비중: 5.1% (₩5,000,000)" in snapshot
+
+
+PORTFOLIO_CSV = (
+    "구분, 계좌,섹터,종목,보유,평단,현재가,매수금액,평가금액,수익률,손익,비중,,잔고,\"₩21,000,000\",총손익,\"₩1,000,000\",투자금,\"₩20,000,000\",수익률,5.00%\r\n"
+    "0,은행,현금,_현금,1,\"₩5,000,000\",\"₩5,000,000\",\"₩5,000,000\",\"₩5,000,000\",0.00%,₩0,23.8%,현금도 종목이다,,,,,,,,\r\n"
+    "A,삼성,반도체,알파전자,10,\"₩1,000,000\",\"₩1,100,000\",\"₩10,000,000\",\"₩11,000,000\",10.00%,\"₩1,000,000\",52.4%,\"슈퍼 사이클, 비중 30% 실현\",,,,,,,,\r\n"
+    "B,삼성,기판,오메가기판,50,\"₩100,000\",\"₩100,000\",\"₩5,000,000\",\"₩5,000,000\",-0.00%,₩0,23.8%,\"증설, 저평가\",,,,,,,,"
+)
+
+
+def _drive_download_response(csv_text: str) -> str:
+    """Drive MCP `download_file_content`(exportMimeType=text/csv) 응답을 그대로 저장한 모양."""
+    encoded = base64.b64encode(csv_text.encode("utf-8")).decode("ascii")
+    return json.dumps({"content": encoded, "mimeType": "text/csv", "title": "주식 포트폴리오"})
+
+
+def test_portfolio_parser_reads_drive_csv_download(tmp_path: Path) -> None:
+    """read_file_content가 요약만 돌려주게 된 뒤(2026-09-28) 정본 입력은 CSV 내보내기 응답이다."""
+    module = _load_portfolio_module()
+    dump = tmp_path / "download.json"
+    dump.write_text(_drive_download_response(PORTFOLIO_CSV), encoding="utf-8")
+
+    snapshot = module.build_snapshot(module.load_content(dump), "2026-09-28")
+
+    assert "잔고 ₩21,000,000 · 총손익 ₩1,000,000 · 투자금 ₩20,000,000 · 수익률 5.00%" in snapshot
+    assert "## 보유 (2종목 + 현금)" in snapshot
+    assert "| 삼성 | 오메가기판 | 기판 | 50 |" in snapshot
+    # 셀 안의 쉼표(따옴표로 감싼 금액)가 칸을 가르지 않는다
+    assert "| 알파전자 | 반도체 | 10 | ₩1,000,000 | ₩1,100,000 | ₩10,000,000 | 10.00% | 52.4% | ₩11,000,000 |" in snapshot
+    assert "| _현금 | 현금 |" in snapshot
+
+
+def test_portfolio_parser_reads_plain_csv(tmp_path: Path) -> None:
+    module = _load_portfolio_module()
+    dump = tmp_path / "portfolio.csv"
+    dump.write_text(PORTFOLIO_CSV, encoding="utf-8")
+
+    snapshot = module.build_snapshot(module.load_content(dump), "2026-09-28")
+
+    assert "## 보유 (2종목 + 현금)" in snapshot
+    assert "| 삼성 | 오메가기판 | 기판 | 50 |" in snapshot
+
+
+def test_portfolio_parser_rejects_truncated_holdings(tmp_path: Path) -> None:
+    """행이 잘린 입력은 스냅샷이 되지 않는다 — 2026-09-28 CSV 옮겨 적기에서 마지막 행이 빠져
+    이수페타시스가 「전량 청산」으로 읽힐 뻔했다. 보유 행 합계를 시트의 잔고와 대조해 잡는다."""
+    module = _load_portfolio_module()
+    truncated = PORTFOLIO_CSV.rsplit("\r\n", 1)[0]  # 오메가기판 행 누락
+    dump = tmp_path / "download.json"
+    dump.write_text(_drive_download_response(truncated), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="잔고"):
+        module.build_snapshot(module.load_content(dump), "2026-09-28")
 
 
 STOP_TIER_DUMP = """|  |  |  |  |  |  |  |  |  |  |  |  |

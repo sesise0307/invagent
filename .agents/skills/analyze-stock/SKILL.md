@@ -291,9 +291,10 @@ uv run python .agents/skills/analyze-stock/scripts/find_mentions.py "<종목명>
    ```
    title = '주식 포트폴리오' and mimeType = 'application/vnd.google-apps.spreadsheet'
    ```
-   응답이 과대해 덤프 경로가 반환되는 것은 **정상 경로다.** 그 경로를 기존 스크립트에 넘긴다.
+   본문은 `download_file_content`(`exportMimeType = text/csv`)로 받고, 응답 JSON을 그대로 파일에
+   저장해 스크립트에 넘긴다(수집 규칙·잘림 가드는 `market-data` 스킬 참조).
    ```bash
-   uv run python .agents/skills/daily-digest/scripts/extract_portfolio.py <덤프 경로> --out output/portfolio/$(date +%Y-%m-%d).md
+   uv run python .agents/skills/daily-digest/scripts/extract_portfolio.py <CSV 응답 파일> --out output/portfolio/$(date +%Y-%m-%d).md
    ```
 3. 비교 산출물:
    - 섹터 중복도 — 이미 같은 매크로 베팅을 하고 있는가

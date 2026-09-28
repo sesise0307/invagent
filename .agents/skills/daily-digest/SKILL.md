@@ -185,14 +185,22 @@ URL: `https://www.investing.com/indices/kospi-volatility`
    title = '주식 포트폴리오' and mimeType = 'application/vnd.google-apps.spreadsheet'
    ```
    `contains`가 아니라 **정확 일치**를 쓴다 (`주식 포트폴리오 통합본`이 함께 잡힌다).
-3. **본문 읽기**: 위에서 얻은 `fileId`로 파일 내용을 읽는다. 이 워크북은 전 시트를 합쳐
-   7만 자가 넘으므로 **토큰 상한 초과 안내와 함께 덤프 파일 경로가 반환되는 것이 정상 경로다.**
-   실패로 판정해 중단하지 말고 그 경로를 다음 단계에 넘긴다.
+3. **본문 받기 (CSV 내보내기)**: 위에서 얻은 `fileId`로 Drive `download_file_content`를
+   `exportMimeType = text/csv`로 호출한다. 첫 시트(「포트폴리오」)만 CSV로 내려오고, 응답은
+   `{"content": "<base64 CSV>", ...}` JSON이다. **이 JSON을 한 글자도 바꾸지 않고 그대로** 파일에
+   저장한다(스크래치 디렉토리의 `portfolio_download.json` 등).
+   - `read_file_content`는 쓰지 않는다 — 2026-09-28부터 셀 값을 `삼...`처럼 잘라 쓴 요약만 돌려줘
+     파서가 읽을 수 없다.
+   - ⚠️ 응답을 옮겨 적다 base64 끝이 잘리면 **마지막 보유 행이 통째로 빠진다**(2026-09-28 실제 사고:
+     이수페타시스 200주가 「전량 청산」으로 읽혔다). 파서가 보유 행 평가금액 합계를 시트 잔고와
+     대조해 0.5%(`BALANCE_TOLERANCE_PCT`) 넘게 어긋나면 exit 1로 거부하므로, 거부되면 추측으로
+     메우지 말고 응답을 다시 받아 저장한다.
 4. **파싱·저장**:
    ```bash
    uv run python .agents/skills/daily-digest/scripts/extract_portfolio.py \
-       <덤프 경로> --out output/portfolio/$(date +%Y-%m-%d).md
+       <CSV 응답 파일> --out output/portfolio/$(date +%Y-%m-%d).md
    ```
+   입력은 CSV 내보내기 응답 JSON이 정본이고, 평문 CSV와 예전 `read_file_content` 덤프도 받는다.
    스크립트가 첫 시트(「포트폴리오」)의 보유 표·섹터 집계만 잘라내고,
    `context/my_rules.md` 임계값(-10 / -15 / -20 / 24~30 / 평가 비중 35% / 5~12종목)으로
    **룰 자동 판정**까지 계산한다. 임계 도달은 매도 이행 위반과 다르다. 이행 기록이나
