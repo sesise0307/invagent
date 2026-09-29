@@ -12,7 +12,7 @@ def _isolated_cache(tmp_path, monkeypatch):
 
 def test_endpoints_sit_on_the_documented_api_hosts() -> None:
     assert stockeasy.API_BASE == "https://stockeasy.intellio.kr/stockdata/api/v1"
-    assert set(stockeasy.ENDPOINTS) == {"search", "info_tab", "news", "reports"}
+    assert set(stockeasy.ENDPOINTS) == {"search", "info_tab", "analysis_tab", "news", "reports"}
     assert stockeasy.MARKET_API_BASE == "https://stockeasy.intellio.kr/stockdata/api/v1/market"
     assert set(stockeasy.MARKET_ENDPOINTS) == {
         "indices",

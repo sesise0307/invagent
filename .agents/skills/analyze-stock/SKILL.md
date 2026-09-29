@@ -176,7 +176,7 @@ uv run python .agents/skills/analyze-stock/scripts/find_reports.py "<종목명>"
 
 ```bash
 uv run python .agents/skills/analyze-stock/scripts/fetch_stock_info.py "<종목명 또는 6자리 티커>" \
-  [--since <기준일>] [--news 10] [--reports 12] [--summaries 5] [--detail-chars 800] [--no-cache]
+  [--since <기준일>] [--news 10] [--reports 12] [--summaries 5] [--disclosures 10] [--detail-chars 800] [--no-cache]
 ```
 
 - 티커는 **5단계 `company`가 확정한 값을 그대로 넘긴다.** 재식별을 막는다. 5단계가 실패했으면 종목명을 넘긴다.
@@ -185,6 +185,12 @@ uv run python .agents/skills/analyze-stock/scripts/fetch_stock_info.py "<종목�
 - 승계 작성이면 `--since <기준일>`. 뉴스는 기준일 이후만 나오고, 기준일 이후 신규 리포트에 `🆕`가 붙는다.
 - 출력 해석 시 주의:
   - `[52주 밴드 내 위치]`는 10단계 추세 관점의 진입 조건 근거로 쓴다.
+  - `[시간외·NXT]`는 KRX 시간외·NXT 체결가를 **정규장가 대비**로 보여 주는 참고줄이다. 손절·발동가·
+    이평 거리·상승여력은 전부 `[시세]`(정규장 종가)로만 잰다 — 시간외가를 판정 가격으로 옮기지 않는다.
+    다음 날 갭 방향을 가늠하는 맥락으로만 쓴다.
+  - `[공시]`는 StockEasy 소식 탭의 DART 공시 **목록**(최근 20건 창, `--since`면 기준일 이후)이다.
+    5단계 사업보고서 델타와 5-1단계 오버행 점검에서 **빠진 접수번호가 없는지 대조하는 체크리스트**로만
+    쓰고, 본문 판독은 `opendart` 스킬로 한다. 목록에 있는 제목만 보고 내용을 추정해 쓰지 않는다.
   - 분기 표에 같은 분기가 `확정`+`추정 E` 두 줄로 나오면 **컨센 대비 서프라이즈/쇼크**다. 반드시 대조한다.
   - ⛔ `추정 E` 행은 **증권사 컨센서스이지 공시가 아니다.** DART 확정치와 같은 표·같은 행에
     나란히 놓지 않는다. 대조할 때는 「확정 vs 컨센」임을 명시한다.

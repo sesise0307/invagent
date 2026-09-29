@@ -23,6 +23,8 @@ REPORTS_PAGE = "https://stockeasy.intellio.kr/stock-analysis/reports"
 ENDPOINTS = {
     "search": "/stock-search/",
     "info_tab": "/stock-info/info-tab/{code}",
+    # 2026-09 개편 페이지의 소식 탭 — 공시·리포트·뉴스 각 최근 20건과 목표주가 이력.
+    "analysis_tab": "/stock-info/analysis-tab/{code}",
     "news": "/news/by-stock-code/{code}",
     "reports": "/securities-reports",
 }

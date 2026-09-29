@@ -1012,7 +1012,7 @@ def test_stock_info_endpoints_point_at_stockdata_api() -> None:
     module = _load_stock_info_module()
 
     assert module.API_BASE == "https://stockeasy.intellio.kr/stockdata/api/v1"
-    assert set(module.ENDPOINTS) == {"search", "info_tab", "news", "reports"}
+    assert set(module.ENDPOINTS) == {"search", "info_tab", "analysis_tab", "news", "reports"}
     assert module.COOKIE_ENV == "STOCKEASY_COOKIE"
 
 
@@ -1200,6 +1200,124 @@ def test_stock_info_cookie_read_from_env_file(
 
     monkeypatch.setenv(module.COOKIE_ENV, "session=from-environ")
     assert datafeed_stockeasy.load_cookie() == "session=from-environ"
+
+
+def test_stock_info_shows_after_hours_quotes_apart_from_the_regular_close(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """2026-09 개편된 info-tab은 KRX 시간외·NXT 체결가를 따로 싣는다.
+
+    판정은 정규장 종가(`cur_prc`)로만 하므로 시간외가는 참고줄로 떼어 보여 주고, 차이는
+    API의 `flu_rt`(전일 종가 대비)가 아니라 오늘 정규장가 대비로 다시 잰다.
+    """
+    module = _load_stock_info_module()
+    _patch_stock_info_fetch(module, monkeypatch)
+    payload = {
+        **STOCK_INFO_PAYLOAD,
+        "after_hours_quote": {
+            "dt": "20260929", "cur_prc": "-31467", "pred_pre": "-633", "flu_rt": "-1.97",
+            "cntr_tm": "195959", "market": "krx", "session": "after",
+        },
+        "nxt_quote": {
+            "dt": "20260929", "cur_prc": "-30233", "pred_pre": "-1867", "flu_rt": "-5.82",
+            "cntr_tm": "195959", "session": "after",
+        },
+    }
+    fake = datafeed_stockeasy.fetch_stock_json
+
+    def with_after_hours(path, params=None, referer=module.PAGE_BASE, cookie=None):
+        if path.startswith("/stock-info/info-tab/"):
+            return payload, None
+        return fake(path, params, referer=referer, cookie=cookie)
+
+    monkeypatch.setattr(datafeed_stockeasy, "fetch_stock_json", with_after_hours)
+
+    assert module.main(["064290"]) == 0
+    out = capsys.readouterr().out
+
+    assert "[시세] 30,850원 (-3.89%" in out  # 판정 가격은 그대로 정규장가
+    line = next(l for l in out.splitlines() if l.startswith("[시간외·NXT]"))
+    # 30,850 → 31,467은 +2.0%, 30,233은 -2.0% (API 등락률 -1.97/-5.82%는 전일 종가 기준)
+    assert "KRX 시간외 31,467원(정규장가 대비 +2.0%)" in line
+    assert "NXT 애프터마켓 30,233원(정규장가 대비 -2.0%)" in line
+    assert "2026-09-29 19:59:59" in line
+    assert "판정 미사용" in line
+
+
+def test_stock_info_omits_the_after_hours_line_when_none_is_served(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load_stock_info_module()
+    _patch_stock_info_fetch(module, monkeypatch)
+
+    assert module.main(["064290"]) == 0
+    assert "[시간외·NXT]" not in capsys.readouterr().out
+
+
+ANALYSIS_TAB_PAYLOAD = {
+    "stock_code": "064290",
+    "disclosures": [
+        {
+            "id": 406219,
+            "rcept_no": "20260818800754",
+            # 실제 응답은 제목 뒤에 공백을 채워 온다
+            "report_nm": "최대주주등소유주식변동신고서              ",
+            "rcept_dt": "2026-08-18",
+            "corp_name": "인텍플러스",
+            "disclosure_type": "common_table",
+        },
+        {
+            "id": 406100,
+            "rcept_no": "20260714000123",
+            "report_nm": "반기보고서 (2026.06)",
+            "rcept_dt": "2026-07-14",
+            "corp_name": "인텍플러스",
+            "disclosure_type": "interim_results",
+        },
+    ],
+    "reports": [],
+    "news": [],
+    "target_price_history": [],
+    "status": "success",
+}
+
+
+def test_stock_info_lists_disclosures_from_the_analysis_tab(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """2026-09 개편 페이지의 소식 탭(`analysis-tab`)이 종목별 DART 공시 목록을 싣는다."""
+    module = _load_stock_info_module()
+    calls = _patch_stock_info_fetch(module, monkeypatch)
+    fake = datafeed_stockeasy.fetch_stock_json
+
+    def with_disclosures(path, params=None, referer=module.PAGE_BASE, cookie=None):
+        if path == "/stock-info/analysis-tab/064290":
+            calls[path] = {"params": params, "cookie": cookie}
+            return ANALYSIS_TAB_PAYLOAD, None
+        return fake(path, params, referer=referer, cookie=cookie)
+
+    monkeypatch.setattr(datafeed_stockeasy, "fetch_stock_json", with_disclosures)
+
+    assert module.main(["064290", "--since", "2026-08-01"]) == 0
+    out = capsys.readouterr().out
+
+    assert "[공시] 1건 (기준일 2026-08-01 이후) · API 최근 2건 중 필터" in out
+    assert "  - 2026-08-18 최대주주등소유주식변동신고서 · rcept_no 20260818800754" in out
+    assert "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260818800754" in out
+    assert "반기보고서" not in out
+    assert calls["/stock-info/analysis-tab/064290"]["cookie"] == "session=abc"
+
+
+def test_stock_info_missing_disclosures_do_not_block(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load_stock_info_module()
+    _patch_stock_info_fetch(module, monkeypatch)  # analysis-tab → HTTP 404
+
+    assert module.main(["064290"]) == 0
+    out = capsys.readouterr().out
+    assert "[공시] 미수집 — HTTP 404" in out
+    assert "[시세] 30,850원" in out
 
 
 def test_stock_info_ambiguous_name_exits_2(
@@ -3736,13 +3854,14 @@ def test_stock_info_splits_a_preferred_share_between_two_tickers(monkeypatch):
 
     monkeypatch.setattr(stockeasy, "fetch_stock_json", fake_fetch)
 
-    info, news, reports, own, errors = module.collect_stock_payloads(
-        "005935", news_limit=5, summaries=0, since=None, cookie="x"
+    info, news, reports, own, analysis, errors = module.collect_stock_payloads(
+        "005935", news_limit=5, summaries=0, since=None, cookie="x", disclosures=5
     )
 
     assert "/stock-info/info-tab/005930" in paths, "실적은 본주 코드로 받는다"
     assert "/stock-info/info-tab/005935" in paths, "시세는 우선주 코드로 따로 받는다"
     assert "/news/by-stock-code/005930" in paths, "뉴스는 본주 코드로 받는다"
+    assert "/stock-info/analysis-tab/005930" in paths, "공시는 회사 것이라 본주 코드로 받는다"
     assert info["stock_info"]["name"] == "삼성전자", "info는 본주 페이로드다"
     assert own["stock_info"]["cur_prc"] == "196900", "own은 우선주 페이로드다"
 
@@ -3776,6 +3895,30 @@ def test_stock_info_summary_is_unchanged_for_a_common_share():
     assert summary["stock_info"]["cur_prc"] == "200000"
     assert summary["preferred_of"] is None
     assert summary["preferred_discount_pct"] is None
+
+
+def test_stock_info_summary_keeps_after_hours_quotes_and_disclosures():
+    """--json도 텍스트 출력과 같은 신규 필드를 싣는다 — 시간외가는 우선주면 자기 것이다."""
+    module = _load_stock_info_module()
+    summary = module.build_summary(
+        {"stock_code": "005935", "stock_name": "삼성전자우"},
+        {"stock_info": {"cur_prc": "200000"}, "after_hours_quote": {"cur_prc": "+201000"}},
+        None,
+        None,
+        own_info={
+            "stock_info": {"cur_prc": "150000"},
+            "after_hours_quote": {"cur_prc": "+151000"},
+            "nxt_quote": {"cur_prc": "+150500", "session": "after"},
+        },
+        analysis=ANALYSIS_TAB_PAYLOAD,
+    )
+
+    assert summary["after_hours_quote"]["cur_prc"] == "+151000"
+    assert summary["nxt_quote"]["cur_prc"] == "+150500"
+    assert [d["rcept_no"] for d in summary["disclosures"]] == [
+        "20260818800754",
+        "20260714000123",
+    ]
 
 
 def test_daily_digest_marks_importance_inline_instead_of_a_headline_section() -> None:

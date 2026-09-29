@@ -10,9 +10,13 @@ stockeasy.intellio.kr의 `/stockdata/api/v1/**` JSON API에서 개별 종목의 
 `info-tab` 원본 응답은 128KB 규모(3년치 차트 포함)라 그대로 읽으면 컨텍스트가 마른다.
 차트 계열은 버리고 판단에 쓰는 값만 남긴다.
 
-증권사 리포트 **요약 본문**(`securities-reports`)만 로그인 세션이 필요하다. 브라우저에서 복사한
-Cookie 헤더를 `.env`의 `STOCKEASY_COOKIE`에 넣으면 이 스크립트가 함께 받아온다. 값이 없거나
-만료되면 리포트 섹션만 비고 나머지는 정상 출력한다(비블로킹).
+`stock-search`를 뺀 모든 엔드포인트가 로그인 세션을 요구한다. 브라우저에서 복사한 Cookie 헤더를
+`.env`의 `STOCKEASY_COOKIE`에 넣는다. `info-tab`이 실패하면 exit 1, 리포트 요약·공시 목록만 실패하면
+그 섹션만 비고 나머지는 정상 출력한다(비블로킹).
+
+2026-09 개편 페이지 기준으로 `info-tab`은 KRX 시간외·NXT 체결가(`after_hours_quote`·`nxt_quote`)를
+따로 싣고, 소식 탭(`analysis-tab`)은 종목별 DART 공시 목록을 싣는다. 시간외가는 참고줄로만 찍는다 —
+판정 가격은 정규장 종가(`stock_info.cur_prc`)다.
 
 의존성: stdlib만 사용 (urllib, json, argparse).
 종료 코드: 0 정상(부분 누락 포함) / 1 수집 실패 / 2 종목명 후보 다수.
@@ -118,6 +122,37 @@ def print_quote(si: dict) -> None:
         f"시총 {num(si.get('mac'), '억원')} | "
         f"거래량 {num(si.get('trde_qty'), '주')}"
     )
+
+
+AFTER_HOURS_SESSIONS = {"pre": "프리마켓", "after": "애프터마켓"}
+
+
+def print_after_hours(info: dict, regular_price: float | None) -> None:
+    """KRX 시간외·NXT 체결가를 정규장가와 떼어 참고줄로 보여 준다.
+
+    판정은 정규장 종가로만 한다. API 등락률은 전일 종가 대비라 오늘 정규장가 대비로 다시 잰다.
+    """
+    parts, stamp = [], None
+    for label, quote in (
+        ("KRX 시간외", info.get("after_hours_quote")),
+        ("NXT", info.get("nxt_quote")),
+    ):
+        price = unsigned((quote or {}).get("cur_prc"))
+        if not price:
+            continue
+        if label == "NXT":
+            session = quote.get("session")
+            label += " " + AFTER_HOURS_SESSIONS.get(session, session or "")
+        gap = (
+            f"(정규장가 대비 {(price / regular_price - 1) * 100:+.1f}%)" if regular_price else ""
+        )
+        parts.append(f"{label.strip()} {price:,.0f}원{gap}")
+        tm = str(quote.get("cntr_tm") or "")
+        stamp = stamp or f"{ymd(quote.get('dt'))}" + (
+            f" {tm[:2]}:{tm[2:4]}:{tm[4:6]}" if len(tm) == 6 else ""
+        )
+    if parts:
+        print(f"[시간외·NXT] {' · '.join(parts)} — {stamp} · 참고용, 판정 미사용(정규장 종가 기준)")
 
 
 def print_multiples(si: dict) -> None:
@@ -437,6 +472,25 @@ def print_news(news: dict | None, since: str | None) -> None:
         print(f"    {n.get('link') or n.get('original_link') or '-'}")
 
 
+DART_VIEWER = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo="
+
+
+def print_disclosures(analysis: dict, since: str | None, limit: int) -> None:
+    """페이지 소식 탭(`analysis-tab`)의 DART 공시 목록. 본문 판독은 opendart 스킬의 몫이다."""
+    all_items = (analysis or {}).get("disclosures") or []
+    items = all_items
+    if since:
+        items = [d for d in items if (d.get("rcept_dt") or "")[:10] >= since]
+        print(f"[공시] {min(len(items), limit)}건 (기준일 {since} 이후) · API 최근 {len(all_items)}건 중 필터")
+    else:
+        print(f"[공시] API 최근 {min(len(items), limit)}건")
+    for d in items[:limit]:
+        rcept_no = d.get("rcept_no") or "-"
+        print(f"  - {d.get('rcept_dt') or '-'} {_clean(d.get('report_nm'))} · rcept_no {rcept_no}")
+        if d.get("rcept_no"):
+            print(f"    {DART_VIEWER}{rcept_no}")
+
+
 # --- main ------------------------------------------------------------------
 
 
@@ -467,6 +521,7 @@ def build_summary(
     news_limit: int = 10,
     since: str | None = None,
     own_info: dict | None = None,
+    analysis: dict | None = None,
 ) -> dict:
     """--json 출력용 압축 dict. 차트 계열은 버린다.
 
@@ -486,6 +541,9 @@ def build_summary(
             (own_prc / parent_prc - 1) * 100 if own_prc and parent_prc else None
         ),
         "stock_info": quote,
+        # 참고용 — 판정은 정규장 종가(`stock_info.cur_prc`)로만 한다.
+        "after_hours_quote": (own_info or info).get("after_hours_quote"),
+        "nxt_quote": (own_info or info).get("nxt_quote"),
         "primary_fs_type": info.get("primary_fs_type"),
         "sector_info": info.get("sector_info"),
         "rs_data": info.get("rs_data"),
@@ -500,6 +558,7 @@ def build_summary(
         "news": (news or {}).get("items"),
         "news_coverage": news_coverage(news, news_limit, since),
         "reports": (reports or {}).get("items"),
+        "disclosures": (analysis or {}).get("disclosures"),
     }
 
 
@@ -510,12 +569,14 @@ def collect_stock_payloads(
     summaries: int,
     since: str | None,
     cookie: str | None,
-) -> tuple[dict | None, dict | None, dict | None, dict | None, dict[str, str]]:
+    disclosures: int = 0,
+) -> tuple[dict | None, dict | None, dict | None, dict | None, dict | None, dict[str, str]]:
     """식별이 끝난 종목의 독립 API를 동시에 수집한다.
 
     우선주는 실적이 따로 없고 리포트·뉴스도 본주 이름으로 나온다. 그래서 `info_tab`·`news`·
     `reports`는 **본주 코드**로 부르고, 시세·52주·수급용으로 우선주 자기 `info_tab`을 하나 더
-    부른다(`own_info`). 본주가 아니면 그 호출은 아예 만들지 않는다.
+    부른다(`own_info`). 본주가 아니면 그 호출은 아예 만들지 않는다. 공시(`analysis`)도 회사
+    단위라 본주 코드로 부른다.
     """
     fs_ticker, is_preferred = tickers.fundamentals_code(ticker)
     referer = f"{PAGE_BASE}/{fs_ticker}"
@@ -530,6 +591,8 @@ def collect_stock_payloads(
         )
     if news_limit:
         jobs["news"] = (ENDPOINTS["news"].format(code=fs_ticker), {"limit": news_limit}, referer)
+    if disclosures:
+        jobs["analysis"] = (ENDPOINTS["analysis_tab"].format(code=fs_ticker), None, referer)
     errors: dict[str, str] = {}
     if summaries:
         if cookie:
@@ -541,14 +604,14 @@ def collect_stock_payloads(
             errors["reports"] = f"{COOKIE_ENV} 미설정 — .env에 브라우저 Cookie 헤더를 넣어야 한다"
 
     payloads: dict[str, dict | None] = {
-        "info_tab": None, "news": None, "reports": None, "own_info": None
+        "info_tab": None, "news": None, "reports": None, "own_info": None, "analysis": None
     }
 
     def fetch_job(job: tuple[str, dict | None, str]):
         path, params, job_referer = job
         return stockeasy.fetch_stock_json(path, params, referer=job_referer, cookie=cookie)
 
-    with ThreadPoolExecutor(max_workers=min(4, len(jobs))) as pool:
+    with ThreadPoolExecutor(max_workers=min(5, len(jobs))) as pool:
         futures = {name: pool.submit(fetch_job, job) for name, job in jobs.items()}
         for name, future in futures.items():
             payload, err = future.result()
@@ -558,7 +621,12 @@ def collect_stock_payloads(
                     err += " (쿠키 만료·무효 — .env 갱신 필요)"
                 errors[name] = err
     return (
-        payloads["info_tab"], payloads["news"], payloads["reports"], payloads["own_info"], errors
+        payloads["info_tab"],
+        payloads["news"],
+        payloads["reports"],
+        payloads["own_info"],
+        payloads["analysis"],
+        errors,
     )
 
 
@@ -573,6 +641,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--since", help="YYYY-MM-DD. 뉴스·리포트는 이 날짜 이후만, 신규 리포트는 🆕 표시")
     parser.add_argument(
         "--summaries", type=int, default=5, help="리포트 요약 건수 (기본 5, 0이면 생략)"
+    )
+    parser.add_argument(
+        "--disclosures", type=int, default=10, help="DART 공시 목록 건수 (기본 10, 0이면 생략)"
     )
     parser.add_argument(
         "--detail-chars",
@@ -595,12 +666,13 @@ def main(argv: list[str] | None = None) -> int:
     # 쿠키는 한 번만 읽어 세 엔드포인트에 함께 넘긴다. 없으면 종전대로 비인증으로 시도한다.
     cookie = stockeasy.load_cookie()
 
-    info, news, reports, own_info, errors = collect_stock_payloads(
+    info, news, reports, own_info, analysis, errors = collect_stock_payloads(
         ticker,
         news_limit=args.news,
         summaries=args.summaries,
         since=args.since,
         cookie=cookie,
+        disclosures=args.disclosures,
     )
 
     if not info:
@@ -631,6 +703,7 @@ def main(argv: list[str] | None = None) -> int:
                     news_limit=args.news,
                     since=args.since,
                     own_info=own_info,
+                    analysis=analysis,
                 ),
                 ensure_ascii=False,
             )
@@ -651,6 +724,7 @@ def main(argv: list[str] | None = None) -> int:
             f"리포트는 본주 {parent_si.get('name') or ''}({parent_code}) 기준{gap}"
         )
     print_quote(si)
+    print_after_hours(own_info or info, unsigned(si.get("cur_prc")))
     print_multiples(parent_si if is_preferred else si)
     print_52w(si)
     print_flow(si)
@@ -672,6 +746,11 @@ def main(argv: list[str] | None = None) -> int:
             print_reports(reports, args.summaries, args.detail_chars)
         else:
             print(f"[리포트 요약] 미수집 — {errors.get('reports', '빈 응답')}")
+    if args.disclosures:
+        if analysis:
+            print_disclosures(analysis, args.since, args.disclosures)
+        else:
+            print(f"[공시] 미수집 — {errors.get('analysis', '빈 응답')}")
     if news:
         print_news(news, args.since)
 

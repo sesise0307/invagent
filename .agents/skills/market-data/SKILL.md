@@ -32,6 +32,8 @@ StockEasy와 Naver가 함께 `<urlopen error [Errno 8] nodename nor servname pro
 | 시세·멀티플·52주·수급·섹터·투자지표 등급 | `invagent.datafeed.stockeasy` → `analyze-stock/scripts/fetch_stock_info.py` | 필요 |
 | 증권사별 목표주가·컨센서스·EPS 리비전·리포트 요약 | 같음 (`securities-reports`) | 필요 |
 | 종목 뉴스 | 같음 (`news/by-stock-code`) | 필요 |
+| 종목 DART 공시 목록 | 같음 (`stock-info/analysis-tab` — 2026-09 개편 페이지의 소식 탭, 공시·리포트·뉴스 각 최근 20건) | 필요 |
+| 시간외·NXT 체결가 (참고) | 같음 (`info-tab`의 `after_hours_quote`·`nxt_quote`) — `stock_info.cur_prc`와 차트 종가는 정규장가 그대로다. 판정에 쓰지 않는다 | 필요 |
 | 종목명·티커 해석 | `invagent.datafeed.tickers` (오버라이드 우선) | 검색만 무인증 |
 | 일봉 OHLCV (판정용) | `invagent.datafeed.daily.fetch_daily_bars` — StockEasy `info-tab`의 `chart`(3년치 정규장 1일봉)가 정본. 쿠키가 없거나 실패하면 `invagent.datafeed.naver`(`siseJson`)로 대체하고 대체 사유를 돌려준다. **네이버 종가는 장 마감 후 시간외가가 섞인다**(2026-09-28 사용자 확정) — 대체 꼬리표가 붙은 가격선은 StockEasy 종가로 다시 잰다 | 필요 (대체는 불필요) |
 | 시장 지표(지수·빅픽처·breadth·신용잔고) | `invagent.datafeed.stockeasy.fetch_market_json` → `daily-digest/scripts/fetch_market_signals.py` | 불필요 |
@@ -45,11 +47,18 @@ StockEasy와 Naver가 함께 `<urlopen error [Errno 8] nodename nor servname pro
 
 ```bash
 uv run python .agents/skills/analyze-stock/scripts/fetch_stock_info.py "<종목명 또는 6자리 티커>" \
-  [--since <기준일>] [--news 10] [--reports 12] [--summaries 5] [--detail-chars 800] [--no-cache]
+  [--since <기준일>] [--news 10] [--reports 12] [--summaries 5] [--disclosures 10] [--detail-chars 800] [--no-cache]
 ```
 
 종료 코드: `0` 정상 또는 부분 수집 · `1` 수집 실패 · `2` 종목명 후보 다수(후보를 그대로 제시하고
 사용자에게 되묻는다).
+
+2026-09-29 종목정보 페이지 개편(구 페이지는 `/stock-info-old`) 뒤에도 `info-tab`·`news/by-stock-code`·
+`securities-reports`는 그대로 응답한다. 새 페이지의 소식 탭은 `analysis-tab`(GET, 종목 1개)과
+`analysis-tab-batch`(POST, 관심종목 묶음)를 부르고, 리포트·공시 본문은 `stock-info/report-content/<id>`·
+`stock-info/disclosure-content/<id>`로 따로 받는다. 뉴스나 리포트 요약 엔드포인트가 끊기면
+`analysis-tab`이 같은 목록을 싣고 있으니 그리로 옮긴다 — 다만 리포트 요약 논지는 `report-content`를
+건마다 불러야 한다.
 
 ### 일봉과 시장 지표
 

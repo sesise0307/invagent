@@ -110,7 +110,13 @@ repository-root `.env`) and sent verbatim on every call. Without it the script
 cannot resolve quote, multiples, consensus, or news at all and exits 1 naming the
 cookie as the cause; the report-summary section alone stays non-blocking. Keep the
 real value in the gitignored `.env`, never in a tracked file, and never print it;
-the refresh procedure lives in `market-data/SKILL.md`.
+the refresh procedure lives in `market-data/SKILL.md`. Since the 2026-09-29 page
+redesign the script also prints two things the new page exposes: a `[시간외·NXT]` line from
+`info-tab`'s `after_hours_quote`/`nxt_quote`, measured against the regular-session price and labelled as
+reference only — `stock_info.cur_prc` and the chart close stay the regular close every rule judges on —
+and a `[공시]` list from `stock-info/analysis-tab` (`--disclosures N`, default 10), the company's
+latest DART filings by receipt number. That list is a checklist for the OpenDART steps, never a
+substitute for reading a filing.
 
 The `stage-analysis` skill judges which of the four price-maturity stages a stock
 sits in, following DB Securities' 2026-08-25 「Stage Analysis 마스터하기」 integrated
