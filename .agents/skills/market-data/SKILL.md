@@ -92,6 +92,21 @@ uv run invagent fetch-messages --days 1
 링크 본문 수집은 신뢰할 수 없는 입력을 다루므로 `src/invagent/telegram/link_extractor.py`의
 SSRF 방어(스킴 제한, 비공개 대역 거부, 홉마다 재검증, 응답 크기·시간 상한)를 통과한다.
 
+본문이 링크 주소에 없는 사이트는 같은 모듈이 홉 루프 안에서 따라간다(2026-10-02 실측, 홉 한도 5):
+
+| 대상 | 받는 곳 | 저장 |
+|---|---|---|
+| 증권사 StreamDocs 뷰어 `…/streamdocs/view/sd;streamdocsId=X` (한투) | `…/streamdocs/v4/documents/X` | `.pdf` |
+| 같은 뷰어의 `mail` 경로 (삼성증권) | `…/streamdocs/v4/documents/X/custom` (`/custom` 없으면 HTTP 500) | `.pdf` |
+| 한투 `securities.koreainvestment.com/download_pdf.jsp` | 페이지 스크립트의 `document.location` → openResearch → 위 뷰어 | `.pdf` |
+| `.pdf` 직링크·`%PDF`로 시작하는 응답 | 그대로 (trafilatura를 거치지 않는다, 상한 20MB) | `.pdf` |
+| DART `dsaf001/main.do` (틀과 목차뿐) | 첫 `viewDoc(...)` 인자로 `report/viewer.do` (MS949) | `.md` |
+| awakeplus `/board/` (로그인 필요) | 받지 않는다 — `[건너뜀: 로그인 필요]` | 없음 |
+
+스크립트 리다이렉트는 `SCRIPT_REDIRECT_HOSTS`에 있는 호스트에서만 따른다. 뷰어 주소는 증권사 내부
+구조라 바뀔 수 있다 — 바뀌면 그 링크만 실패 표시로 돌아가고 수집은 막히지 않는다. 링크 1건의 상한은
+요청 타임아웃 10초 × `HARD_TIMEOUT_MULTIPLIER`(9) = 90초다(리포트 PDF 12MB가 단독 35초).
+
 ### 포트폴리오 (Google Sheets)
 
 Drive MCP로 `주식 포트폴리오` 파일을 정확 일치 검색으로 찾고, `download_file_content`를

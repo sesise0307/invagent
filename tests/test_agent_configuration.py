@@ -3087,6 +3087,22 @@ def test_apply_link_summaries_replaces_marker_with_sidecar(tmp_path) -> None:
     )
 
 
+def test_apply_link_summaries_reads_sidecar_next_to_pdf_body(tmp_path) -> None:
+    """PDF로 저장된 링크(`X.pdf`)도 옆의 `X.summary.md`로 마커를 바꾼다"""
+    module = _load_apply_link_summaries_module()
+    body = tmp_path / "vo.la_167396fe47.pdf"
+    body.write_bytes(b"%PDF-1.7\n")
+    (tmp_path / "vo.la_167396fe47.summary.md").write_text("요약: 메리츠 「인텍플러스」\n", encoding="utf-8")
+    raw = tmp_path / "raw.md"
+    raw.write_text(f"> URL: https://vo.la/zapQlKL\n> 파일: {body}\n> [요약 대기]\n", encoding="utf-8")
+
+    assert module.main([str(raw)]) == 0
+
+    assert raw.read_text(encoding="utf-8") == (
+        f"> URL: https://vo.la/zapQlKL\n> 파일: {body}\n> 요약: 메리츠 「인텍플러스」\n"
+    )
+
+
 def test_apply_link_summaries_leaves_marker_when_summary_is_missing(tmp_path) -> None:
     """요약 파일이 아직 없으면 마커를 그대로 두어 다시 돌려도 안전하다"""
     module = _load_apply_link_summaries_module()

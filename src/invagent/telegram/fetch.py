@@ -16,7 +16,13 @@ from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto
 
 from invagent.core.config import Config
 from invagent.core.client import TelegramClientManager
-from invagent.telegram.link_extractor import LinkExtractor, naver_post_id, normalize_url
+from invagent.telegram.link_extractor import (
+    LinkContent,
+    LinkExtractor,
+    PdfDocument,
+    naver_post_id,
+    normalize_url,
+)
 
 
 # 이미지 판정/다운로드 한계값. 링크 추출기의 MAX_RESPONSE_BYTES와 같은 성격의
@@ -207,8 +213,16 @@ class MessageFetcher:
         await asyncio.gather(*(fill(m) for m in messages))
 
     @staticmethod
-    def _link_entry(url: str, content: str, link_dir: Optional[Path]) -> str:
+    def _link_entry(url: str, content: LinkContent, link_dir: Optional[Path]) -> str:
         """링크 1건의 raw 항목. 본문은 파일로 빼고 경로와 요약 대기 마커만 남긴다."""
+        if isinstance(content, PdfDocument):
+            # PDF는 텍스트로 옮길 수 없다. 원본을 `.pdf`로 두고 요약 서브에이전트가 읽는다.
+            if link_dir is None:
+                return f"URL: {url}\n[PDF 본문 — 저장 위치 없음]"
+            link_dir.mkdir(parents=True, exist_ok=True)
+            path = link_dir / f"{_link_file_stem(url)}.pdf"
+            path.write_bytes(content.data)
+            return f"URL: {url}\n파일: {path}\n{PENDING_LINK_SUMMARY_MARKER}"
         # 링크 추출기의 실패 결과는 대괄호 센티널이다. 요약할 원문이 없으므로 그대로 둔다.
         if link_dir is None or content.startswith("["):
             return f"URL: {url}\n{content}"

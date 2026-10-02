@@ -5,18 +5,25 @@ from unittest.mock import patch, MagicMock
 from invagent.telegram.link_extractor import (
     BlockedURLError,
     LinkExtractor,
+    PdfDocument,
     assert_public_url,
     normalize_url,
 )
 
 
-def fake_response(status_code=200, body="", location=None):
-    """`_fetch_sync`가 기대하는 스트리밍 응답을 흉내낸다."""
+def fake_response(status_code=200, body="", location=None, content_type=None):
+    """`_fetch_sync`가 기대하는 스트리밍 응답을 흉내낸다. body는 str 또는 bytes."""
     response = MagicMock()
     response.status_code = status_code
     response.headers = {"Location": location} if location else {}
-    response.iter_content.return_value = iter([body.encode("utf-8")])
+    if content_type:
+        response.headers["Content-Type"] = content_type
+    raw = body if isinstance(body, bytes) else body.encode("utf-8")
+    response.iter_content.return_value = iter([raw])
     return response
+
+
+PDF_BYTES = b"%PDF-1.7\r\n%\xe2\xe3\xcf\xd3\r\n1 0 obj\n<< /Type /Catalog >>\nendobj\n"
 
 
 @pytest.fixture
@@ -64,6 +71,20 @@ def test_extract_urls_no_duplicates():
 
     assert len(urls) == 1
     assert urls[0] == "https://example.com"
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("2Q26 NDR takeaway https://vo.la/tVHYbyy.", "https://vo.la/tVHYbyy"),
+        ("자료(https://example.com/a), 참고", "https://example.com/a"),
+        ("링크 https://example.com/b, 다음", "https://example.com/b"),
+        ("확인! https://example.com/c?x=1!", "https://example.com/c?x=1"),
+    ],
+)
+def test_extract_urls_drops_trailing_sentence_punctuation(text, expected):
+    """문장 끝 구두점은 URL에 붙이지 않는다 (2026-10-02 `vo.la/tVHYbyy.` → HTTP 404)"""
+    assert LinkExtractor().extract_urls(text) == [expected]
 
 
 def test_extract_urls_empty_text():
@@ -208,7 +229,7 @@ def test_trafilatura_config_has_explicit_download_timeout():
     extractor = LinkExtractor(timeout=7)
 
     assert extractor._trafilatura_config["DEFAULT"]["DOWNLOAD_TIMEOUT"] == "7"
-    assert extractor.hard_timeout == 21
+    assert extractor.hard_timeout == 63
 
 
 def test_trafilatura_config_disables_redirects():
@@ -345,7 +366,7 @@ async def test_fetch_content_stops_after_redirect_limit(public_dns):
         content = await extractor.fetch_content("https://example.com/loop")
 
     assert content.startswith("[차단된 URL")
-    assert mock_get.call_count == 4  # MAX_REDIRECTS(3) + 1
+    assert mock_get.call_count == 6  # MAX_REDIRECTS(5) + 1
 
 
 def test_read_capped_stops_at_max_response_bytes():
@@ -478,3 +499,291 @@ async def test_fetch_content_joins_naver_paragraph_spans_and_drops_blank_paragra
         "그동안 계속 확인하려 했던 ‘추가 증설’이 실제로 나왔습니다.\n"
         "여기에 미국 데이터센터향 수주까지"
     )
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_returns_pdf_bytes_instead_of_decoded_text(public_dns):
+    """PDF 응답은 utf-8로 풀지 않고 원본 바이트 그대로 돌려준다 (2026-10-02 메리츠 PDF가 깨진 글자 18KB로 저장됐다)"""
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value=None), \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        mock_get.side_effect = [
+            fake_response(status_code=302, location="http://home.imeritz.com/research/report.pdf"),
+            fake_response(body=PDF_BYTES, content_type="application/pdf"),
+        ]
+
+        content = await extractor.fetch_content("https://vo.la/zapQlKL")
+
+    assert content == PdfDocument(PDF_BYTES)
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_reports_pdf_over_size_cap_instead_of_truncating(public_dns, monkeypatch):
+    """상한을 넘는 PDF는 잘린 파일(열리지 않는다)을 넘기지 않고 실패 표시를 돌려준다"""
+    monkeypatch.setattr("invagent.telegram.link_extractor.MAX_PDF_BYTES", len(PDF_BYTES) - 1)
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value=None), \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        mock_get.return_value = fake_response(body=PDF_BYTES, content_type="application/pdf")
+
+        content = await extractor.fetch_content("https://example.com/big.pdf")
+
+    assert isinstance(content, str) and content.startswith("[PDF 용량 초과")
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_downloads_direct_pdf_link_once(public_dns):
+    """`.pdf` 직링크는 trafilatura를 거치지 않는다 — PDF를 두 번 받으면 링크당 상한 시간을 넘긴다"""
+    extractor = LinkExtractor()
+    url = "https://www.iprovest.com/upload/research/report/cominf/20261002/20261002_003230.pdf"
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url") as mock_fetch, \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        mock_get.return_value = fake_response(body=PDF_BYTES, content_type="application/pdf")
+
+        content = await extractor.fetch_content(url)
+
+    assert content == PdfDocument(PDF_BYTES)
+    mock_fetch.assert_not_called()
+    assert mock_get.call_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "viewer, document",
+    [
+        (
+            "https://research.koreainvestment.com/streamdocs/view/sd;streamdocsId=eyJ.abc-_9",
+            "https://research.koreainvestment.com/streamdocs/v4/documents/eyJ.abc-_9",
+        ),
+        (
+            "https://www.samsungpop.com/streamdocs/mail/sd;streamdocsId=9KRQo3Us-RR_oN",
+            "https://www.samsungpop.com/streamdocs/v4/documents/9KRQo3Us-RR_oN/custom",
+        ),
+    ],
+)
+async def test_fetch_content_reads_streamdocs_viewer_as_its_pdf(public_dns, viewer, document):
+    """증권사 StreamDocs 뷰어(제목만 있는 껍데기)는 리다이렉트 뒤에서도 문서 PDF 주소로 바꿔 받는다"""
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value=None), \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        mock_get.side_effect = [
+            fake_response(status_code=302, location=viewer),
+            fake_response(body=PDF_BYTES, content_type="application/octet-stream;charset=utf-8"),
+        ]
+
+        content = await extractor.fetch_content("https://vo.la/aFxly62")
+
+    assert content == PdfDocument(PDF_BYTES)
+    assert mock_get.call_args_list[1].args[0] == document
+
+
+KIS_DOWNLOAD_JSP_HTML = (
+    '<script>var ugHt9 = {"oLKDP":"662d"};</script>'
+    '<script src="/download_pdf.jsp?evfw=sxWx" charset="utf-8"></script><script>\n'
+    '\t\tdocument.location = "https://research.koreainvestment.com/streamdocs/openResearch'
+    '?dm=:20000&filepath=research/research05&filename=20261002024804700_ko.pdf&option=01";\n'
+    "</script>"
+)
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_follows_kis_script_redirect_to_report_pdf(public_dns):
+    """한투 download_pdf.jsp는 스크립트로 넘긴다 — 따라가서 뷰어 끝의 PDF까지 받는다 (실측 체인 5홉)"""
+    extractor = LinkExtractor()
+    viewer = "http://research.koreainvestment.com/streamdocs/view/sd;streamdocsId=eyJ.x"
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value=None), \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        mock_get.side_effect = [
+            fake_response(
+                status_code=302,
+                location="https://securities.koreainvestment.com/download_pdf.jsp"
+                "?file=research/research05/20261002024804700_ko&option=01",
+            ),
+            fake_response(body=KIS_DOWNLOAD_JSP_HTML, content_type="text/html; charset=euc-kr"),
+            fake_response(status_code=302, location=viewer),
+            fake_response(
+                status_code=302,
+                location="https://research.koreainvestment.com/streamdocs/v4/documents/eyJ.x",
+            ),
+            fake_response(body=PDF_BYTES, content_type="application/octet-stream"),
+        ]
+
+        content = await extractor.fetch_content("https://vo.la/bvojEIm")
+
+    assert content == PdfDocument(PDF_BYTES)
+    requested = [c.args[0] for c in mock_get.call_args_list]
+    assert requested[2].startswith("https://research.koreainvestment.com/streamdocs/openResearch?")
+    assert requested[3] == "http://research.koreainvestment.com/streamdocs/v4/documents/eyJ.x"
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_ignores_script_redirect_on_other_hosts(public_dns):
+    """스크립트 리다이렉트는 허용한 증권사 호스트에서만 따른다 — 아무 페이지의 JS를 따라가지 않는다"""
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value=None), \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        mock_get.return_value = fake_response(
+            body='<title>Other</title><script>document.location = "https://example.org/next";</script>',
+            content_type="text/html",
+        )
+
+        content = await extractor.fetch_content("https://example.com/page")
+
+    assert "Other" in content
+    assert mock_get.call_count == 1
+
+
+DART_MAIN_HTML = """<html><head><title>일진전기/단일판매ㆍ공급계약체결/2026.10.02</title></head><body>
+<p>잠시만 기다려주세요.</p>
+<script>
+function init() { viewDoc(original.rcpNo, original.dcmNo, original.eleId, original.offset, original.length, original.dtd, original.tocNo); }
+viewDoc("20261002800002", "11600599", "0", "0", "0", "HTML", "");
+</script></body></html>"""
+
+DART_VIEWER_HTML = (
+    '<html><head><meta content="text/html; charset=euc-kr" http-equiv="Content-Type">'
+    "<title></title><style>.xforms td { padding-left:0px; }</style></head><body>"
+    "<table><tr><td>계약금액(원)</td><td>187,172,249,990</td></tr>"
+    "<tr><td>계약상대</td><td>J. MURPHY &amp; SONS LIMITED</td></tr></table></body></html>"
+).encode("cp949")
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_reads_dart_filing_body_behind_frame(public_dns):
+    """DART main.do는 틀뿐이다 — viewDoc 인자로 viewer.do 본문을 받아 MS949로 푼다 (2026-10-02 4건이 제목만 남았다)"""
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url") as mock_fetch, \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        mock_get.side_effect = [
+            fake_response(body=DART_MAIN_HTML, content_type="text/html; charset=UTF-8"),
+            fake_response(body=DART_VIEWER_HTML, content_type="text/html; charset=MS949"),
+        ]
+
+        content = await extractor.fetch_content(
+            "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20261002800002"
+        )
+
+    assert mock_get.call_args_list[1].args[0] == (
+        "https://dart.fss.or.kr/report/viewer.do?rcpNo=20261002800002&dcmNo=11600599"
+        "&eleId=0&offset=0&length=0&dtd=HTML"
+    )
+    assert "계약금액(원)\n187,172,249,990" in content
+    assert "J. MURPHY & SONS LIMITED" in content
+    assert "padding-left" not in content
+    mock_fetch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_skips_login_walled_pages_without_requesting(public_dns):
+    """로그인해야 보이는 페이지(awakeplus 계약 게시판)는 받지 않는다 — 받아도 로그인 안내문뿐이다"""
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url") as mock_fetch, \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        content = await extractor.fetch_content("https://www.awakeplus.co.kr/board/contract/103590")
+
+    assert content.startswith("[건너뜀: 로그인")
+    mock_fetch.assert_not_called()
+    mock_get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_still_reads_other_awakeplus_pages(public_dns):
+    """같은 사이트라도 공개 페이지(공시 상세)는 그대로 받는다"""
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value="<html/>"), \
+         patch("invagent.telegram.link_extractor.trafilatura.extract", return_value="[일진전기] 단일판매"):
+        content = await extractor.fetch_content("https://www.awakeplus.co.kr/data/view/20261002800002")
+
+    assert content == "[일진전기] 단일판매"
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_blocks_script_redirect_into_internal_network():
+    """허용 호스트의 스크립트 리다이렉트도 목적지는 홉마다 다시 검사한다"""
+    extractor = LinkExtractor()
+    resolved = {
+        "securities.koreainvestment.com": "93.184.216.34",
+        "169.254.169.254": "169.254.169.254",
+    }
+
+    def resolve(host, port, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (resolved[host], port))]
+
+    with patch("invagent.telegram.link_extractor.socket.getaddrinfo", side_effect=resolve), \
+         patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value=None), \
+         patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        mock_get.return_value = fake_response(
+            body='<script>document.location = "http://169.254.169.254/latest/meta-data/";</script>',
+            content_type="text/html",
+        )
+
+        content = await extractor.fetch_content(
+            "https://securities.koreainvestment.com/download_pdf.jsp?file=x"
+        )
+
+    assert content.startswith("[차단된 URL")
+    assert mock_get.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_reads_dart_filing_with_xsd_document_type(public_dns):
+    """대량보유 보고서처럼 문서 형식이 `dart4.xsd`인 공시도 본문 주소를 찾는다"""
+    extractor = LinkExtractor()
+    frame = 'viewDoc("20261002000146", "11601090", "1", "805", "7650", "dart4.xsd", "");'
+
+    with patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        mock_get.side_effect = [
+            fake_response(body=f"<script>{frame}</script>", content_type="text/html; charset=UTF-8"),
+            fake_response(body="<table><tr><td>보고후 5.30%</td></tr></table>", content_type="text/html"),
+        ]
+
+        content = await extractor.fetch_content(
+            "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20261002000146"
+        )
+
+    assert mock_get.call_args_list[1].args[0].endswith(
+        "rcpNo=20261002000146&dcmNo=11601090&eleId=1&offset=805&length=7650&dtd=dart4.xsd"
+    )
+    assert "보고후 5.30%" in content
+
+
+def test_default_hard_timeout_leaves_room_for_report_pdfs():
+    """링크당 상한은 증권사 리포트 PDF가 끝까지 내려올 만큼 둔다 (한투 12.3MB 단독 35초, 병렬이면 더 길다)"""
+    extractor = LinkExtractor()
+
+    assert extractor.timeout == 10
+    assert extractor.hard_timeout == 90
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_keeps_dart_tables_even_when_body_has_paragraphs(public_dns):
+    """DART 본문은 표가 전부다 — 제목 문단만 집고 표를 버리면 안 된다 (대량보유 보고서가 제목 한 줄로 남았다)"""
+    extractor = LinkExtractor()
+    frame = 'viewDoc("20261002000146", "11601090", "1", "805", "7650", "dart4.xsd", "");'
+    viewer = (
+        "<p>주식등의 대량보유상황보고서</p>"
+        "<table><tr><td>보고자</td><td>국민연금공단</td></tr>"
+        "<tr><td>보고후 보유비율</td><td>5.30</td></tr></table>"
+    )
+
+    with patch("invagent.telegram.link_extractor.requests.get") as mock_get:
+        mock_get.side_effect = [
+            fake_response(body=f"<script>{frame}</script>", content_type="text/html; charset=UTF-8"),
+            fake_response(body=viewer.encode("cp949"), content_type="text/html; charset=MS949"),
+        ]
+
+        content = await extractor.fetch_content(
+            "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20261002000146"
+        )
+
+    assert "주식등의 대량보유상황보고서" in content
+    assert "국민연금공단" in content and "5.30" in content

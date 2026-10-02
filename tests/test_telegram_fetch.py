@@ -759,3 +759,28 @@ async def test_fetch_saved_messages_leaves_failed_naver_fetch_inline(tmp_path, m
 
     assert messages[0]["links_content"] == f"URL: {url}\n[링크 읽기 타임아웃]"
     assert not link_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_fetch_saved_messages_saves_pdf_link_as_pdf_file(tmp_path, monkeypatch):
+    """PDF 링크는 원본 바이트 그대로 `.pdf` 파일로 저장하고 요약 대기 마커를 남긴다"""
+    from invagent.telegram.link_extractor import PdfDocument
+
+    fetcher = MessageFetcher(_image_config(), TelegramClientManager())
+    url = "https://vo.la/zapQlKL"
+    pdf = b"%PDF-1.7\r\n%\xe2\xe3\xcf\xd3\r\n"
+
+    async def fake_extract(text):
+        return {"contents": {url: PdfDocument(pdf)}}
+
+    monkeypatch.setattr(fetcher.link_extractor, "extract_and_fetch", fake_extract)
+    link_dir = tmp_path / "links"
+
+    with patch.object(fetcher.client_manager, "get_client") as mock_get_client:
+        mock_get_client.return_value = _patched_client(fetcher.client_manager, _link_message(url))
+        messages = await fetcher.fetch_saved_messages(days=1, fetch_links=True, link_dir=link_dir)
+
+    [saved] = list(link_dir.iterdir())
+    assert saved.name.startswith("vo.la_") and saved.suffix == ".pdf"
+    assert saved.read_bytes() == pdf
+    assert messages[0]["links_content"] == f"URL: {url}\n파일: {saved}\n[요약 대기]"

@@ -524,6 +524,32 @@ the text. Every link body, posts included, is kept up to `MAX_CONTENT_CHARS` (10
 characters — conclusions tend to come last, and the body lands in a file rather than the raw
 export.
 
+Several other sources keep their body somewhere other than the link, and each used to reach the
+briefing as a bare title or as garbage (2026-10-02: six of twenty links failed to summarise). They
+are handled inside the hop loop of `_fetch_sync`, so every rewritten or followed address is
+re-validated exactly like a redirect, and the hop limit (`MAX_REDIRECTS`, 5) counts HTTP and script
+redirects together — a KIS report link takes five requests. Brokers' StreamDocs viewers (an
+Angular shell carrying only a title) are rewritten to the document API that serves the PDF:
+`/streamdocs/view/sd;streamdocsId=X` to `/streamdocs/v4/documents/X` (KIS) and the `mail` route
+to `…/X/custom` (Samsung, which returns HTTP 500 without it). KIS `download_pdf.jsp` forwards with a
+`document.location` script, which is followed only on `SCRIPT_REDIRECT_HOSTS` — following any
+page's script would let the collector be steered anywhere. A DART `dsaf001/main.do` address is a
+frame; the first `viewDoc(...)` call's arguments give the `report/viewer.do` body, which is MS949,
+so HTML is now decoded by the response's declared charset rather than always as UTF-8. Pages that
+need a login (`SKIPPED_PAGES`, the awakeplus `/board/` paths) are not requested at all and return
+`[건너뜀: …]`. Trailing sentence punctuation is stripped from extracted URLs (`vo.la/X.` was a 404).
+
+A PDF body is never decoded: `fetch_content` returns a `PdfDocument` holding the raw bytes, and
+`MessageFetcher` writes it as `<stem>.pdf` next to the text bodies with the same pending marker;
+the summarising subagent reads its first pages with the agent's file-read tool, as analyst PDFs
+are read, so there is still no local PDF toolchain. Detection is by the `%PDF` magic, since the
+viewers serve `application/octet-stream`; PDFs get their own cap (`MAX_PDF_BYTES`, 20 MB) because
+a truncated PDF does not open, and an oversized one returns a sentinel instead. `.pdf`, StreamDocs
+and DART targets skip trafilatura, which would download them a second time. Per-URL wall time is
+`timeout × HARD_TIMEOUT_MULTIPLIER` (9, so 90 s): a stalled connection is still cut by the 10 s
+read timeout, so the longer ceiling only lets slow-but-progressing downloads finish — a 12.3 MB
+KIS report took 35 s alone and failed at the old 30 s ceiling when fetched in parallel.
+
 Link bodies do not sit in the raw export: step 2 of `daily-digest` reads raw in full, so a day's
 worth of 10,000-character bodies would fill the context the briefing is written in. When
 `fetch-messages` runs with links, every successfully fetched body is written to
