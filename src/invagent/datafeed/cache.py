@@ -11,6 +11,12 @@
 덮으면서 시세가 썩지 않는 폭이다. `INVAGENT_HTTP_CACHE_TTL`(초)로 조정하고,
 `INVAGENT_HTTP_CACHE=0`이면 읽기·쓰기 모두 하지 않는다.
 
+**마감 뒤 시세는 다음 개장까지 유효하다**: 시세를 싣는 URL(`MARKET_CLOSE_STABLE`)을 장이
+닫힌 동안(평일 NXT 마감 20:00 뒤 ~ 09:00, 주말) 받았다면 다음 평일 09:00(KST)까지 그대로
+쓴다. 저녁·새벽 재실행이 바뀌지 않은 값을 다시 받으며 StockEasy 요청 한도를 깎던 것을
+없앤다. 뉴스·공시는 마감 뒤에도 새로 나오므로 대상이 아니다. 공휴일은 모른다 — 공휴일에는
+15분 TTL로 다시 받을 뿐이다.
+
 **인증 상태를 키에 섞는 이유**: 비인증 호출은 HTTP 401을 받는다. 그 응답을 쿠키가 붙은
 호출에 되돌려주면 쿠키를 고쳐도 계속 401로 보인다. 키는 쿠키의 **유무**만 반영하고
 쿠키 값은 키에도 파일에도 남기지 않는다.
@@ -27,8 +33,10 @@ import os
 import tempfile
 import time
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Iterator
+from zoneinfo import ZoneInfo
 
 from invagent.datafeed.env import repo_root
 
@@ -41,8 +49,18 @@ except ImportError:  # pragma: no cover - Windows fallback; production runs on m
 CACHE_ROOT = repo_root() / "output" / ".cache" / "http"
 
 DEFAULT_TTL_SECONDS = 900
-# TTL이 지난 항목도 파일로는 남는다. 하루 지난 것은 다시 쓰일 일이 없으므로 지운다.
-RETENTION_SECONDS = 86_400
+# TTL이 지난 항목도 파일로는 남는다. 금요일 저녁 시세가 월요일 개장까지 쓰이므로(연휴 하루
+# 포함) 나흘 지난 것만 지운다.
+RETENTION_SECONDS = 4 * 86_400
+
+KST = ZoneInfo("Asia/Seoul")
+MARKET_OPEN_HOUR = 9
+# NXT 애프터마켓이 20:00에 끝난다. 그 전까지는 `info-tab`의 시간외 시세가 움직인다.
+MARKET_CLOSED_FROM_HOUR = 20
+# 마감 뒤 다음 개장까지 유효한 시세 URL의 표지.
+MARKET_CLOSE_STABLE = ("/stock-info/info-tab/", "siseJson.naver")
+
+_now = time.time
 ENV_ENABLED = "INVAGENT_HTTP_CACHE"
 ENV_TTL = "INVAGENT_HTTP_CACHE_TTL"
 
@@ -93,15 +111,52 @@ def load(url: str, *, authed: bool, ttl: int | None = None) -> bytes | None:
         return None
     path = cache_path(url, authed=authed)
     try:
-        age = time.time() - path.stat().st_mtime
+        stored_at = path.stat().st_mtime
     except OSError:
         return None
-    if age > (ttl_seconds() if ttl is None else ttl):
-        return None
+    now = _now()
+    if now - stored_at > (ttl_seconds() if ttl is None else ttl):
+        if ttl is not None or not _stable_until_open(url, stored_at, now):
+            return None
     try:
         return path.read_bytes()
     except OSError:
         return None
+
+
+def load_stale(url: str, *, authed: bool) -> tuple[bytes, float] | None:
+    """TTL이 지났어도 보관 중인 본문과 그 나이(초). 요청 제한에 걸렸을 때의 대체용이다."""
+    if not enabled():
+        return None
+    path = cache_path(url, authed=authed)
+    try:
+        age = _now() - path.stat().st_mtime
+        if age > RETENTION_SECONDS:
+            return None
+        return path.read_bytes(), age
+    except OSError:
+        return None
+
+
+def _next_open(stored_at: float) -> datetime | None:
+    """장이 닫힌 동안 받은 응답이면 다음 평일 개장 시각(KST), 아니면 None."""
+    stored = datetime.fromtimestamp(stored_at, KST)
+    weekday = stored.weekday() < 5
+    if weekday and MARKET_OPEN_HOUR <= stored.hour < MARKET_CLOSED_FROM_HOUR:
+        return None
+    day = stored.date()
+    if not (weekday and stored.hour < MARKET_OPEN_HOUR):
+        day += timedelta(days=1)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    return datetime(day.year, day.month, day.day, MARKET_OPEN_HOUR, tzinfo=KST)
+
+
+def _stable_until_open(url: str, stored_at: float, now: float) -> bool:
+    if not any(marker in url for marker in MARKET_CLOSE_STABLE):
+        return False
+    next_open = _next_open(stored_at)
+    return next_open is not None and now < next_open.timestamp()
 
 
 def invalidate(url: str, *, authed: bool) -> None:
@@ -191,7 +246,7 @@ def get_or_fetch(url: str, *, authed: bool, fetcher: Callable[[], bytes]) -> tup
 
 def purge(older_than: int = RETENTION_SECONDS) -> int:
     """오래된 항목을 지운다. 지운 개수를 반환한다."""
-    now, removed = time.time(), 0
+    now, removed = _now(), 0
     if not CACHE_ROOT.exists():
         return 0
     for path in CACHE_ROOT.rglob("*.body"):

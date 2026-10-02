@@ -11,10 +11,12 @@
 from __future__ import annotations
 
 import json
+import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
-from invagent.datafeed import cache
+from invagent.datafeed import cache, ratelimit
 
 TIMEOUT = 20
 USER_AGENT = "Mozilla/5.0"
@@ -25,6 +27,10 @@ def read_url(url: str, headers: dict[str, str], timeout: int) -> bytes:
     request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read()
+
+
+def _host(url: str) -> str:
+    return urllib.parse.urlsplit(url).hostname or "unknown"
 
 
 def build_headers(
@@ -46,7 +52,7 @@ def get_bytes(
     request_headers = headers if headers is not None else build_headers()
 
     def fetcher() -> bytes:
-        return read_url(url, request_headers, timeout)
+        return ratelimit.call_with_retry(_host(url), lambda: read_url(url, request_headers, timeout))
 
     try:
         body, _ = cache.get_or_fetch(url, authed=authed, fetcher=fetcher)
@@ -73,7 +79,7 @@ def get_json(
     request_headers = headers if headers is not None else build_headers()
 
     def fetcher() -> bytes:
-        return read_url(url, request_headers, timeout)
+        return ratelimit.call_with_retry(_host(url), lambda: read_url(url, request_headers, timeout))
 
     try:
         body, cache_hit = cache.get_or_fetch(url, authed=authed, fetcher=fetcher)
@@ -85,8 +91,39 @@ def get_json(
             cache.invalidate(url, authed=authed)
             body, _ = cache.get_or_fetch(url, authed=authed, fetcher=fetcher)
             payload = decode(body.decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        return None, f"HTTP {e.code}"
-    except Exception as e:  # 네트워크 오류·JSON 파싱 실패 등
-        return None, str(e)[:80]
+    except Exception as e:  # HTTP 오류·네트워크 오류·JSON 파싱 실패 등
+        stale = _stale_payload(url, authed, e, decode)
+        if stale is not None:
+            return stale, None
+        return None, _reason(e)
     return payload, None
+
+
+def _reason(error: Exception) -> str:
+    if isinstance(error, urllib.error.HTTPError):
+        return f"HTTP {error.code}"
+    return str(error)[:80]
+
+
+def _stale_payload(url: str, authed: bool, error: Exception, decode):
+    """요청 제한으로 실패했으면 보관 중인 지난 응답을 꺼내고, 그 나이를 stderr에 밝힌다.
+
+    401 같은 영구 실패에는 쓰지 않는다 — 쿠키 만료를 지난 값으로 덮으면 알아챌 수 없다.
+    """
+    if not (isinstance(error, ratelimit.CoolingDown) or ratelimit.is_retryable(error)):
+        return None
+    stale = cache.load_stale(url, authed=authed)
+    if stale is None:
+        return None
+    body, age = stale
+    try:
+        payload = decode(body.decode("utf-8"))
+    except ValueError:
+        return None
+    path = urllib.parse.urlsplit(url).path
+    print(
+        f"[캐시 대체] {_host(url)}{path} — 요청 제한({_reason(error)})으로 "
+        f"{age / 60:.0f}분 전 응답을 쓴다",
+        file=sys.stderr,
+    )
+    return payload

@@ -26,7 +26,8 @@ design notes to `docs/`.
 `http.get_json` is the single request path and every other module goes through it:
 `stockeasy` (the `/stockdata/api/v1/**` stock endpoints and the `.../market/**`
 ones, the `STOCKEASY_COOKIE` session, stock resolution, `fs_rows`), `naver`
-(daily OHLCV), `daily` (the bars every price judgement reads — see below), `cache` (the shared response cache), `env` (repository root,
+(daily OHLCV), `daily` (the bars every price judgement reads — see below), `cache` (the shared response cache),
+`ratelimit` (per-host request spacing, retry and cool-down — see below), `env` (repository root,
 `output/`, `.env` values), `series` (`sma`), `tickers` (override-first ticker
 resolution plus the preferred-to-common mapping below) and `snapshot` (portfolio
 snapshot tables). `daily.fetch_daily_bars` takes the regular-session bars from the StockEasy
@@ -419,7 +420,27 @@ responses are stored, so a transient 401 or timeout does not stick for the rest 
 and every script that has an `argparse` exposes `--no-cache` — `fetch_market_signals.py` has
 none, which is why `invagent daily-prep` reaches all three steps with the environment variable
 rather than a flag. Change the
-constant and the minutes quoted here together; a test compares them.
+constant and the minutes quoted here together; a test compares them. One exception keeps evening
+and pre-dawn re-runs off the network: a quote URL (`info-tab`, Naver `siseJson`) stored while the
+market is closed — weekdays after the 20:00 NXT close until 09:00 KST, and weekends — stays fresh
+until the next weekday open, since nothing it carries can change before then. News, filings and
+reports are not extended, because they keep arriving after the close. Entries are kept four days so
+a Friday-evening quote survives to Monday.
+
+StockEasy cuts connections or refuses requests once too many arrive at once, and parallel
+subagents analysing several stocks do not know about each other. `src/invagent/datafeed/ratelimit.py`
+therefore sits inside `http.get_json`, per host and only on cache misses: request starts are spaced
+at least `MIN_INTERVAL_SECONDS` (0.5) apart and at most `MAX_CONCURRENT_PER_HOST` (2) run at once,
+both shared across processes through lock files under the gitignored `output/.cache/ratelimit/`.
+A 429/502/503/504, a dropped connection or a timeout is retried up to `MAX_ATTEMPTS` (3) times with
+exponential backoff plus jitter, honouring `Retry-After`; a 401 is never retried. When retries run
+out the host enters a `COOLDOWN_SECONDS` (120) cool-down during which every process fails fast
+instead of extending the block — daily bars then take the Naver fallback. A URL refused that way
+falls back to its kept response, with an `[캐시 대체] … N분 전` line on stderr; a 401 never does,
+because a stale body would hide an expired cookie. This throttles to the limit rather than evading
+it. The real limit is unpublished, so tune the constants from the refusals the next time they
+appear. `tests/conftest.py` points the lock files at a temporary directory and disables the waits
+for the whole suite.
 
 The `weekly-investment-review` skill scores one week of trades and writes the verdict
 into the Notion journal's `## {dd}~{dd}(주말)` block. It grades each fill on three axes —

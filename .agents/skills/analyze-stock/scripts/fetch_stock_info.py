@@ -37,7 +37,7 @@ from datetime import date, datetime, timezone
 from math import isfinite
 from pathlib import Path
 
-from invagent.datafeed import cache as http_cache, stockeasy, tickers
+from invagent.datafeed import cache as http_cache, ratelimit as datafeed_ratelimit, stockeasy, tickers
 
 # 엔드포인트·자격증명 축은 수집 계층이 소유한다. 여기서는 출력문과 SKILL.md가 쓰는
 # 이름만 그대로 다시 노출한다.
@@ -611,7 +611,7 @@ def collect_stock_payloads(
         path, params, job_referer = job
         return stockeasy.fetch_stock_json(path, params, referer=job_referer, cookie=cookie)
 
-    with ThreadPoolExecutor(max_workers=min(5, len(jobs))) as pool:
+    with ThreadPoolExecutor(max_workers=min(datafeed_ratelimit.MAX_CONCURRENT_PER_HOST, len(jobs))) as pool:
         futures = {name: pool.submit(fetch_job, job) for name, job in jobs.items()}
         for name, future in futures.items():
             payload, err = future.result()
