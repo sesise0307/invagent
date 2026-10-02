@@ -2,6 +2,8 @@
 
 > 수집 기간: 최근 {days}일 | 생성: {datetime}
 
+<!-- 문체: 🚦 시장 상황 · 의사 결정 조언 = caveman full / 나머지 = 일반 문장. 정본 = `daily-digest/SKILL.md` 「브리핑 문체」 -->
+
 ---
 
 ## 🛡️ 오늘의 룰 리마인드
