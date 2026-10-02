@@ -71,6 +71,13 @@ class PdfDocument:
     data: bytes
 
 
+class LinkFailure(str):
+    """링크를 읽지 못했다는 표시(`[링크 읽기 타임아웃]` 등). raw에 그대로 적히도록 문자열이지만,
+    실패 여부는 타입으로 판정한다 — 「[일진전기] 단일판매…」처럼 대괄호로 시작하는 정상 본문이
+    실패로 오인돼 파일로 빠지지 못하고 raw에 남던 문제를 막는다.
+    """
+
+
 LinkContent = Union[str, PdfDocument]
 
 
@@ -354,11 +361,11 @@ class LinkExtractor:
             normalized = normalize_url(url)
             reason = _skip_reason(normalized)
             if reason:
-                return f"[건너뜀: {reason}]"
+                return LinkFailure(f"[건너뜀: {reason}]")
             target = _rewrite_for_body(normalized)
             assert_public_url(target)
         except BlockedURLError as e:
-            return f"[차단된 URL: {e}]"
+            return LinkFailure(f"[차단된 URL: {e}]")
 
         limit = MAX_CONTENT_CHARS
 
@@ -404,11 +411,11 @@ class LinkExtractor:
             )
 
             if status_code != 200:
-                return f"[링크 읽기 실패: HTTP {status_code}]"
+                return LinkFailure(f"[링크 읽기 실패: HTTP {status_code}]")
 
             if body.startswith(PDF_MAGIC):
                 if len(body) > MAX_PDF_BYTES:
-                    return f"[PDF 용량 초과: {MAX_PDF_BYTES // (1024 * 1024)}MB 상한]"
+                    return LinkFailure(f"[PDF 용량 초과: {MAX_PDF_BYTES // (1024 * 1024)}MB 상한]")
                 return PdfDocument(body)
 
             html = _decode_html(body, content_type)
@@ -465,16 +472,16 @@ class LinkExtractor:
                     result += "\n"
                 result += content[:limit] + ("..." if len(content) > limit else "")
 
-            return result if result else "[내용을 읽을 수 없습니다]"
+            return result if result else LinkFailure("[내용을 읽을 수 없습니다]")
 
         except BlockedURLError as e:
-            return f"[차단된 URL: {e}]"
+            return LinkFailure(f"[차단된 URL: {e}]")
         except requests.exceptions.Timeout:
-            return "[링크 읽기 타임아웃]"
+            return LinkFailure("[링크 읽기 타임아웃]")
         except requests.exceptions.ConnectionError:
-            return "[연결 실패]"
+            return LinkFailure("[연결 실패]")
         except Exception as e:
-            return f"[링크 읽기 오류: {str(e)[:50]}]"
+            return LinkFailure(f"[링크 읽기 오류: {str(e)[:50]}]")
 
     def _fetch_sync(self, url: str) -> tuple[int, bytes, str, str]:
         """
@@ -563,7 +570,7 @@ class LinkExtractor:
         try:
             return await asyncio.wait_for(self.fetch_content(url), timeout=self.hard_timeout)
         except asyncio.TimeoutError:
-            return "[링크 읽기 타임아웃]"
+            return LinkFailure("[링크 읽기 타임아웃]")
 
     async def extract_and_fetch(self, text: str) -> dict[str, list[str] | str]:
         """
@@ -589,7 +596,7 @@ class LinkExtractor:
         contents = {}
         for url, result in zip(urls, results):
             if isinstance(result, Exception):
-                contents[url] = f"[링크 읽기 오류: {str(result)[:50]}]"
+                contents[url] = LinkFailure(f"[링크 읽기 오류: {str(result)[:50]}]")
             else:
                 contents[url] = result
 

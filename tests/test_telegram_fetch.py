@@ -748,7 +748,9 @@ async def test_fetch_saved_messages_leaves_failed_naver_fetch_inline(tmp_path, m
     url = "https://blog.naver.com/chacha36/224407253026"
 
     async def fake_extract(text):
-        return {"contents": {url: "[링크 읽기 타임아웃]"}}
+        from invagent.telegram.link_extractor import LinkFailure
+
+        return {"contents": {url: LinkFailure("[링크 읽기 타임아웃]")}}
 
     monkeypatch.setattr(fetcher.link_extractor, "extract_and_fetch", fake_extract)
     link_dir = tmp_path / "links"
@@ -783,4 +785,26 @@ async def test_fetch_saved_messages_saves_pdf_link_as_pdf_file(tmp_path, monkeyp
     [saved] = list(link_dir.iterdir())
     assert saved.name.startswith("vo.la_") and saved.suffix == ".pdf"
     assert saved.read_bytes() == pdf
+    assert messages[0]["links_content"] == f"URL: {url}\n파일: {saved}\n[요약 대기]"
+
+
+@pytest.mark.asyncio
+async def test_fetch_saved_messages_saves_body_that_starts_with_a_bracket(tmp_path, monkeypatch):
+    """「[일진전기] 단일판매…」처럼 대괄호로 시작하는 정상 본문도 실패로 보지 않고 파일로 뺀다"""
+    fetcher = MessageFetcher(_image_config(), TelegramClientManager())
+    url = "https://www.awakeplus.co.kr/data/view/20261002800002"
+    body = "[일진전기] 단일판매ㆍ공급계약체결\n계약금액 : 1,872억"
+
+    async def fake_extract(text):
+        return {"contents": {url: body}}
+
+    monkeypatch.setattr(fetcher.link_extractor, "extract_and_fetch", fake_extract)
+    link_dir = tmp_path / "links"
+
+    with patch.object(fetcher.client_manager, "get_client") as mock_get_client:
+        mock_get_client.return_value = _patched_client(fetcher.client_manager, _link_message(url))
+        messages = await fetcher.fetch_saved_messages(days=1, fetch_links=True, link_dir=link_dir)
+
+    [saved] = list(link_dir.iterdir())
+    assert saved.read_text(encoding="utf-8") == f"URL: {url}\n\n{body}\n"
     assert messages[0]["links_content"] == f"URL: {url}\n파일: {saved}\n[요약 대기]"

@@ -556,7 +556,10 @@ worth of 10,000-character bodies would fill the context the briefing is written 
 `output/daily-digest/links/<yyyy-mm-dd>/` (`Config.digest_link_dir`) — `<blogId>_<logNo>.md` for a
 Naver post, `<host>_<first 10 hex of the URL's SHA-1>.md` for anything else — and the raw link
 block keeps only the saved URL, a `파일:` path and the marker `[요약 대기]`; a failed fetch stays
-inline as its bracketed sentinel. Step 1-5 of the skill splits the pending files into batches of
+inline as its bracketed sentinel. Failure is judged by type, not by the bracket: every sentinel the
+extractor returns is a `LinkFailure` (a `str` subclass, so it still writes into raw as text),
+because real bodies start with a bracket too — an awakeplus filing page begins
+`[일진전기] 단일판매…` and used to be mistaken for a failure and left inline. Step 1-5 of the skill splits the pending files into batches of
 eight, one subagent per batch in parallel, and each subagent writes only a sidecar
 `<name>.summary.md` of at most 1,000 characters. The subagents leave the raw export alone because
 parallel edits to one file lose each other's writes;

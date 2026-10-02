@@ -19,6 +19,7 @@ from invagent.core.client import TelegramClientManager
 from invagent.telegram.link_extractor import (
     LinkContent,
     LinkExtractor,
+    LinkFailure,
     PdfDocument,
     naver_post_id,
     normalize_url,
@@ -223,8 +224,9 @@ class MessageFetcher:
             path = link_dir / f"{_link_file_stem(url)}.pdf"
             path.write_bytes(content.data)
             return f"URL: {url}\n파일: {path}\n{PENDING_LINK_SUMMARY_MARKER}"
-        # 링크 추출기의 실패 결과는 대괄호 센티널이다. 요약할 원문이 없으므로 그대로 둔다.
-        if link_dir is None or content.startswith("["):
+        # 실패 결과(`LinkFailure`)는 요약할 원문이 없으므로 그대로 둔다. 대괄호로 판정하지 않는다 —
+        # 「[일진전기] 단일판매…」 같은 정상 본문도 대괄호로 시작한다.
+        if link_dir is None or isinstance(content, LinkFailure):
             return f"URL: {url}\n{content}"
         link_dir.mkdir(parents=True, exist_ok=True)
         path = link_dir / f"{_link_file_stem(url)}.md"

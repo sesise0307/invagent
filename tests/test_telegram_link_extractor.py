@@ -5,6 +5,7 @@ from unittest.mock import patch, MagicMock
 from invagent.telegram.link_extractor import (
     BlockedURLError,
     LinkExtractor,
+    LinkFailure,
     PdfDocument,
     assert_public_url,
     normalize_url,
@@ -787,3 +788,58 @@ async def test_fetch_content_keeps_dart_tables_even_when_body_has_paragraphs(pub
 
     assert "주식등의 대량보유상황보고서" in content
     assert "국민연금공단" in content and "5.30" in content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url, response",
+    [
+        ("https://example.com/missing", fake_response(status_code=404)),
+        ("https://example.com/empty", fake_response(body="<html><body></body></html>")),
+        ("https://www.awakeplus.co.kr/board/contract/103590", None),
+        ("http://127.0.0.1/admin", None),
+    ],
+)
+async def test_fetch_content_marks_failures_with_a_type_not_a_bracket(public_dns, url, response):
+    """실패 결과는 `LinkFailure`로 표시한다 — 대괄호로 시작하는 정상 본문(「[일진전기] 단일판매…」)과 구분된다"""
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value=None), \
+         patch("invagent.telegram.link_extractor.requests.get", return_value=response):
+        if url.startswith("http://127."):
+            with private_dns("127.0.0.1"):
+                content = await extractor.fetch_content(url)
+        else:
+            content = await extractor.fetch_content(url)
+
+    assert isinstance(content, LinkFailure)
+    assert content.startswith("[")
+
+
+@pytest.mark.asyncio
+async def test_fetch_content_keeps_bracketed_body_as_plain_content(public_dns):
+    """본문이 대괄호로 시작해도 실패가 아니다"""
+    extractor = LinkExtractor()
+
+    with patch("invagent.telegram.link_extractor.trafilatura.fetch_url", return_value="<html/>"), \
+         patch("invagent.telegram.link_extractor.trafilatura.extract", return_value="[일진전기] 단일판매ㆍ공급계약체결"):
+        content = await extractor.fetch_content("https://www.awakeplus.co.kr/data/view/20261002800002")
+
+    assert content == "[일진전기] 단일판매ㆍ공급계약체결"
+    assert not isinstance(content, LinkFailure)
+
+
+@pytest.mark.asyncio
+async def test_extract_and_fetch_marks_hard_timeout_as_failure():
+    """링크당 상한에 걸린 결과도 `LinkFailure`다"""
+    import asyncio
+
+    extractor = LinkExtractor(timeout=1, hard_timeout=0.01)
+
+    async def hang(url):
+        await asyncio.sleep(1)
+
+    with patch.object(extractor, "fetch_content", side_effect=hang):
+        result = await extractor.extract_and_fetch("https://hang.example.com")
+
+    assert isinstance(result["contents"]["https://hang.example.com"], LinkFailure)
