@@ -98,16 +98,17 @@ description: >
 1. **백업** — 쓰기 전에 현재 본문 전체를 `output/notion-backup/{페이지}_{yyyy-mm-dd-HHMM}.md`로
    저장한다. **백업 없이는 쓰지 않는다.** `output/`는 gitignore 대상이라 저장소에 들어가지 않는다.
 2. **병합** — 백업본과 이번 주 블록을 로컬에서 합쳐 완전한 본문을 만든다. 이번 주 블록은
-   `output/reviews/<yyyy>/<mm>/<yyyy-mm-dd>_weekly.md`에 저장한다 — 날짜는 그 주 **월요일**이고
-   연·월 폴더도 월요일 기준이다(스냅샷·브리핑과 같은 `<yyyy>/<mm>/` 배치, 리뷰 하나가 한 파일).
+   `output/reviews/<yyyy>/<mm>/<yyyy-mm-dd>_weekly.md`에 저장한다 — 날짜는 그 주 **일요일**(월~일 주 기준, 주말 헤딩
+   `19~20(주말)`의 끝날)이고 연·월 폴더도 일요일 기준이다 — 사용자 결정 2026-10-04. 스냅샷·브리핑과
+   같은 `<yyyy>/<mm>/` 배치이고, 리뷰 하나가 한 파일이다.
    병합본은 같은 폴더의 `<yyyy-mm-dd>_weekly_merged.md`다. `output/` 루트에 흩어 두지 않는다.
 
    ```bash
    uv run python .agents/skills/weekly-investment-review/scripts/weekly_upsert.py \
      --existing output/notion-backup/2026-09_2026-09-20-1730.md \
-     --proposed output/reviews/2026/09/2026-09-14_weekly.md \
+     --proposed output/reviews/2026/09/2026-09-20_weekly.md \
      --weekend "19~20" \
-     --prepared-out output/reviews/2026/09/2026-09-14_weekly_merged.md --json
+     --prepared-out output/reviews/2026/09/2026-09-20_weekly_merged.md --json
    ```
 
    스크립트는 주말 헤딩을 못 찾거나 `## ` 헤딩이 하나라도 사라지면 **exit 2로 거부하고

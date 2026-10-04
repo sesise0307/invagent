@@ -3887,6 +3887,9 @@ def test_review_skills_file_results_by_year_and_month() -> None:
     monthly = (SKILLS_ROOT / "monthly-investment-review" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "output/reviews/<yyyy>/<mm>/<yyyy-mm-dd>_weekly.md" in weekly
+    # 주간 파일 날짜는 그 주 일요일 (사용자 결정 2026-10-04)
+    assert "그 주 **일요일**" in weekly
+    assert "2026-09-20_weekly.md" in weekly
     assert "output/reviews/<yyyy>/<mm>/<yyyy-mm>_monthly.md" in monthly
     # 병합본도 같은 폴더에 둔다 — output/ 루트에 흩어지지 않게
     assert "--proposed output/weekly-review.md" not in weekly
