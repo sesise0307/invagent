@@ -357,7 +357,7 @@ def load_content(path: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dump", type=Path, help="Drive CSV 내보내기 응답 JSON · 평문 CSV · 레거시 read_file_content 덤프 경로")
-    parser.add_argument("--out", type=Path, help="스냅샷 저장 경로 (예: output/portfolio/2026-08-09.md)")
+    parser.add_argument("--out", type=Path, help="스냅샷 저장 경로 (예: output/portfolio/2026/08/2026-08-09.md)")
     parser.add_argument("--date", default=dt.date.today().isoformat(), help="스냅샷 날짜 (기본: 오늘)")
     args = parser.parse_args()
 

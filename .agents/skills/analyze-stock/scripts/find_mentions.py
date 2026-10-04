@@ -9,7 +9,7 @@
     output/daily-digest/monthly_context.md        누적 인덱스 (현재 유효 판정)
     output/daily-digest/themes/<slug>.md          테마 전문 (일자 서브불릿)
     output/daily-digest/themes/archive/**.md      롤오프분
-    output/daily-digest/<YYYY-MM>/<YYYY-MM-DD>.md 일일 브리핑
+    output/daily-digest/<YYYY>/<MM>/<YYYY-MM-DD>.md 일일 브리핑
 
 기본 경로는 저장소 루트의 `output/` 이며 INVAGENT_OUTPUT_DIR 로 덮어쓸 수 있다.
 표준 라이브러리만 사용한다.
@@ -23,6 +23,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from invagent.core.archive import dated_files
 from invagent.datafeed.env import output_dir
 from invagent.datafeed.text import nfc, norm as _key
 
@@ -44,7 +45,6 @@ _DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 _RECENT_RE = re.compile(r"최근\(((?:\d{4}-)?\d{2}-\d{2})\)")
 _POINTER_RE = re.compile(r"\[\[themes/([^\]|]+)")
 _BOLD_HEAD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
-_MONTH_DIR_RE = re.compile(r"^\d{4}-\d{2}$")
 _DAILY_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.md$")
 
 
@@ -235,13 +235,8 @@ def scan(archive: Path) -> list[Record]:
                 continue
             records.extend(parse_theme(path))
 
-    for month in sorted(archive.iterdir()):
-        if not month.is_dir() or not _MONTH_DIR_RE.match(nfc(month.name)):
-            continue
-        for path in sorted(month.glob("*.md")):
-            if nfc(path.name) in EXCLUDED_NAMES:
-                continue
-            records.extend(parse_daily(path))
+    for path in dated_files(archive):
+        records.extend(parse_daily(path))
 
     return records
 

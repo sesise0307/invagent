@@ -116,7 +116,7 @@ Drive MCP로 `주식 포트폴리오` 파일을 정확 일치 검색으로 찾�
 
 ```bash
 uv run python .agents/skills/daily-digest/scripts/extract_portfolio.py <CSV 응답 파일> \
-  --out output/portfolio/$(date +%Y-%m-%d).md
+  --out output/portfolio/$(date +%Y/%m/%Y-%m-%d).md
 ```
 
 - `read_file_content`는 2026-09-28부터 셀 값을 잘라 쓴 요약만 돌려준다 — 포트폴리오 수집에 쓰지 않는다.

@@ -275,7 +275,7 @@ that directory moved on disk rather than in a commit: a checkout that predates t
 rename still has the old name, and `find_mentions` will report an empty archive
 until it is moved. `uv run invagent fetch-messages` writes the raw export to
 `raw/<yyyy-mm-dd>_raw.md`; the finished briefing goes to
-`<yyyy-mm>/<yyyy-mm-dd>.md`, the rolling cross-day index to
+`<yyyy>/<mm>/<yyyy-mm-dd>.md`, the rolling cross-day index to
 `monthly_context.md`, and the full text of each running theme to
 `themes/<slug>.md`, with sub-bullets older than 30 days rolled off to
 `themes/archive/`. The index and theme files are the accumulated memory that
@@ -341,9 +341,22 @@ The Telegram daily briefing also reads the user's live holdings from the Google
 Sheets file `주식 포트폴리오` (sheet `포트폴리오`) through the Google Drive MCP
 connector, parses it with
 `.agents/skills/daily-digest/scripts/extract_portfolio.py`, and stores the
-snapshot in `output/portfolio/<yyyy-mm-dd>.md`. `analyze-stock` and `advice` read
+snapshot in `output/portfolio/<yyyy>/<mm>/<yyyy-mm-dd>.md`. `analyze-stock` and `advice` read
 the latest snapshot instead of re-fetching the sheet. `output/` is gitignored, so
 portfolio data never enters the repository.
+
+Snapshots and briefings share one dated layout, `<root>/<yyyy>/<mm>/<yyyy-mm-dd>.md`,
+because one file a day in a single directory grew past what a listing can be read in.
+`src/invagent/core/archive.py` owns it: `dated_path` builds the path, `dated_files`
+lists every dated file under a root oldest first (skipping backups, CSV dumps and any
+file whose date disagrees with its folders), and `archive_root` climbs from a dated
+file back to its root — `peak_drawdown` reads the whole snapshot history and keeps
+`.peak_drawdown_state.json` there, not in the month folder, and `find_mentions` walks
+the briefings through `dated_files`. Both trees used to be flat — snapshots straight
+under `portfolio/`, briefings in one folder per month — until 2026-10-04; since `output/` is gitignored
+they were moved on disk and the paths quoted inside reports, briefings, the index and
+theme files were rewritten in the same pass. The daily `raw/`, `media/` and `links/`
+directories keep their flat names, because step 7 deletes everything but today's.
 
 `extract_portfolio.py` grades holdings on the **average-cost** axis only, so a
 position that ran up and then rolled over stays silent while it is still in

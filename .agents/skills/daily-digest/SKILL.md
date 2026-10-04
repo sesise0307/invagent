@@ -62,7 +62,7 @@ output/daily-digest/raw/<today>_raw.md
 1-1(시장 신호)과 1-3-1(전고점 낙폭)은 서로 독립이다. 한 번에 돌린다.
 
 ```bash
-uv run invagent daily-prep [--snapshot output/portfolio/$(date +%Y-%m-%d).md]
+uv run invagent daily-prep [--snapshot output/portfolio/$(date +%Y/%m/%Y-%m-%d).md]
 ```
 
 - 두 단계를 **동시에** 돌리고 입력 순서대로 한 블록으로 찍는다. 각 단계는 그대로 **비블로킹**이라
@@ -197,7 +197,7 @@ URL: `https://www.investing.com/indices/kospi-volatility`
 보유 현황을 읽어 룰 판정과 실행 조언의 근거로 쓴다. **포트폴리오 표 자체는 브리핑에 넣지 않는다**
 (반영 범위는 4단계 「포트폴리오 반영 범위」 참조).
 
-1. **스냅샷 재사용**: `output/portfolio/<today>.md`가 있으면 그대로 읽고 2~4를 건너뛴다.
+1. **스냅샷 재사용**: `output/portfolio/<yyyy>/<mm>/<today>.md`가 있으면 그대로 읽고 2~4를 건너뛴다.
 2. **파일 검색**: Google Drive 검색으로 스프레드시트를 찾는다. 파일 ID는 문서에 하드코딩하지 않는다.
    ```
    title = '주식 포트폴리오' and mimeType = 'application/vnd.google-apps.spreadsheet'
@@ -216,7 +216,7 @@ URL: `https://www.investing.com/indices/kospi-volatility`
 4. **파싱·저장**:
    ```bash
    uv run python .agents/skills/daily-digest/scripts/extract_portfolio.py \
-       <CSV 응답 파일> --out output/portfolio/$(date +%Y-%m-%d).md
+       <CSV 응답 파일> --out output/portfolio/$(date +%Y/%m/%Y-%m-%d).md
    ```
    입력은 CSV 내보내기 응답 JSON이 정본이고, 평문 CSV와 예전 `read_file_content` 덤프도 받는다.
    스크립트가 첫 시트(「포트폴리오」)의 보유 표·섹터 집계만 잘라내고,
@@ -224,7 +224,8 @@ URL: `https://www.investing.com/indices/kospi-volatility`
    **룰 자동 판정**까지 계산한다. 임계 도달은 매도 이행 위반과 다르다. 이행 기록이나
    시장 급락 예외가 확인되지 않았으면 「도달 · 이행 확인 필요」로 인용한다.
    산술은 스크립트 출력을 그대로 인용하고 직접 재계산하지 않는다.
-5. **전일 대비 비교**: 직전 스냅샷(`output/portfolio/`의 그 이전 날짜 파일)이 있으면 신규 편입·
+5. **전일 대비 비교**: 직전 스냅샷(`ls output/portfolio/*/*/*.md | tail -2 | head -1` — 월이 바뀌어도
+   이전 달 폴더까지 잡힌다)이 있으면 신규 편입·
    전량 청산·수량 변동 종목을 비교해 메모한다. 당일 매매가 있었으면 「의사 결정 조언」에서
    분할 매수/매도(매매규칙 4·5) 준수 여부를 함께 본다.
 6. **실패 시**: 스냅샷 없이 진행하고 「의사 결정 조언」 머리에 "(포트폴리오 로드 실패)" 한 줄만
@@ -236,7 +237,7 @@ URL: `https://www.investing.com/indices/kospi-volatility`
 
 ```bash
 uv run python .agents/skills/daily-digest/scripts/peak_drawdown.py \
-    output/portfolio/$(date +%Y-%m-%d).md --append
+    output/portfolio/$(date +%Y/%m/%Y-%m-%d).md --append
 ```
 
 스크립트가 종목별 낙폭을 **두 축**으로 계산해 각각 -10 / -15 / -20 / -30% 밴드로 경보하고,
@@ -629,15 +630,16 @@ output/daily-digest/themes/archive/<slug>-<from>~<to>.md   # 30일 경과분
 
 ### 5단계: 브리핑 파일 저장
 
-`template/daily_digest.md` 템플릿 구조를 따라 브리핑을 작성하고 **월별 서브 디렉토리** 아래에 저장한다:
+`template/daily_digest.md` 템플릿 구조를 따라 브리핑을 작성하고 **연/월 서브 디렉토리** 아래에 저장한다
+(포트폴리오 스냅샷 `output/portfolio/<yyyy>/<mm>/`과 같은 배치):
 
 ```
-output/daily-digest/<yyyy-mm>/<yyyy-mm-dd>.md
+output/daily-digest/<yyyy>/<mm>/<yyyy-mm-dd>.md
 ```
 
-예: 오늘이 2026-05-08이면 → `output/daily-digest/2026-05/2026-05-08.md`
+예: 오늘이 2026-05-08이면 → `output/daily-digest/2026/05/2026-05-08.md`
 
-월 디렉토리가 없으면 먼저 생성한다 (`mkdir -p`). 날짜는 오늘 날짜 (`_raw.md` 파일명과 동일한 날짜).
+연·월 디렉토리가 없으면 먼저 생성한다 (`mkdir -p`). 날짜는 오늘 날짜 (`_raw.md` 파일명과 동일한 날짜).
 
 ### 6단계: 월간 누적 컨텍스트 갱신
 
@@ -733,7 +735,7 @@ output/daily-digest/<yyyy-mm>/<yyyy-mm-dd>.md
 결과는 이미 raw를 거쳐 브리핑·월간 컨텍스트에 텍스트로 남았다.
 
 **선행 조건 (안전장치)** — 둘 다 충족해야 정리 진행. 하나라도 없으면 스킵 + 사유 알림:
-- 오늘 브리핑 `output/daily-digest/{yyyy-mm}/{today}.md` 존재 확인 (월별 서브 디렉토리 안)
+- 오늘 브리핑 `output/daily-digest/{yyyy}/{mm}/{today}.md` 존재 확인 (연/월 서브 디렉토리 안)
 - 오늘 raw `output/daily-digest/raw/{today}_raw.md` 존재 확인
 
 **삭제 명령**:
@@ -764,7 +766,7 @@ find output/daily-digest/links \
 - `output/daily-digest/raw/{today}_raw.md`
 - `output/daily-digest/media/{today}/**` (오늘 내려받은 이미지)
 - `output/daily-digest/links/{today}/**` (오늘 받은 링크 원문과 요약 파일)
-- `output/daily-digest/{yyyy-mm}/{YYYY-MM-DD}.md` (월별 서브 디렉토리 안 브리핑 — raw 디렉토리 밖, 자동 보존)
+- `output/daily-digest/{yyyy}/{mm}/{YYYY-MM-DD}.md` (연/월 서브 디렉토리 안 브리핑 — raw 디렉토리 밖, 자동 보존)
 - `output/daily-digest/monthly_context.md` (인덱스, 자동 보존)
 - `output/daily-digest/themes/**` (테마 전문·아카이브, raw 디렉토리 밖 — 자동 보존)
 - `output/portfolio/**` (포트폴리오 스냅샷 — raw 디렉토리 밖, 전일 대비 비교용으로 삭제하지 않는다)
@@ -782,7 +784,7 @@ find output/daily-digest/links \
 
 ```bash
 uv run python .agents/skills/daily-digest/scripts/portfolio_diff.py \
-  output/portfolio/<어제>.md output/portfolio/<오늘>.md \
+  output/portfolio/<yyyy>/<mm>/<어제>.md output/portfolio/<yyyy>/<mm>/<오늘>.md \
   [--events <이벤트.json>] [--run-manifest <매니페스트.json>] [--json]
 ```
 

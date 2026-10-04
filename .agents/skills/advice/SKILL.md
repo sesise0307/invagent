@@ -68,7 +68,7 @@ description: >
 | 과거 브리핑에서 이 종목이 언급된 이력 | `.agents/skills/analyze-stock/scripts/find_mentions.py <종목명>` → `path:line` 반환, 원본에서 읽는다 |
 | 기존 종목 보고서 | `.agents/skills/analyze-stock/scripts/find_prior_report.py <종목명>` |
 | 재무·공시·지분·배당 | `opendart` 스킬 |
-| 보유 수량·평단·비중 | `output/portfolio/<yyyy-mm-dd>.md` (최신) |
+| 보유 수량·평단·비중 | `output/portfolio/<yyyy>/<mm>/<yyyy-mm-dd>.md` (최신 — `ls output/portfolio/*/*/*.md \| tail -1`) |
 | 수집 경로·인증·캐시가 막힐 때 | `market-data` 스킬 |
 
 조달이 실패하면 **실패했다고 밝히고**, 그 관점은 「데이터 없음 — 판단 보류」로 남긴다.

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from invagent.core.archive import dated_path
 from invagent.datafeed import naver as datafeed_naver
 from invagent.datafeed import stockeasy as datafeed_stockeasy
 
@@ -2229,7 +2230,7 @@ BROKEN_MD = """알파전자 관련 메모지만 불릿 구조가 없다.
 def _build_telegram_archive(root: Path) -> Path:
     archive = root / "daily-digest"
     (archive / "themes" / "archive").mkdir(parents=True)
-    (archive / "2026-08").mkdir(parents=True)
+    (archive / "2026" / "08").mkdir(parents=True)
 
     (archive / "monthly_context.md").write_text(INDEX_MD, encoding="utf-8")
     (archive / "monthly_context.md.bak").write_text(INDEX_MD, encoding="utf-8")
@@ -2237,8 +2238,8 @@ def _build_telegram_archive(root: Path) -> Path:
     (archive / "themes" / "archive" / "pruned-2026-08-09-정리전-인덱스-전체.md").write_text(
         THEME_MD, encoding="utf-8"
     )
-    (archive / "2026-08" / "2026-08-13.md").write_text(DAILY_MD, encoding="utf-8")
-    (archive / "2026-08" / "backup.md").write_text(DAILY_MD, encoding="utf-8")
+    (archive / "2026" / "08" / "2026-08-13.md").write_text(DAILY_MD, encoding="utf-8")
+    (archive / "2026" / "08" / "backup.md").write_text(DAILY_MD, encoding="utf-8")
     return archive
 
 
@@ -2670,10 +2671,18 @@ def test_peak_drawdown_fetch_failure_is_non_blocking(monkeypatch: pytest.MonkeyP
     assert "전고점 낙폭 판정(52주 시장 종가 기준): 해당 없음" in section
 
 
+def _write_snapshot(root: Path, day: str, text: str) -> Path:
+    """스냅샷 저장소 배치 `<root>/<yyyy>/<mm>/<날짜>.md`에 쓴다."""
+    path = dated_path(root, day)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
 def test_account_mdd_uses_snapshot_balance_peak(tmp_path: Path) -> None:
     module = _load_peak_drawdown_module()
     for day, balance in (("2026-08-20", 100_000_000), ("2026-08-25", 95_000_000)):
-        (tmp_path / f"{day}.md").write_text(f"> 잔고 ₩{balance:,} · 수익률 1.00%\n", encoding="utf-8")
+        _write_snapshot(tmp_path, day, f"> 잔고 ₩{balance:,} · 수익률 1.00%\n")
 
     account = module.account_mdd(tmp_path, 88_000_000.0, "2026-08-28")
 
@@ -2780,7 +2789,7 @@ def test_render_omits_approach_line_when_nothing_is_close(
 
 def _account(tmp_path: Path, today_balance: float, peak: float = 100_000_000.0) -> dict:
     """스냅샷 고점이 `peak`인 계좌에서 오늘 잔고가 `today_balance`일 때의 MDD 판정."""
-    (tmp_path / "2026-08-20.md").write_text(f"> 잔고 ₩{peak:,.0f} · 수익률 1.00%\n", encoding="utf-8")
+    _write_snapshot(tmp_path, "2026-08-20", f"> 잔고 ₩{peak:,.0f} · 수익률 1.00%\n")
     return _load_peak_drawdown_module().account_mdd(tmp_path, today_balance, "2026-08-28")
 
 
@@ -2965,6 +2974,34 @@ def test_peak_drawdown_exits_1_on_unparsable_snapshot(
 
     assert module.main([str(broken)]) == 1
     assert "스냅샷 파싱 실패" in capsys.readouterr().err
+
+
+FLAT_ARCHIVE_PATH_RE = re.compile(
+    r"portfolio/(?:\$\(date \+%Y-%m-%d\)|[<{](?:yyyy-mm-dd|today|날짜|어제|오늘)[>}]|\*\.md|20\d\d-\d\d-\d\d)"
+    r"|daily-digest/(?:[<{](?:yyyy-mm|YYYY-MM)[>}]|20\d\d-\d\d/)"
+)
+
+
+def test_docs_use_the_year_month_archive_layout() -> None:
+    """스냅샷·브리핑은 `<yyyy>/<mm>/<날짜>.md`다 — 평면 경로를 안내하는 문서가 남으면 파일을 못 찾는다."""
+    docs = (
+        sorted(SKILLS_ROOT.rglob("*.md"))
+        + sorted(SKILLS_ROOT.glob("*/scripts/*.py"))
+        + sorted((REPO_ROOT / "template").rglob("*.md"))
+        + sorted((REPO_ROOT / "src").rglob("*.py"))
+        + [REPO_ROOT / "AGENTS.md"]
+    )
+    stale = [
+        f"{path.relative_to(REPO_ROOT)}:{n}: {line.strip()}"
+        for path in docs
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if FLAT_ARCHIVE_PATH_RE.search(line)
+    ]
+
+    assert stale == []
+    for name in ("daily-digest", "analyze-stock", "advice", "weekly-investment-review"):
+        skill = (SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8")
+        assert "<yyyy>/<mm>/" in skill or "{yyyy}/{mm}/" in skill, name
 
 
 def test_daily_digest_documents_peak_drawdown_step() -> None:
@@ -3184,17 +3221,14 @@ def _record_snapshot(date: str, prices: dict[str, int]) -> str:
 def test_record_history_skips_unparsable_snapshot(tmp_path: Path) -> None:
     """`## 보유` 표가 없는 손글씨 스냅샷(실제 2026-08-15)이 섞여도 나머지로 계속 계산한다."""
     module = _load_peak_drawdown_module()
-    (tmp_path / "2026-08-10.md").write_text(
-        _record_snapshot("2026-08-10", {"알파전자": 355_000}), encoding="utf-8"
-    )
-    (tmp_path / "2026-08-15.md").write_text(
+    _write_snapshot(tmp_path, "2026-08-10", _record_snapshot("2026-08-10", {"알파전자": 355_000}))
+    _write_snapshot(
+        tmp_path,
+        "2026-08-15",
         "# 포트폴리오 스냅샷 — 2026-08-15\n\n| 종목 | 비중 | 비고 |\n|---|---:|---|\n"
         "| 알파전자 | 26.0% | 반도체 |\n",
-        encoding="utf-8",
     )
-    (tmp_path / "2026-09-03.md").write_text(
-        _record_snapshot("2026-09-03", {"알파전자": 283_000}), encoding="utf-8"
-    )
+    _write_snapshot(tmp_path, "2026-09-03", _record_snapshot("2026-09-03", {"알파전자": 283_000}))
 
     history, meta = module.load_record_history(tmp_path)
 
@@ -3261,6 +3295,34 @@ def test_record_axis_survives_market_data_failure(monkeypatch: pytest.MonkeyPatc
     assert results[0]["record"]["drawdown"] == pytest.approx(-30.0)  # 기록 축은 살아있다
     section = module.render(results, {"error": "잔고 이력 없음"})
     assert "₩100,000 (2026-08-10) | -30.0% ⛔" in section
+
+
+def test_peak_drawdown_reads_history_across_month_folders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """스냅샷은 `<yyyy>/<mm>/<날짜>.md`에 쌓인다 — 이력·MDD·상태 파일은 월 폴더가 아니라 루트 기준."""
+    module = _load_peak_drawdown_module()
+    monkeypatch.setattr(
+        datafeed_stockeasy, "resolve_stock", lambda name: (None, "종목 검색 결과 없음", 1)
+    )
+    root = tmp_path / "portfolio"
+    snapshots = {
+        "2026-09-30": (100_000_000, 100_000),
+        "2026-10-02": (88_000_000, 70_000),
+    }
+    for day, (balance, price) in snapshots.items():
+        _write_snapshot(
+            root, day, f"> 잔고 ₩{balance:,} · 수익률 1.00%\n\n" + _record_snapshot(day, {"알파전자": price})
+        )
+
+    assert module.main([str(root / "2026" / "10" / "2026-10-02.md"), "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["account"]["peak_date"] == "2026-09-30"
+    assert payload["account"]["mdd"] == pytest.approx(-12.0)
+    assert payload["record_history"]["from"] == "2026-09-30"
+    assert (root / ".peak_drawdown_state.json").is_file()
+    assert not (root / "2026" / "10" / ".peak_drawdown_state.json").exists()
 
 
 def test_render_names_both_axes_and_forbids_summing(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,6 +1,6 @@
 """포트폴리오 스냅샷 인제스트.
 
-`output/portfolio/<날짜>.md`는 Google Sheets 덤프에서 만들어져 여러 스크립트가 다시 읽는다.
+`output/portfolio/<yyyy>/<mm>/<날짜>.md`는 Google Sheets 덤프에서 만들어져 여러 스크립트가 다시 읽는다.
 쓰는 쪽(`extract_portfolio`)과 읽는 쪽(`peak_drawdown`·`portfolio_diff`)이 각자 표 파서를
 들고 있었고, 셀에서 마크다운 이스케이프를 푸느냐 마느냐가 서로 달랐다. 여기서 하나로 두고
 그 차이는 인자로 고른다.

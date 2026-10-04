@@ -25,7 +25,7 @@
 데이터 소스:
 - 일봉 OHLCV — `invagent.datafeed.daily` (StockEasy 정규장 우선, 네이버 대체 시 꼬리표).
 - 티커 해석 — `context/ticker_overrides.md` → `analyze-stock/scripts/fetch_stock_info.py` 순.
-- 계좌 기록 고점 — `output/portfolio/*.md` 스냅샷의 `## 보유` 표 (외부 조회 없음).
+- 계좌 기록 고점 — `output/portfolio/<yyyy>/<mm>/*.md` 스냅샷의 `## 보유` 표 (외부 조회 없음).
 
 실패 정책: 티커 미해석·시세 수집 실패는 해당 행만 사유를 표기하고 계속 진행한다(exit 0).
 브리핑을 블로킹해서는 안 된다. 스냅샷 파싱 자체가 실패할 때만 exit 1.
@@ -44,6 +44,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from invagent.core.archive import archive_root, dated_files
 from invagent.datafeed import cache as http_cache, daily
 from invagent.datafeed.snapshot import CASH_SECTOR, parse_balance, parse_holdings, split_row, to_float
 from invagent.datafeed.tickers import TICKER_RE, load_overrides, resolve_code
@@ -200,8 +201,8 @@ def analyze_holdings(
 def account_mdd(snapshot_dir: Path, today_balance: float | None, today: str) -> dict:
     """과거 스냅샷들의 잔고 최고치 대비 오늘 잔고의 MDD."""
     history: list[tuple[str, float]] = []
-    for path in sorted(snapshot_dir.glob("*.md")):
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", path.stem) or path.stem > today:
+    for path in dated_files(snapshot_dir):
+        if path.stem > today:
             continue
         balance = parse_balance(path.read_text(encoding="utf-8"))
         if balance:
@@ -261,12 +262,7 @@ def load_record_history(
     이 축의 존재 이유가 "네트워크 없이도 남는 낙폭"이므로 한 파일의 형식 차이로 죽으면 안 된다.
     """
     history: dict[str, list[tuple[str, float]]] = {}
-    files = sorted(snapshot_dir.glob("*.md")) if snapshot_dir.is_dir() else []
-    files = [
-        path for path in files
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", path.stem)
-        and (asof is None or path.stem <= asof)
-    ]
+    files = [path for path in dated_files(snapshot_dir) if asof is None or path.stem <= asof]
     valid_dates: list[str] = []
     for path in files:
         try:
@@ -640,7 +636,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-cache", action="store_true", help="캐시를 쓰지 않고 매번 새로 받는다 (캐시 오염 의심 시)")
     parser.add_argument("--append", action="store_true", help="스냅샷 파일에 섹션을 덧붙인다")
     parser.add_argument("--overrides", type=Path, help="티커 override 파일 경로")
-    parser.add_argument("--portfolio-dir", type=Path, help="계좌 MDD용 스냅샷 디렉토리")
+    parser.add_argument("--portfolio-dir", type=Path, help="계좌 MDD용 스냅샷 루트 (기본: 스냅샷의 <yyyy>/<mm> 위 디렉토리)")
     parser.add_argument("--state-file", type=Path, help="MDD 최초 발동일과 재개 상태 JSON")
     parser.add_argument("--sessions", type=Path, help="검증된 거래일 날짜 목록(JSON 또는 한 줄 한 날짜)")
     parser.add_argument("--review-completed", action="store_true", help="-15% 발동 후 복기 완료를 명시한다")
@@ -657,7 +653,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: 스냅샷 파싱 실패 — {e}", file=sys.stderr)
         return 1
 
-    snapshot_dir = args.portfolio_dir or args.snapshot.parent
+    snapshot_dir = args.portfolio_dir or archive_root(args.snapshot)
     history, history_meta = load_record_history(snapshot_dir, args.snapshot.stem)
     results = analyze_holdings(
         holdings, load_overrides(args.overrides), history, args.snapshot.stem

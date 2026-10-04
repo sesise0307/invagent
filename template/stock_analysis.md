@@ -170,7 +170,7 @@
 
 ## 3. 포트폴리오 비교
 
-> 스냅샷 `output/portfolio/{yyyy-mm-dd}.md` 기준. 표 + 불릿.
+> 스냅샷 `output/portfolio/{yyyy}/{mm}/{yyyy-mm-dd}.md` 기준. 표 + 불릿.
 
 **상대 매력도** (보유 종목 대비)
 
@@ -371,7 +371,7 @@
 | StockEasy 리포트 | `securities-reports?stock_code=[티커]` — [증권사/제목] | {yyyy-mm-dd} |
 | 웹 | [제목](URL) | {yyyy-mm-dd} |
 | 아카이브 | `output/daily-digest/…:{줄번호}` | {yyyy-mm-dd} |
-| 포트폴리오 | `output/portfolio/{yyyy-mm-dd}.md` | {yyyy-mm-dd} |
+| 포트폴리오 | `output/portfolio/{yyyy}/{mm}/{yyyy-mm-dd}.md` | {yyyy-mm-dd} |
 
 **미수집**
 
