@@ -3881,6 +3881,20 @@ def _weekly_skill() -> str:
     return (SKILLS_ROOT / "weekly-investment-review" / "SKILL.md").read_text(encoding="utf-8")
 
 
+def test_review_skills_file_results_by_year_and_month() -> None:
+    """주간·월간 리뷰도 스냅샷·브리핑처럼 `output/reviews/<yyyy>/<mm>/`에 쌓는다."""
+    weekly = (SKILLS_ROOT / "weekly-investment-review" / "SKILL.md").read_text(encoding="utf-8")
+    monthly = (SKILLS_ROOT / "monthly-investment-review" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "output/reviews/<yyyy>/<mm>/<yyyy-mm-dd>_weekly.md" in weekly
+    assert "output/reviews/<yyyy>/<mm>/<yyyy-mm>_monthly.md" in monthly
+    # 병합본도 같은 폴더에 둔다 — output/ 루트에 흩어지지 않게
+    assert "--proposed output/weekly-review.md" not in weekly
+    assert "--prepared-out output/2026-09_merged.md" not in weekly
+    assert "_weekly_merged.md" in weekly
+    assert "_monthly_merged.md" in monthly
+
+
 def test_weekly_skill_records_the_notion_overwrite_hazard() -> None:
     """드리프트 가드 — replace_content가 본문 전체를 덮는다는 사실과 백업·검증 순서를 남긴다."""
     skill = _weekly_skill()

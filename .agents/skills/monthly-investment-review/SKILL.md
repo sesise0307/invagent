@@ -65,12 +65,15 @@ Notion 플러그인/앱 커넥터를 사용한다. 필요한 읽기 또는 쓰�
 ### 4. 노션 기록
 
 기존 페이지 본문과 이번 분석을 각각 로컬 파일로 준비하고, 아래 스크립트로 월별 리뷰 블록을 갱신한다.
-두 입력 파일은 `output/` 아래에 둔다.
+이번 분석은 `output/reviews/<yyyy>/<mm>/<yyyy-mm>_monthly.md`(리뷰 대상 월 기준)에, 갱신 본문은 같은
+폴더의 `<yyyy-mm>_monthly_merged.md`에 둔다. 주간 리뷰와 같은 `<yyyy>/<mm>/` 폴더라 한 달의 리뷰가
+한 곳에 모인다.
 
 ```bash
 uv run python .agents/skills/monthly-investment-review/scripts/review_upsert.py \
-  --existing <기존 본문.md> --proposed <이번 분석.md> --month YYYY-MM \
-  --prepared-out <갱신 본문.md> --json
+  --existing <기존 본문.md> \
+  --proposed output/reviews/2026/09/2026-09_monthly.md --month 2026-09 \
+  --prepared-out output/reviews/2026/09/2026-09_monthly_merged.md --json
 ```
 
 스크립트가 만든 월별 고유 표식은 노션 저장 시에도 보존한다. 같은 월 재실행은 해당 블록만

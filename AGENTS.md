@@ -357,6 +357,9 @@ under `portfolio/`, briefings in one folder per month — until 2026-10-04; sinc
 they were moved on disk and the paths quoted inside reports, briefings, the index and
 theme files were rewritten in the same pass. The daily `raw/`, `media/` and `links/`
 directories keep their flat names, because step 7 deletes everything but today's.
+Weekly and monthly reviews follow the same folders under `output/reviews/<yyyy>/<mm>/`:
+`<yyyy-mm-dd>_weekly.md` keyed by the week's Monday and `<yyyy-mm>_monthly.md` keyed by the
+reviewed month, each with its `_merged.md` Notion body beside it.
 
 `extract_portfolio.py` grades holdings on the **average-cost** axis only, so a
 position that ran up and then rolled over stays silent while it is still in
