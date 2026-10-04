@@ -291,7 +291,9 @@ Holding-specific buy and sell triggers — add-on tranches, lifted buying freeze
 trend-exit lines, remaining profit-taking, earnings-based invalidation — live in
 `output/watchlist/보유_트리거.md`. `analyze-stock` step 11 and user-confirmed briefing decisions register
 them, and `daily-digest` step 1-3-2 checks every entry each day against `turn_scan`/`stage_scan` closes
-and reports sells before buys in the decision section; holdings without their own triggers are skipped. The
+and reports sells before buys in the decision section; holdings without their own triggers are skipped. Non-held names that cleared the value gate but are blocked only on timing sit in
+`output/watchlist/돌파선_감시.md`, which step 1-3-3 re-scans each day with `turn_scan` closes; a sector group
+defined there (조선·엔진, user decision 2026-10-04) needs its sector confirmation as well as the breakout. The
 file is gitignored working data; its price lines come from the report's target range as of a stated
 date, so the briefing flags them for recalculation once they age. `context/my_rules.md`
 「매매규칙 16」 caps the AI/semiconductor/substrate/power sector at 65% of evaluated weight; step 8

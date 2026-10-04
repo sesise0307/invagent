@@ -2987,6 +2987,21 @@ def test_daily_digest_documents_peak_drawdown_step() -> None:
     assert "어느 축에서 걸렸는지를 반드시 밝힌다" in skill
 
 
+def test_daily_digest_checks_breakout_watchlist_every_day() -> None:
+    skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "### 1-3-3단계: 돌파선 감시 리스트 점검" in skill
+    assert "output/watchlist/돌파선_감시.md" in skill
+    step = skill.split("### 1-3-3단계", 1)[1].split("\n### ", 1)[0]
+    # 판정은 turn_scan 종가로만, 결과는 파일에 다시 써서 다음 날이 이어 본다
+    assert "turn_scan.py" in step
+    assert "종가" in step
+    assert "갱신" in step
+    # 섹터 확인 그룹은 개별 돌파만으로 매수 검토로 올리지 않는다
+    assert "섹터 확인" in step
+    assert "보유_트리거.md" in step
+
+
 def test_daily_digest_documents_image_reading_step() -> None:
     skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
 
