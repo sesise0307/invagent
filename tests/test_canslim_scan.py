@@ -295,7 +295,7 @@ def test_cli_keeps_going_when_info_tab_is_refused(fake_network, capsys) -> None:
     routes, _ = fake_network
     routes["info-tab/213420"] = urllib.error.HTTPError("u", 401, "Unauthorized", {}, None)
     routes["/213420/trend"] = _naver_trend(10)
-    routes["/213420/basic"] = {"stockExchangeName": "KOSDAQ"}
+    routes["/213420/basic"] = {"stockName": "덕산네오룩스", "stockExchangeName": "KOSDAQ"}
     routes["big-picture"] = {"kospi": {"status": "confirmed_uptrend"},
                              "kosdaq": {"status": "market_in_correction"}}
 
@@ -305,7 +305,10 @@ def test_cli_keeps_going_when_info_tab_is_refused(fake_network, capsys) -> None:
     assert "[누락] info_tab" in captured.err
     assert "점수 1/7" in captured.out and "❓ C" in captured.out
     assert "❌ M  KOSDAQ 조정장" in captured.out
-    assert "상장 시장은 네이버" in captured.out
+    assert "덕산네오룩스(213420)" in captured.out
+    source = next(ln for ln in captured.out.splitlines() if ln.startswith("출처:"))
+    assert "StockEasy info-tab" not in source, "실패한 출처를 적지 않는다"
+    assert "종목명·상장 시장은 네이버" in source
 
 
 def test_cli_does_not_ask_naver_for_the_market_when_info_tab_has_it(fake_network) -> None:

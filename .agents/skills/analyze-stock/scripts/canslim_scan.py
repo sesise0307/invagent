@@ -234,7 +234,7 @@ def print_result(name: str, code: str, result: dict, sources: list[str]) -> None
     for letter in LETTERS:
         item = result[letter]
         print(f"  {MARK_ICON[item['mark']]} {letter}  {item['detail']}")
-    print(f"출처: {' · '.join(sources)}")
+    print(f"출처: {' · '.join(sources) or '없음'}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -255,34 +255,42 @@ def main(argv: list[str] | None = None) -> int:
 
     cookie = stockeasy.load_cookie()
     info = _fetch_info(ticker, cookie)
-    sources = ["StockEasy info-tab"]
+    sources = []
     if info:
+        sources.append("StockEasy info-tab")
         name = (info.get("stock_info") or {}).get("name") or name
     # 우선주는 실적이 따로 없다 — C·A만 본주로 잰다. 가격·RS·수급은 우선주 자기 것.
     fs_ticker, is_preferred = tickers.fundamentals_code(ticker)
     fundamentals = None
     if is_preferred:
         fundamentals = _fetch_info(fs_ticker, cookie)
-        parent = ((fundamentals or {}).get("stock_info") or {}).get("name")
-        sources.append(f"우선주 실적은 본주 {parent}({fs_ticker})" if parent else f"우선주 실적은 본주 {fs_ticker}")
+        if fundamentals:
+            parent = (fundamentals.get("stock_info") or {}).get("name")
+            sources.append(f"우선주 실적은 본주 {parent}({fs_ticker})" if parent else f"우선주 실적은 본주 {fs_ticker}")
 
-    # 상장 시장은 info-tab에서 읽는다. 막혔으면 네이버에서 받아 M을 엉뚱한 시장으로 채점하지 않는다.
+    # 종목명·상장 시장은 info-tab에서 읽는다. 막혔으면 네이버에서 받는다 — 시장을 모르면 M을
+    # 엉뚱한 시장으로 채점하게 되고, 이름을 모르면 티커만 찍힌다.
     market = None
     if not ((info or {}).get("stock_info") or {}).get("market"):
-        market, me = naver.fetch_listing_market(ticker)
-        if me:
-            print(f"[누락] 상장 시장 — {me}", file=sys.stderr)
+        basic, be = naver.fetch_basic(ticker)
+        if be:
+            print(f"[누락] 종목명·상장 시장 — {be}", file=sys.stderr)
         else:
-            sources.append(f"상장 시장은 네이버({market})")
+            market = basic["market"]
+            if not info and basic.get("name"):
+                name = basic["name"]
+            sources.append(f"종목명·상장 시장은 네이버({market})")
 
     trend, te = naver.fetch_investor_trend(ticker)
     if te:
         print(f"[누락] 투자자별 매매동향 — {te}", file=sys.stderr)
-    sources.append("네이버 투자자별 매매동향")
-    big_picture, be = stockeasy.fetch_market_json("big_picture")
-    if be:
-        print(f"[누락] 빅픽처 — {be}", file=sys.stderr)
-    sources.append("StockEasy 빅픽처")
+    else:
+        sources.append("네이버 투자자별 매매동향")
+    big_picture, bpe = stockeasy.fetch_market_json("big_picture")
+    if bpe:
+        print(f"[누락] 빅픽처 — {bpe}", file=sys.stderr)
+    else:
+        sources.append("StockEasy 빅픽처")
 
     result = evaluate(info, big_picture, trend, fundamentals=fundamentals, market=market)
     if args.json:

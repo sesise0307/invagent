@@ -3,7 +3,7 @@
 `api.finance.naver.com/siseJson.naver`는 무인증이고, 응답이 표준 JSON이 아니라 작은따옴표를
 쓴 파이썬 리터럴이다. 투자자별 매매동향(`m.stock.naver.com/api/stock/<code>/trend`)도 무인증
 JSON이고 한 번에 최근 60거래일까지 준다 — StockEasy에는 종목 기관 수급이 없어 이쪽이 출처다.
-상장 시장(`.../basic`의 `stockExchangeName`)도 무인증이라 StockEasy `info-tab`이 막혔을 때 쓴다.
+종목명·상장 시장(`.../basic`)도 무인증이라 StockEasy `info-tab`이 막혔을 때 쓴다.
 인증 축이 없으므로 캐시 키는 항상 anon이다.
 """
 
@@ -123,8 +123,8 @@ def fetch_investor_trend(code: str, days: int = TREND_MAX_DAYS) -> tuple[list[di
     return rows or [], err
 
 
-def fetch_listing_market(code: str) -> tuple[str | None, str | None]:
-    """상장 시장 이름(`KOSPI`·`KOSDAQ` 등). 실패하면 (None, 사유)."""
+def fetch_basic(code: str) -> tuple[dict | None, str | None]:
+    """종목명과 상장 시장(`KOSPI`·`KOSDAQ` 등) — `{"name", "market"}`. 실패하면 (None, 사유)."""
     data, err = http.get_json(
         BASIC_URL.format(code=code),
         authed=False,
@@ -133,5 +133,8 @@ def fetch_listing_market(code: str) -> tuple[str | None, str | None]:
     )
     if err:
         return None, err
-    market = (data or {}).get("stockExchangeName") or ((data or {}).get("stockExchangeType") or {}).get("name")
-    return (market, None) if market else (None, "상장 시장 필드 없음")
+    data = data or {}
+    market = data.get("stockExchangeName") or (data.get("stockExchangeType") or {}).get("name")
+    if not market:
+        return None, "상장 시장 필드 없음"
+    return {"name": data.get("stockName"), "market": market}, None
