@@ -109,3 +109,25 @@ def test_fetch_investor_trend_reports_the_failure_instead_of_raising(monkeypatch
 
     assert rows == []
     assert err and "timed out" in err
+
+
+def test_fetch_listing_market_reads_the_exchange_name(monkeypatch) -> None:
+    seen = {}
+    body = b'{"itemCode":"213420","stockExchangeType":{"code":"KQ","name":"KOSDAQ"},"stockExchangeName":"KOSDAQ"}'
+    monkeypatch.setattr(http, "read_url", lambda url, headers, timeout: seen.update(url=url) or body)
+
+    market, err = naver.fetch_listing_market("213420")
+
+    assert (market, err) == ("KOSDAQ", None)
+    assert seen["url"] == "https://m.stock.naver.com/api/stock/213420/basic"
+
+
+def test_fetch_listing_market_reports_the_failure_instead_of_raising(monkeypatch) -> None:
+    def boom(url, headers, timeout):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(http, "read_url", boom)
+
+    market, err = naver.fetch_listing_market("213420")
+
+    assert market is None and "timed out" in err

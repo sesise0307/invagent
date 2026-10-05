@@ -171,12 +171,13 @@ def evaluate(
     big_picture: dict | None,
     trend: list[dict],
     fundamentals: dict | None = None,
+    market: str | None = None,
 ) -> dict:
     """info-tab 페이로드·빅픽처·투자자별 매매동향 → 항목별 `{mark, detail}`과 `score`.
 
     mark는 `pass`·`fail`·`warn`(경계, 점수 미산입)·`unknown`(미수집) 중 하나다.
     우선주는 실적이 따로 없으므로 C·A만 `fundamentals`(본주 info-tab)에서 읽고, 가격·RS·수급은
-    우선주 자기 `info`로 잰다.
+    우선주 자기 `info`로 잰다. `market`은 info-tab이 없을 때 다른 출처에서 받은 상장 시장이다.
     """
     info = info or {}
     fs_info = fundamentals or info
@@ -194,7 +195,7 @@ def evaluate(
             ((fundamentals or {}).get("rs_data") or {}).get("rs"),
         ),
         "I": _check_i(trend),
-        "M": _check_m(big_picture, (info.get("stock_info") or {}).get("market")),
+        "M": _check_m(big_picture, (info.get("stock_info") or {}).get("market") or market),
     }
     result["score"] = {
         "passed": sum(result[k]["mark"] == "pass" for k in LETTERS),
@@ -265,6 +266,15 @@ def main(argv: list[str] | None = None) -> int:
         parent = ((fundamentals or {}).get("stock_info") or {}).get("name")
         sources.append(f"우선주 실적은 본주 {parent}({fs_ticker})" if parent else f"우선주 실적은 본주 {fs_ticker}")
 
+    # 상장 시장은 info-tab에서 읽는다. 막혔으면 네이버에서 받아 M을 엉뚱한 시장으로 채점하지 않는다.
+    market = None
+    if not ((info or {}).get("stock_info") or {}).get("market"):
+        market, me = naver.fetch_listing_market(ticker)
+        if me:
+            print(f"[누락] 상장 시장 — {me}", file=sys.stderr)
+        else:
+            sources.append(f"상장 시장은 네이버({market})")
+
     trend, te = naver.fetch_investor_trend(ticker)
     if te:
         print(f"[누락] 투자자별 매매동향 — {te}", file=sys.stderr)
@@ -274,7 +284,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[누락] 빅픽처 — {be}", file=sys.stderr)
     sources.append("StockEasy 빅픽처")
 
-    result = evaluate(info, big_picture, trend, fundamentals=fundamentals)
+    result = evaluate(info, big_picture, trend, fundamentals=fundamentals, market=market)
     if args.json:
         print(json.dumps({"stock_code": ticker, "stock_name": name, "fetched_at": date.today().isoformat(),
                           "sources": sources, **result}, ensure_ascii=False))

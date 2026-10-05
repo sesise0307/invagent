@@ -289,18 +289,34 @@ def test_cli_scores_a_preferred_share_on_both_axes(fake_network, capsys) -> None
 
 
 def test_cli_keeps_going_when_info_tab_is_refused(fake_network, capsys) -> None:
+    """info-tab이 막혀도 상장 시장은 네이버에서 받아 M을 그 시장으로 채점한다."""
     import urllib.error
 
     routes, _ = fake_network
-    routes["info-tab/005930"] = urllib.error.HTTPError("u", 401, "Unauthorized", {}, None)
-    routes["/005930/trend"] = _naver_trend(10)
-    routes["big-picture"] = {"kospi": {"status": "confirmed_uptrend"}}
+    routes["info-tab/213420"] = urllib.error.HTTPError("u", 401, "Unauthorized", {}, None)
+    routes["/213420/trend"] = _naver_trend(10)
+    routes["/213420/basic"] = {"stockExchangeName": "KOSDAQ"}
+    routes["big-picture"] = {"kospi": {"status": "confirmed_uptrend"},
+                             "kosdaq": {"status": "market_in_correction"}}
 
-    assert canslim.main(["005930"]) == 0
+    assert canslim.main(["213420"]) == 0
 
     captured = capsys.readouterr()
     assert "[누락] info_tab" in captured.err
-    assert "점수 1/7" in captured.out and "❓ C" in captured.out and "❓ M" in captured.out
+    assert "점수 1/7" in captured.out and "❓ C" in captured.out
+    assert "❌ M  KOSDAQ 조정장" in captured.out
+    assert "상장 시장은 네이버" in captured.out
+
+
+def test_cli_does_not_ask_naver_for_the_market_when_info_tab_has_it(fake_network) -> None:
+    routes, seen = fake_network
+    routes["info-tab/005930"] = _info(stock_info={"market": "KOSPI"})
+    routes["/005930/trend"] = []
+    routes["big-picture"] = {}
+
+    canslim.main(["005930"])
+
+    assert not any("/basic" in url for url in seen)
 
 
 def test_preferred_share_without_its_own_rs_shows_the_common_rs_as_reference_only() -> None:
