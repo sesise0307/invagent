@@ -656,7 +656,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_cache:
         http_cache.disable()
 
-    stock, err, code = stockeasy.resolve_stock(args.query)
+    stock, err, code = tickers.resolve_stock(args.query)
     if err:
         print(f"ERROR: {err}", file=sys.stderr)
         return code

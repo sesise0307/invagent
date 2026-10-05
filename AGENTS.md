@@ -29,7 +29,9 @@ ones, the `STOCKEASY_COOKIE` session, stock resolution, `fs_rows`), `naver`
 (daily OHLCV), `daily` (the bars every price judgement reads — see below), `cache` (the shared response cache),
 `ratelimit` (per-host request spacing, retry and cool-down — see below), `env` (repository root,
 `output/`, `.env` values), `series` (`sma`), `tickers` (override-first ticker
-resolution plus the preferred-to-common mapping below) and `snapshot` (portfolio
+resolution — then Naver's `ac.stock.naver.com` search, with StockEasy `stock-search` only when
+Naver fails, so StockEasy's request budget goes to values only it serves — plus the
+preferred-to-common mapping below) and `snapshot` (portfolio
 snapshot tables). `daily.fetch_daily_bars` takes the regular-session bars from the StockEasy
 `info-tab` `chart` (three years of 1-day OHLCV) and falls back to Naver only when the cookie is
 missing or the call fails, returning a fallback note that every script prints: Naver's `siseJson`
@@ -458,7 +460,10 @@ and pre-dawn re-runs off the network: a quote URL (`info-tab`, Naver `siseJson`)
 market is closed — weekdays after the 20:00 NXT close until 09:00 KST, and weekends — stays fresh
 until the next weekday open, since nothing it carries can change before then. News, filings and
 reports are not extended, because they keep arriving after the close. Entries are kept four days so
-a Friday-evening quote survives to Monday.
+a Friday-evening quote survives to Monday. Judgement bars pull that window forward: `daily.fetch_daily_bars`
+passes `closed_from=cache.REGULAR_SESSION_SETTLED` (15:40), since regular-session bars stop changing at the
+15:30 close, so an afternoon re-run does not fetch `info-tab` again; other callers of the same URL keep the
+20:00 rule because they print the after-hours quote. Change the constant and the time quoted here together.
 
 StockEasy cuts connections or refuses requests once too many arrive at once, and parallel
 subagents analysing several stocks do not know about each other. `src/invagent/datafeed/ratelimit.py`

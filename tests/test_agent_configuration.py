@@ -18,6 +18,7 @@ import pytest
 from invagent.core.archive import dated_path
 from invagent.datafeed import naver as datafeed_naver
 from invagent.datafeed import stockeasy as datafeed_stockeasy
+from invagent.datafeed import tickers as datafeed_tickers
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1903,6 +1904,12 @@ def test_ticker_overrides_are_consulted_from_one_place() -> None:
 
     assert "tickers.resolve_stock(" in stage
     assert "stockeasy.resolve_stock(" not in stage
+    # 이름 검색은 네이버가 먼저다 — 스크립트가 StockEasy 검색을 직접 부르면 요청 한도를 다시 깎는다.
+    stock_info = (SKILLS_ROOT / "analyze-stock" / "scripts" / "fetch_stock_info.py").read_text(
+        encoding="utf-8"
+    )
+    assert "tickers.resolve_stock(" in stock_info
+    assert "stockeasy.resolve_stock(" not in stock_info
     assert "from invagent.datafeed.tickers import" in peak
 
 
@@ -2586,9 +2593,9 @@ def test_peak_drawdown_unresolved_ticker_does_not_block_others(
 ) -> None:
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        datafeed_stockeasy,
+        datafeed_tickers,
         "resolve_stock",
-        lambda name: (
+        lambda name, overrides=None: (
             ({"stock_code": "000660"}, None, 0)
             if name == "알파전자"
             else (None, "종목 검색 결과 없음", 1)
@@ -2617,7 +2624,7 @@ def test_peak_drawdown_flags_holdings_measured_on_naver_fallback_bars(
 
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+        datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
     )
     note = daily.fallback_note("STOCKEASY_COOKIE 미설정")
     monkeypatch.setattr(
@@ -2639,7 +2646,7 @@ def test_peak_drawdown_flags_holdings_measured_on_naver_fallback_bars(
 def test_peak_drawdown_overrides_win_over_api(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "999999"}, None, 0)
+        datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "999999"}, None, 0)
     )
 
     assert module.resolve_code("알파전자", {"알파전자": "000660"}) == ("000660", None)
@@ -2660,7 +2667,7 @@ def test_peak_drawdown_overrides_file_ignores_comments(tmp_path: Path) -> None:
 def test_peak_drawdown_fetch_failure_is_non_blocking(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+        datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
     )
     monkeypatch.setattr(module.daily, "fetch_daily_bars", lambda code, days, asof=None: ([], "HTTP 500", None))
 
@@ -2745,7 +2752,7 @@ def test_stock_deepest_band_leaves_nothing_to_warn() -> None:
 def test_render_lists_stock_approaches_per_axis(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+        datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
     )
     # 52주 축 = -9.0%(-10% 임박) / 기록 축 = -9.5%(-10% 임박)
     monkeypatch.setattr(
@@ -2771,7 +2778,7 @@ def test_render_omits_approach_line_when_nothing_is_close(
 ) -> None:
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+        datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
     )
     monkeypatch.setattr(
         module.daily,
@@ -2865,7 +2872,7 @@ def test_peak_drawdown_fetches_holdings_concurrently_keeping_order(
 ) -> None:
     """보유 10종목이면 네이버 왕복 10회가 직렬로 쌓인다. 병렬로 돌리되 출력 순서는 입력 순서다."""
     module = _load_peak_drawdown_module()
-    monkeypatch.setattr(datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0))
+    monkeypatch.setattr(datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0))
 
     import threading
     import time
@@ -2942,7 +2949,7 @@ def test_peak_drawdown_append_is_idempotent(
 ) -> None:
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+        datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
     )
     monkeypatch.setattr(
         module.daily,
@@ -3283,7 +3290,7 @@ def test_record_axis_survives_market_data_failure(monkeypatch: pytest.MonkeyPatc
     """네트워크가 죽어 52주 축이 비어도 계좌 기록 축은 그대로 표에 남아야 한다."""
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        datafeed_stockeasy, "resolve_stock", lambda name: (None, "종목 검색 결과 없음", 1)
+        datafeed_tickers, "resolve_stock", lambda name, overrides=None: (None, "종목 검색 결과 없음", 1)
     )
     history = {"알파전자": [("2026-08-10", 100_000.0)]}
 
@@ -3303,7 +3310,7 @@ def test_peak_drawdown_reads_history_across_month_folders(
     """스냅샷은 `<yyyy>/<mm>/<날짜>.md`에 쌓인다 — 이력·MDD·상태 파일은 월 폴더가 아니라 루트 기준."""
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        datafeed_stockeasy, "resolve_stock", lambda name: (None, "종목 검색 결과 없음", 1)
+        datafeed_tickers, "resolve_stock", lambda name, overrides=None: (None, "종목 검색 결과 없음", 1)
     )
     root = tmp_path / "portfolio"
     snapshots = {
@@ -3328,7 +3335,7 @@ def test_peak_drawdown_reads_history_across_month_folders(
 def test_render_names_both_axes_and_forbids_summing(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_peak_drawdown_module()
     monkeypatch.setattr(
-        datafeed_stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
+        datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
     )
     monkeypatch.setattr(
         module.daily,

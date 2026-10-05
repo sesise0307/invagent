@@ -15,7 +15,9 @@
 닫힌 동안(평일 NXT 마감 20:00 뒤 ~ 09:00, 주말) 받았다면 다음 평일 09:00(KST)까지 그대로
 쓴다. 저녁·새벽 재실행이 바뀌지 않은 값을 다시 받으며 StockEasy 요청 한도를 깎던 것을
 없앤다. 뉴스·공시는 마감 뒤에도 새로 나오므로 대상이 아니다. 공휴일은 모른다 — 공휴일에는
-15분 TTL로 다시 받을 뿐이다.
+15분 TTL로 다시 받을 뿐이다. 정규장 일봉만 쓰는 호출(`daily.fetch_daily_bars`)은 `closed_from`에
+`REGULAR_SESSION_SETTLED`(15:40)를 넘겨 그 창을 앞당긴다 — 시간외 시세가 움직여도 정규장 봉은
+그대로이므로, 오후 재실행이 같은 `info-tab`을 다시 받지 않는다.
 
 **인증 상태를 키에 섞는 이유**: 비인증 호출은 HTTP 401을 받는다. 그 응답을 쿠키가 붙은
 호출에 되돌려주면 쿠키를 고쳐도 계속 401로 보인다. 키는 쿠키의 **유무**만 반영하고
@@ -33,7 +35,7 @@ import os
 import tempfile
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, time as clock, timedelta
 from pathlib import Path
 from typing import Callable, Iterator
 from zoneinfo import ZoneInfo
@@ -57,6 +59,8 @@ KST = ZoneInfo("Asia/Seoul")
 MARKET_OPEN_HOUR = 9
 # NXT 애프터마켓이 20:00에 끝난다. 그 전까지는 `info-tab`의 시간외 시세가 움직인다.
 MARKET_CLOSED_FROM_HOUR = 20
+# 정규장은 15:30에 끝난다. 종가 반영이 늦는 경우를 위해 10분을 둔다.
+REGULAR_SESSION_SETTLED = clock(15, 40)
 # 마감 뒤 다음 개장까지 유효한 시세 URL의 표지.
 MARKET_CLOSE_STABLE = ("/stock-info/info-tab/", "siseJson.naver")
 
@@ -105,8 +109,13 @@ def lock_path(url: str, *, authed: bool) -> Path:
     return cache_path(url, authed=authed).with_suffix(".lock")
 
 
-def load(url: str, *, authed: bool, ttl: int | None = None) -> bytes | None:
-    """TTL 안의 응답 본문. 없거나 만료면 None."""
+def load(
+    url: str, *, authed: bool, ttl: int | None = None, closed_from: clock | None = None
+) -> bytes | None:
+    """TTL 안의 응답 본문. 없거나 만료면 None.
+
+    `closed_from`은 평일 장이 닫혔다고 보는 시각이다(기본 NXT 마감 20:00).
+    """
     if not enabled():
         return None
     path = cache_path(url, authed=authed)
@@ -116,7 +125,7 @@ def load(url: str, *, authed: bool, ttl: int | None = None) -> bytes | None:
         return None
     now = _now()
     if now - stored_at > (ttl_seconds() if ttl is None else ttl):
-        if ttl is not None or not _stable_until_open(url, stored_at, now):
+        if ttl is not None or not _stable_until_open(url, stored_at, now, closed_from):
             return None
     try:
         return path.read_bytes()
@@ -138,11 +147,12 @@ def load_stale(url: str, *, authed: bool) -> tuple[bytes, float] | None:
         return None
 
 
-def _next_open(stored_at: float) -> datetime | None:
+def _next_open(stored_at: float, closed_from: clock | None = None) -> datetime | None:
     """장이 닫힌 동안 받은 응답이면 다음 평일 개장 시각(KST), 아니면 None."""
+    closed_from = closed_from or clock(MARKET_CLOSED_FROM_HOUR)
     stored = datetime.fromtimestamp(stored_at, KST)
     weekday = stored.weekday() < 5
-    if weekday and MARKET_OPEN_HOUR <= stored.hour < MARKET_CLOSED_FROM_HOUR:
+    if weekday and clock(MARKET_OPEN_HOUR) <= stored.time() < closed_from:
         return None
     day = stored.date()
     if not (weekday and stored.hour < MARKET_OPEN_HOUR):
@@ -152,10 +162,12 @@ def _next_open(stored_at: float) -> datetime | None:
     return datetime(day.year, day.month, day.day, MARKET_OPEN_HOUR, tzinfo=KST)
 
 
-def _stable_until_open(url: str, stored_at: float, now: float) -> bool:
+def _stable_until_open(
+    url: str, stored_at: float, now: float, closed_from: clock | None = None
+) -> bool:
     if not any(marker in url for marker in MARKET_CLOSE_STABLE):
         return False
-    next_open = _next_open(stored_at)
+    next_open = _next_open(stored_at, closed_from)
     return next_open is not None and now < next_open.timestamp()
 
 
@@ -224,19 +236,21 @@ def _key_lock(url: str, *, authed: bool) -> Iterator[None]:
             handle.close()
 
 
-def get_or_fetch(url: str, *, authed: bool, fetcher: Callable[[], bytes]) -> tuple[bytes, bool]:
+def get_or_fetch(
+    url: str, *, authed: bool, fetcher: Callable[[], bytes], closed_from: clock | None = None
+) -> tuple[bytes, bool]:
     """캐시 본문 또는 `fetcher` 결과와 cache-hit 여부를 반환한다.
 
     잠금 획득 뒤 다시 읽어 같은 cold-cache URL을 기다리던 프로세스가 네트워크를
     중복 호출하지 않게 한다. `fetcher` 예외와 실패 응답은 저장하지 않는다.
     """
-    cached = load(url, authed=authed)
+    cached = load(url, authed=authed, closed_from=closed_from)
     if cached is not None:
         return cached, True
     if not enabled():
         return fetcher(), False
     with _key_lock(url, authed=authed):
-        cached = load(url, authed=authed)
+        cached = load(url, authed=authed, closed_from=closed_from)
         if cached is not None:
             return cached, True
         body = fetcher()

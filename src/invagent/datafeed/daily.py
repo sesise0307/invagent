@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from invagent.datafeed import naver, stockeasy
+from invagent.datafeed import cache, naver, stockeasy
 
 
 def chart_bars(info: dict) -> list[dict]:
@@ -50,8 +50,11 @@ def fetch_daily_bars(
     if not cookie:
         reason = f"{stockeasy.COOKIE_ENV} 미설정"
     else:
+        # 정규장 봉만 쓰므로 15:40 뒤 받은 응답은 다음 개장까지 그대로 쓴다.
         info, err = stockeasy.fetch_stock_json(
-            stockeasy.ENDPOINTS["info_tab"].format(code=code), cookie=cookie
+            stockeasy.ENDPOINTS["info_tab"].format(code=code),
+            cookie=cookie,
+            closed_from=cache.REGULAR_SESSION_SETTLED,
         )
         bars = [b for b in chart_bars(info) if start <= b["date"] <= end_key]
         if bars:

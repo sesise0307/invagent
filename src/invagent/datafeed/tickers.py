@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from invagent.datafeed import stockeasy
+from invagent.datafeed import naver, stockeasy
 from invagent.datafeed.env import repo_root
 
 TICKER_RE = re.compile(r"^\d{6}$")
@@ -69,7 +69,7 @@ def resolve_code(name: str, overrides: dict[str, str] | None = None) -> tuple[st
     overrides = load_overrides() if overrides is None else overrides
     if name in overrides:
         return overrides[name], None
-    hit, err, *_ = stockeasy.resolve_stock(name)
+    hit, err, *_ = resolve_stock(name, overrides)
     if hit and hit.get("stock_code"):
         return hit["stock_code"], None
     return None, err or "티커 해석 실패"
@@ -78,13 +78,20 @@ def resolve_code(name: str, overrides: dict[str, str] | None = None) -> tuple[st
 def resolve_stock(query: str, overrides: dict[str, str] | None = None):
     """종목명 또는 티커 → (종목 레코드, 사유, exit_code). 오버라이드가 API보다 우선한다.
 
-    `stockeasy.resolve_stock`과 같은 모양을 돌려주되 오버라이드 단계를 앞에 둔다. 이름·거래소는
+    `stockeasy.resolve_stock`과 같은 모양을 돌려주되 오버라이드 단계를 앞에 두고, 검색은 네이버가
+    먼저다 — StockEasy 검색은 네이버가 실패했을 때만 부른다. 이름·거래소는
     오버라이드 파일에 없으므로 이름은 질의 그대로, 거래소는 미상으로 채운다.
     """
     overrides = load_overrides() if overrides is None else overrides
     if query in overrides:
         return {"stock_code": overrides[query], "stock_name": query, "exchange": None}, None, 0
-    return stockeasy.resolve_stock(query)
+    if TICKER_RE.match(query):
+        return {"stock_code": query, "stock_name": None, "exchange": None}, None, 0
+    hits, err = naver.search_stock(query)
+    if err:
+        # 네이버가 답하지 못할 때만 StockEasy 검색을 쓴다 — 요청 한도가 빠듯한 쪽이다.
+        return stockeasy.resolve_stock(query)
+    return stockeasy.select_hit(hits, query)
 
 
 def fundamentals_code(code: str) -> tuple[str, bool]:

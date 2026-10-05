@@ -105,3 +105,64 @@ def test_an_info_tab_without_bars_in_the_window_falls_back_to_naver(monkeypatch)
 
     assert bars[-1]["close"] == 121700.0
     assert note and "chart" in note
+
+
+def _kst(*args) -> float:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    return datetime(*args, tzinfo=ZoneInfo("Asia/Seoul")).timestamp()
+
+
+@pytest.mark.parametrize(
+    "stored, refetched",
+    [
+        # 정규장이 끝난 뒤 받은 일봉은 시간외가 움직여도 바뀌지 않는다 — 다음 개장까지 재사용.
+        (_kst(2026, 10, 1, 15, 45), False),
+        # 장중에 받은 일봉은 마지막 봉이 장중 값이다 — 다시 받는다.
+        (_kst(2026, 10, 1, 14, 0), True),
+    ],
+)
+def test_bars_fetched_after_the_regular_close_are_reused_until_the_next_open(
+    monkeypatch, stored, refetched
+) -> None:
+    """StockEasy 요청 한도를 일봉 재조회에 쓰지 않는다 — 정규장 종가는 15:30에 확정된다."""
+    import os
+
+    calls = []
+    read = fake_read()
+
+    def counting(url, headers, timeout):
+        calls.append(url)
+        return read(url, headers, timeout)
+
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
+    monkeypatch.setattr(http, "read_url", counting)
+    monkeypatch.delenv(cache.ENV_TTL, raising=False)
+    monkeypatch.setattr(cache, "_now", lambda: stored)
+    daily.fetch_daily_bars("353200", 30, asof="2026-09-30")
+    url = stockeasy.API_BASE + stockeasy.ENDPOINTS["info_tab"].format(code="353200")
+    os.utime(cache.cache_path(url, authed=True), (stored, stored))
+
+    monkeypatch.setattr(cache, "_now", lambda: _kst(2026, 10, 1, 18, 0))
+    bars, err, note = daily.fetch_daily_bars("353200", 30, asof="2026-09-30")
+
+    assert note is None and bars[-1]["close"] == 123300.0
+    assert (len(calls) == 2) is refetched
+
+
+def test_other_info_tab_callers_keep_the_after_hours_window(monkeypatch) -> None:
+    """`fetch_stock_info`는 시간외·NXT 시세를 함께 싣는다 — 20:00 전에는 15분 TTL 그대로."""
+    import os
+
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
+    monkeypatch.setattr(http, "read_url", fake_read())
+    monkeypatch.delenv(cache.ENV_TTL, raising=False)
+    stored = _kst(2026, 10, 1, 15, 45)
+    monkeypatch.setattr(cache, "_now", lambda: stored)
+    daily.fetch_daily_bars("353200", 30, asof="2026-09-30")
+    url = stockeasy.API_BASE + stockeasy.ENDPOINTS["info_tab"].format(code="353200")
+    os.utime(cache.cache_path(url, authed=True), (stored, stored))
+    monkeypatch.setattr(cache, "_now", lambda: _kst(2026, 10, 1, 18, 0))
+
+    assert cache.load(url, authed=True) is None

@@ -56,6 +56,7 @@ def fetch_stock_json(
     params: dict | None = None,
     referer: str = PAGE_BASE,
     cookie: str | None = None,
+    closed_from=None,
 ):
     """종목 API 하나를 호출해 JSON을 반환한다. 실패하면 `(None, 사유)`."""
     url = API_BASE + path
@@ -66,6 +67,7 @@ def fetch_stock_json(
         authed=bool(cookie),
         headers=http.build_headers(referer=referer, cookie=cookie),
         timeout=TIMEOUT,
+        closed_from=closed_from,
     )
 
 
@@ -92,6 +94,11 @@ def resolve_stock(query: str):
     if err:
         return None, f"종목 검색 실패 — {err}", 1
     hits = [h for h in (data or []) if h.get("market") == "KR"] or (data or [])
+    return select_hit(hits, query)
+
+
+def select_hit(hits: list[dict], query: str):
+    """검색 결과 → (종목 레코드, 사유, exit_code). 이름이 정확히 같은 하나, 아니면 유일한 결과."""
     if not hits:
         return None, f"종목 검색 결과 없음 — '{query}'", 1
 

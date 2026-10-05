@@ -4,12 +4,15 @@
 쓴 파이썬 리터럴이다. 투자자별 매매동향(`m.stock.naver.com/api/stock/<code>/trend`)도 무인증
 JSON이고 한 번에 최근 60거래일까지 준다 — StockEasy에는 종목 기관 수급이 없어 이쪽이 출처다.
 종목명·상장 시장(`.../basic`)도 무인증이라 StockEasy `info-tab`이 막혔을 때 쓴다.
+종목명 검색(`ac.stock.naver.com/ac`)은 이름 → 티커의 기본 경로다 — StockEasy 요청 한도를
+시세·실적처럼 StockEasy에만 있는 값에 남겨 두기 위해서다.
 인증 축이 없으므로 캐시 키는 항상 anon이다.
 """
 
 from __future__ import annotations
 
 import json
+import urllib.parse
 from datetime import date, datetime, timedelta
 
 from invagent.datafeed import http
@@ -18,6 +21,8 @@ SISE_URL = "https://api.finance.naver.com/siseJson.naver"
 TREND_URL = "https://m.stock.naver.com/api/stock/{code}/trend"
 TREND_MAX_DAYS = 60
 BASIC_URL = "https://m.stock.naver.com/api/stock/{code}/basic"
+# 종목명 자동완성. StockEasy `stock-search`와 달리 로그인·요청 제한이 없다.
+SEARCH_URL = "https://ac.stock.naver.com/ac"
 REFERER = "https://finance.naver.com/"
 TIMEOUT = http.TIMEOUT
 
@@ -138,3 +143,24 @@ def fetch_basic(code: str) -> tuple[dict | None, str | None]:
     if not market:
         return None, "상장 시장 필드 없음"
     return {"name": data.get("stockName"), "market": market}, None
+
+
+def search_stock(query: str) -> tuple[list[dict] | None, str | None]:
+    """국내 종목명 검색 — StockEasy 검색과 같은 모양 `{"stock_code", "stock_name", "exchange"}`.
+
+    실패하면 (None, 사유). 결과가 없으면 ([], None).
+    """
+    url = f"{SEARCH_URL}?{urllib.parse.urlencode({'q': query, 'target': 'stock'})}"
+    data, err = http.get_json(
+        url,
+        authed=False,
+        headers=http.build_headers(referer="https://m.stock.naver.com/"),
+        timeout=TIMEOUT,
+    )
+    if err:
+        return None, err
+    return [
+        {"stock_code": item["code"], "stock_name": item.get("name"), "exchange": item.get("typeCode")}
+        for item in (data or {}).get("items") or []
+        if item.get("nationCode") == "KOR" and item.get("category") == "stock" and item.get("code")
+    ], None

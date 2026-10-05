@@ -70,8 +70,11 @@ def get_json(
     headers: dict[str, str] | None = None,
     timeout: int = TIMEOUT,
     decode=json.loads,
+    closed_from=None,
 ):
     """JSON 하나를 받아 파싱해 돌려준다. 실패하면 `(None, 사유)`.
+
+    `closed_from`은 `cache.load`로 그대로 넘긴다 — 장 마감으로 보는 시각.
 
     캐시가 준 본문이 파싱되지 않으면 그 항목을 버리고 딱 한 번 다시 받는다. 이전 실행이
     남긴 오류 본문 하나가 TTL 내내 같은 실패를 되풀이하는 것을 막는다.
@@ -82,7 +85,9 @@ def get_json(
         return ratelimit.call_with_retry(_host(url), lambda: read_url(url, request_headers, timeout))
 
     try:
-        body, cache_hit = cache.get_or_fetch(url, authed=authed, fetcher=fetcher)
+        body, cache_hit = cache.get_or_fetch(
+            url, authed=authed, fetcher=fetcher, closed_from=closed_from
+        )
         try:
             payload = decode(body.decode("utf-8"))
         except ValueError:

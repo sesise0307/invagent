@@ -1,6 +1,10 @@
 """`invagent.datafeed.tickers` — 종목명 → 6자리 티커."""
 
-from invagent.datafeed import stockeasy, tickers
+import json
+
+import pytest
+
+from invagent.datafeed import cache, http, naver, stockeasy, tickers
 
 OVERRIDE_FILE = """# 티커 오버라이드
 
@@ -31,22 +35,6 @@ def test_an_override_wins_over_the_search_api(monkeypatch) -> None:
     assert tickers.resolve_code("리브스메디", {"리브스메디": "491000"}) == ("491000", None)
 
 
-def test_resolve_code_falls_back_to_the_search_api(monkeypatch) -> None:
-    monkeypatch.setattr(
-        stockeasy, "resolve_stock", lambda name: ({"stock_code": "000660"}, None, 0)
-    )
-
-    assert tickers.resolve_code("SK하이닉스", {}) == ("000660", None)
-
-
-def test_resolve_code_reports_the_reason_when_the_api_cannot_answer(monkeypatch) -> None:
-    monkeypatch.setattr(stockeasy, "resolve_stock", lambda name: (None, "검색 결과 없음", 1))
-
-    code, err = tickers.resolve_code("없는종목", {})
-
-    assert code is None and err == "검색 결과 없음"
-
-
 def test_resolve_stock_uses_an_override_before_the_search_api(monkeypatch) -> None:
     """오버라이드 파일이 스스로 'API보다 먼저 본다'고 규정한다 — 경로는 하나여야 한다."""
     def boom(name):
@@ -57,16 +45,6 @@ def test_resolve_stock_uses_an_override_before_the_search_api(monkeypatch) -> No
     hit, err, code = tickers.resolve_stock("리브스메디", {"리브스메디": "491000"})
 
     assert (hit["stock_code"], hit["stock_name"], err, code) == ("491000", "리브스메디", None, 0)
-
-
-def test_resolve_stock_delegates_when_no_override_matches(monkeypatch) -> None:
-    monkeypatch.setattr(
-        stockeasy, "resolve_stock", lambda name: (None, "종목명 후보 다수 — …", 2)
-    )
-
-    hit, err, code = tickers.resolve_stock("가나", {})
-
-    assert hit is None and code == 2
 
 
 def test_common_code_maps_a_preferred_share_to_its_common_share() -> None:
@@ -97,3 +75,98 @@ def test_fundamentals_code_swaps_a_preferred_share_for_its_common_share(monkeypa
     assert tickers.fundamentals_code("005935") == ("005930", True)
     assert tickers.fundamentals_code("005930") == ("005930", False)
     assert tickers.fundamentals_code("006800") == ("006800", False)
+
+
+NAVER_AC = {
+    "query": "대덕전자",
+    "items": [
+        {"code": "353200", "name": "대덕전자", "typeCode": "KOSPI", "nationCode": "KOR",
+         "category": "stock"},
+        {"code": "35320K", "name": "대덕전자1우", "typeCode": "KOSPI", "nationCode": "KOR",
+         "category": "stock"},
+    ],
+}
+
+
+@pytest.fixture
+def isolated_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
+
+
+def test_a_name_resolves_through_naver_search_without_touching_stockeasy(
+    monkeypatch, isolated_cache
+) -> None:
+    """StockEasy는 요청 제한이 잦다 — 이름 검색은 네이버로 끝나야 한다."""
+    seen = []
+
+    def read(url, headers, timeout):
+        seen.append(url)
+        if url.startswith(naver.SEARCH_URL):
+            return json.dumps(NAVER_AC).encode()
+        raise AssertionError(f"unexpected url {url}")
+
+    monkeypatch.setattr(http, "read_url", read)
+
+    hit, err, code = tickers.resolve_stock("대덕전자", {})
+
+    assert (hit["stock_code"], hit["stock_name"], hit["exchange"], err, code) == (
+        "353200", "대덕전자", "KOSPI", None, 0
+    )
+    assert not any(u.startswith(stockeasy.API_BASE) for u in seen)
+
+
+def naver_only(body=NAVER_AC):
+    def read(url, headers, timeout):
+        if url.startswith(naver.SEARCH_URL):
+            return json.dumps(body).encode()
+        raise AssertionError(f"unexpected url {url}")
+
+    return read
+
+
+def test_resolve_code_returns_the_searched_ticker(monkeypatch, isolated_cache) -> None:
+    monkeypatch.setattr(http, "read_url", naver_only())
+
+    assert tickers.resolve_code("대덕전자", {}) == ("353200", None)
+
+
+def test_resolve_code_reports_the_reason_when_nothing_matches(monkeypatch, isolated_cache) -> None:
+    monkeypatch.setattr(http, "read_url", naver_only({"query": "없는종목", "items": []}))
+
+    code, err = tickers.resolve_code("없는종목", {})
+
+    assert code is None and "검색 결과 없음" in err
+
+
+def test_an_ambiguous_name_lists_the_candidates(monkeypatch, isolated_cache) -> None:
+    monkeypatch.setattr(http, "read_url", naver_only())
+
+    hit, err, code = tickers.resolve_stock("대덕", {})
+
+    assert hit is None and code == 2 and "대덕전자1우(35320K" in err
+
+
+def test_stockeasy_search_answers_only_when_naver_fails(monkeypatch, isolated_cache) -> None:
+    def read(url, headers, timeout):
+        if url.startswith(naver.SEARCH_URL):
+            raise TimeoutError("timed out")
+        if url.startswith(stockeasy.API_BASE + stockeasy.ENDPOINTS["search"]):
+            return json.dumps(
+                [{"stock_code": "353200", "stock_name": "대덕전자", "market": "KR"}]
+            ).encode()
+        raise AssertionError(f"unexpected url {url}")
+
+    monkeypatch.setattr(http, "read_url", read)
+
+    assert tickers.resolve_code("대덕전자", {}) == ("353200", None)
+
+
+def test_a_ticker_query_needs_no_search(monkeypatch, isolated_cache) -> None:
+    def boom(url, headers, timeout):
+        raise AssertionError("티커는 검색하지 않는다")
+
+    monkeypatch.setattr(http, "read_url", boom)
+
+    hit, err, code = tickers.resolve_stock("353200", {})
+
+    assert (hit["stock_code"], err, code) == ("353200", None, 0)

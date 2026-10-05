@@ -37,7 +37,7 @@ StockEasy와 Naver가 함께 `<urlopen error [Errno 8] nodename nor servname pro
 | 종목 RS(상대강도)·RS선 | 같음 (`info-tab`의 `rs_data`·`rs_line_chart`) → `analyze-stock/scripts/canslim_scan.py`. 업종 RS(`/rs/dashboard-data`)는 앱 토큰 없이는 HTTP 403이라 받지 않는다 | 필요 |
 | 종목 투자자별 매매동향(기관·외국인·개인 순매수량) | `invagent.datafeed.naver.fetch_investor_trend` — `m.stock.naver.com/api/stock/<code>/trend`, 최근 60거래일까지 | 불필요 |
 | 종목명·상장 시장(KOSPI·KOSDAQ) 대체 | `invagent.datafeed.naver.fetch_basic` — `m.stock.naver.com/api/stock/<code>/basic`. 정본은 `info-tab`의 `stock_info.market`이고, 그것이 막혔을 때만 쓴다 | 불필요 |
-| 종목명·티커 해석 | `invagent.datafeed.tickers` (오버라이드 우선) | 검색만 무인증 |
+| 종목명·티커 해석 | `invagent.datafeed.tickers` — 오버라이드 → 네이버 검색(`ac.stock.naver.com/ac`) → 네이버가 실패했을 때만 StockEasy `stock-search`. StockEasy 요청 한도를 StockEasy에만 있는 값에 남겨 두기 위해서다 | 불필요 |
 | 일봉 OHLCV (판정용) | `invagent.datafeed.daily.fetch_daily_bars` — StockEasy `info-tab`의 `chart`(3년치 정규장 1일봉)가 정본. 쿠키가 없거나 실패하면 `invagent.datafeed.naver`(`siseJson`)로 대체하고 대체 사유를 돌려준다. **네이버 종가는 장 마감 후 시간외가가 섞인다**(2026-09-28 사용자 확정) — 대체 꼬리표가 붙은 가격선은 StockEasy 종가로 다시 잰다 | 필요 (대체는 불필요) |
 | 시장 지표(지수·빅픽처·breadth·신용잔고) | `invagent.datafeed.stockeasy.fetch_market_json` → `daily-digest/scripts/fetch_market_signals.py` | 불필요 |
 | 텔레그램 저장 메시지·첨부 이미지·링크 본문 | `uv run invagent fetch-messages` | 텔레그램 세션 |
@@ -179,6 +179,9 @@ gitignore된 `.env`에 한 줄로, 따옴표로 감싸 둔다. 추적되는 파�
   주말) 받았다면 다음 평일 09:00(KST)까지 그대로 쓴다. 마감 뒤에는 값이 바뀌지 않으므로 저녁·새벽
   재실행이 같은 값을 다시 받을 이유가 없다. 뉴스·공시·리포트는 마감 뒤에도 새로 나오므로 15분
   그대로다. 공휴일은 모른다(그날은 15분으로 다시 받을 뿐). 보관은 나흘.
+- 판정용 일봉(`daily.fetch_daily_bars`)은 그 창을 **평일 15:40**부터로 앞당긴다. 정규장 봉은 15:30에
+  확정되고 시간외 시세가 움직여도 바뀌지 않으므로, 오후 재실행이 `info-tab`을 다시 받지 않는다.
+  같은 URL을 부르는 다른 호출(`fetch_stock_info`의 시간외·NXT 줄)은 20:00 규칙 그대로다.
 - 캐시 키는 URL과 **쿠키를 보냈는지 여부**로만 만든다. 쿠키 값 자체는 키에 들어가지 않고 어디에도
   기록되지 않는다. 무인증 401 본문이 인증 호출로 재생되지 않는다.
 - 성공한 응답만 저장한다. 일시적 401·타임아웃이 TTL 내내 굳지 않는다.
@@ -209,7 +212,7 @@ StockEasy는 짧은 시간에 요청이 몰리면 연결을 끊거나 거절한�
 
 ## 티커 오버라이드
 
-`stock-search`가 못 잡는 신규 상장 종목이나 시트 표기가 정식 종목명과 다른 경우는
+검색(네이버·StockEasy)이 못 잡는 신규 상장 종목이나 시트 표기가 정식 종목명과 다른 경우는
 `context/ticker_overrides.md`에 `종목명 = 6자리코드` 한 줄로 고정한다. 이 파일이 검색 API보다
 먼저 읽힌다 — 해석 경로는 `invagent.datafeed.tickers` 하나뿐이다.
 
