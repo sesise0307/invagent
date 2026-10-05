@@ -151,8 +151,10 @@ def _check_i(trend: list[dict]) -> dict:
     return {"mark": "pass" if inst > 0 else "fail", "detail": detail}
 
 
-def _check_m(big_picture: dict | None, market: str) -> dict:
+def _check_m(big_picture: dict | None, market: str | None) -> dict:
     """시장 방향 — StockEasy 빅픽처에서 종목이 상장된 시장의 상태를 읽는다."""
+    if not market:
+        return {"mark": "unknown", "detail": "상장 시장 미상 (info-tab 미수집)"}
     state = (big_picture or {}).get(market.lower())
     if not state or state.get("status") not in M_STATUS:
         return {"mark": "unknown", "detail": f"{market} 빅픽처 없음"}
@@ -192,7 +194,7 @@ def evaluate(
             ((fundamentals or {}).get("rs_data") or {}).get("rs"),
         ),
         "I": _check_i(trend),
-        "M": _check_m(big_picture, (info.get("stock_info") or {}).get("market") or "KOSPI"),
+        "M": _check_m(big_picture, (info.get("stock_info") or {}).get("market")),
     }
     result["score"] = {
         "passed": sum(result[k]["mark"] == "pass" for k in LETTERS),

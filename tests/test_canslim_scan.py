@@ -300,7 +300,7 @@ def test_cli_keeps_going_when_info_tab_is_refused(fake_network, capsys) -> None:
 
     captured = capsys.readouterr()
     assert "[누락] info_tab" in captured.err
-    assert "점수 2/7" in captured.out and "❓ C" in captured.out
+    assert "점수 1/7" in captured.out and "❓ C" in captured.out and "❓ M" in captured.out
 
 
 def test_preferred_share_without_its_own_rs_shows_the_common_rs_as_reference_only() -> None:
@@ -331,3 +331,11 @@ def test_canslim_is_reference_only_and_absent_from_the_entry_gate() -> None:
     policy = (SCRIPT.parent / "entry_policy.py").read_text(encoding="utf-8")
 
     assert "canslim" not in policy.lower()
+
+
+def test_m_is_unknown_when_the_listing_market_is_unknown() -> None:
+    """info-tab이 실패하면 상장 시장을 모른다 — KOSPI로 가정하면 코스닥 종목이 엉뚱한 시장으로 채점된다."""
+    m = canslim.evaluate(None, _bp("confirmed_uptrend"), [])["M"]
+
+    assert m["mark"] == "unknown"
+    assert "상장 시장 미상" in m["detail"]
