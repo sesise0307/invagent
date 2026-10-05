@@ -34,6 +34,8 @@ StockEasy와 Naver가 함께 `<urlopen error [Errno 8] nodename nor servname pro
 | 종목 뉴스 | 같음 (`news/by-stock-code`) | 필요 |
 | 종목 DART 공시 목록 | 같음 (`stock-info/analysis-tab` — 2026-09 개편 페이지의 소식 탭, 공시·리포트·뉴스 각 최근 20건) | 필요 |
 | 시간외·NXT 체결가 (참고) | 같음 (`info-tab`의 `after_hours_quote`·`nxt_quote`) — `stock_info.cur_prc`와 차트 종가는 정규장가 그대로다. 판정에 쓰지 않는다 | 필요 |
+| 종목 RS(상대강도)·RS선 | 같음 (`info-tab`의 `rs_data`·`rs_line_chart`) → `analyze-stock/scripts/canslim_scan.py`. 업종 RS(`/rs/dashboard-data`)는 앱 토큰 없이는 HTTP 403이라 받지 않는다 | 필요 |
+| 종목 투자자별 매매동향(기관·외국인·개인 순매수량) | `invagent.datafeed.naver.fetch_investor_trend` — `m.stock.naver.com/api/stock/<code>/trend`, 최근 60거래일까지 | 불필요 |
 | 종목명·티커 해석 | `invagent.datafeed.tickers` (오버라이드 우선) | 검색만 무인증 |
 | 일봉 OHLCV (판정용) | `invagent.datafeed.daily.fetch_daily_bars` — StockEasy `info-tab`의 `chart`(3년치 정규장 1일봉)가 정본. 쿠키가 없거나 실패하면 `invagent.datafeed.naver`(`siseJson`)로 대체하고 대체 사유를 돌려준다. **네이버 종가는 장 마감 후 시간외가가 섞인다**(2026-09-28 사용자 확정) — 대체 꼬리표가 붙은 가격선은 StockEasy 종가로 다시 잰다 | 필요 (대체는 불필요) |
 | 시장 지표(지수·빅픽처·breadth·신용잔고) | `invagent.datafeed.stockeasy.fetch_market_json` → `daily-digest/scripts/fetch_market_signals.py` | 불필요 |

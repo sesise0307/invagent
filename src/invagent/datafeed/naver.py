@@ -1,7 +1,9 @@
-"""네이버 금융 일봉 수집.
+"""네이버 금융 일봉과 투자자별 매매동향 수집.
 
 `api.finance.naver.com/siseJson.naver`는 무인증이고, 응답이 표준 JSON이 아니라 작은따옴표를
-쓴 파이썬 리터럴이다. 인증 축이 없으므로 캐시 키는 항상 anon이다.
+쓴 파이썬 리터럴이다. 투자자별 매매동향(`m.stock.naver.com/api/stock/<code>/trend`)도 무인증
+JSON이고 한 번에 최근 60거래일까지 준다 — StockEasy에는 종목 기관 수급이 없어 이쪽이 출처다.
+인증 축이 없으므로 캐시 키는 항상 anon이다.
 """
 
 from __future__ import annotations
@@ -12,6 +14,8 @@ from datetime import date, datetime, timedelta
 from invagent.datafeed import http
 
 SISE_URL = "https://api.finance.naver.com/siseJson.naver"
+TREND_URL = "https://m.stock.naver.com/api/stock/{code}/trend"
+TREND_MAX_DAYS = 60
 REFERER = "https://finance.naver.com/"
 TIMEOUT = http.TIMEOUT
 
@@ -79,3 +83,39 @@ def fetch_bars(code: str, days: int, asof: date | str | None = None) -> tuple[li
         decode=parse_sise,
     )
     return bars or [], err
+
+
+def _signed_int(value) -> int:
+    return int(str(value).replace(",", "").replace("+", "") or 0)
+
+
+def parse_trend(text: str) -> list[dict]:
+    """투자자별 매매동향 응답을 날짜 오름차순 순매수량 리스트로 바꾼다. 깨진 행은 버린다."""
+    rows = []
+    for row in json.loads(text):
+        try:
+            rows.append(
+                {
+                    "date": str(row["bizdate"]),
+                    "institution": _signed_int(row["organPureBuyQuant"]),
+                    "foreign": _signed_int(row["foreignerPureBuyQuant"]),
+                    "individual": _signed_int(row["individualPureBuyQuant"]),
+                }
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    rows.sort(key=lambda r: r["date"])
+    return rows
+
+
+def fetch_investor_trend(code: str, days: int = TREND_MAX_DAYS) -> tuple[list[dict], str | None]:
+    """최근 `days`거래일(최대 60)의 기관·외국인·개인 순매수량(주). 실패하면 ([], 사유)."""
+    url = f"{TREND_URL.format(code=code)}?pageSize={min(days, TREND_MAX_DAYS)}"
+    rows, err = http.get_json(
+        url,
+        authed=False,
+        headers=http.build_headers(referer="https://m.stock.naver.com/"),
+        timeout=TIMEOUT,
+        decode=parse_trend,
+    )
+    return rows or [], err

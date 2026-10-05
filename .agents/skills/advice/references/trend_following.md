@@ -106,6 +106,10 @@
 | **I** - Institutional Sponsorship | 기관 지원 | 우량 펀드 신규 매수 |
 | **M** - Market Direction | 시장 방향 | 전체 시장이 상승 추세일 것 |
 
+> `analyze-stock`에서는 이 표를 `scripts/canslim_scan.py`가 결정론적으로 채점한다 — 한국 시장용 기준값
+> (N 52주 종가 고점 -15% 이내, S 50일 상승/하락 거래량, I 기관 20일 순매수, M 빅픽처)은
+> `analyze-stock/SKILL.md` 「CAN SLIM 점검」 표가 정본이다. 참고 지표이며 판단에 넣지 않는다.
+
 ### 컵과 핸들 패턴 (Cup with Handle)
 - **컵**: 7~65주에 걸쳐 U자형 조정 (최대 -35%)
 - **핸들**: 컵 오른쪽 상단에서 1~2주 소폭 조정 (거래량 감소)

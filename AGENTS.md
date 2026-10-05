@@ -237,6 +237,21 @@ effective stop width used for the reward/risk ratio and the 「기본 원칙 4�
 position cap. The calculation rules live in `analyze-stock/SKILL.md` step 9; the
 output layout lives in `template/stock_analysis.md` §2.
 
+`analyze-stock` step 6 also runs `.agents/skills/analyze-stock/scripts/canslim_scan.py`, which
+scores William O'Neil's CAN SLIM deterministically for §5 「📋 CAN SLIM 점검」. Like the overhang
+check it is **reference only** (user decision, 2026-10-05): the score changes nothing in step 10, and a
+test asserts `entry_policy.py` never reads it. C and A come from `info-tab` quarterly and annual EPS
+(from the common share for a preferred), N from the 250-session **closing** high, S from 50-session
+up/down volume, L from `info-tab`'s `rs_data.rs` — StockEasy's own relative-strength score, already in
+the payload, so no new endpoint was needed — I from 20-session institutional net buying via
+`datafeed.naver.fetch_investor_trend` (Naver `m.stock.naver.com/api/stock/<code>/trend`, since StockEasy
+exposes no per-stock institutional flow), and M from the StockEasy big picture of the stock's own market,
+where `uptrend_under_pressure` is shown as a warning but not counted. Only ✅ count toward `N/7`; warnings
+and gaps are listed separately. The model adds one thing — N needs a §4 catalyst as well as the price
+condition. The sector-RS endpoint (`/rs/dashboard-data`) demands an app token and returns 403, so it
+is not collected. The thresholds live as constants at the top of the script and in the table in
+`analyze-stock/SKILL.md`; a test compares the two.
+
 `analyze-stock` step 5-1 is an overhang and share-supply check whose output is
 reference only. It pulls convertibles, rights issues and
 their refixing dates from OpenDART `dilutive_issuance`, large-holder and blockdeal

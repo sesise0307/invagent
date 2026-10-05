@@ -72,3 +72,40 @@ def test_fetch_bars_is_served_from_the_cache_on_a_repeat_call(monkeypatch) -> No
     naver.fetch_bars("005930", days=30, asof=date(2026, 9, 2))
 
     assert len(calls) == 1
+
+
+TREND_SAMPLE = (
+    '[{"itemCode":"005930","bizdate":"20261002","foreignerPureBuyQuant":"-350,942",'
+    '"organPureBuyQuant":"+614,278","individualPureBuyQuant":"-2,217,946","closePrice":"276,000"},'
+    '{"itemCode":"005930","bizdate":"20261001","foreignerPureBuyQuant":"-758,236",'
+    '"organPureBuyQuant":"0","individualPureBuyQuant":"+1,292,880","closePrice":"274,500"}]'
+)
+
+
+def test_fetch_investor_trend_parses_signed_quantities_oldest_first(monkeypatch) -> None:
+    """기관·외국인 순매수량은 `+614,278` 같은 부호·쉼표 문자열로 온다."""
+    seen = {}
+    monkeypatch.setattr(
+        http, "read_url", lambda url, headers, timeout: seen.update(url=url) or TREND_SAMPLE.encode()
+    )
+
+    rows, err = naver.fetch_investor_trend("005930", days=60)
+
+    assert err is None
+    assert seen["url"] == "https://m.stock.naver.com/api/stock/005930/trend?pageSize=60"
+    assert rows == [
+        {"date": "20261001", "institution": 0, "foreign": -758_236, "individual": 1_292_880},
+        {"date": "20261002", "institution": 614_278, "foreign": -350_942, "individual": -2_217_946},
+    ]
+
+
+def test_fetch_investor_trend_reports_the_failure_instead_of_raising(monkeypatch) -> None:
+    def boom(url, headers, timeout):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(http, "read_url", boom)
+
+    rows, err = naver.fetch_investor_trend("005930")
+
+    assert rows == []
+    assert err and "timed out" in err
