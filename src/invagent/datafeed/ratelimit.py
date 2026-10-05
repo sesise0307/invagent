@@ -43,6 +43,17 @@ MAX_WAIT_SECONDS = 30.0
 # 두드리면 차단이 길어지고, 그동안 일봉은 Naver 대체 경로로 간다.
 COOLDOWN_SECONDS = 120.0
 
+# 호스트별로 기본값을 덮어쓰는 한도. StockEasy는 2026-10-05에 순차 실행으로도 분당 30~40건에서
+# 연결을 끊었고, 2분 cool-down 뒤 다시 부르면 차단이 연장됐다 — 분당 20건 이하·한 번에 하나·
+# 10분 대기로 잡는다.
+HOST_LIMITS = {
+    "stockeasy.intellio.kr": {"min_interval": 3.0, "max_concurrent": 1, "cooldown": 600.0},
+}
+
+
+def _limit(host: str, key: str, default: float) -> float:
+    return HOST_LIMITS.get(host, {}).get(key, default)
+
 _sleep = time.sleep
 _now = time.time
 
@@ -80,7 +91,8 @@ def call_with_retry(host: str, fetch):
             if not is_retryable(error):
                 raise
             if attempt == MAX_ATTEMPTS:
-                start_cooldown(host, max(COOLDOWN_SECONDS, retry_after(error) or 0.0))
+                cooldown = _limit(host, "cooldown", COOLDOWN_SECONDS)
+                start_cooldown(host, max(cooldown, retry_after(error) or 0.0))
                 raise
             _sleep(wait_seconds(error, attempt))
 
@@ -161,7 +173,8 @@ def _flock(path: Path, *, blocking: bool = True) -> Iterator[bool]:
 @contextmanager
 def _slot(host: str) -> Iterator[None]:
     """동시 요청 슬롯 하나를 잡는다. 빈 슬롯이 없으면 임의의 슬롯을 기다린다."""
-    paths = [STATE_ROOT / f"{host}.slot{i}" for i in range(MAX_CONCURRENT_PER_HOST)]
+    slots = int(_limit(host, "max_concurrent", MAX_CONCURRENT_PER_HOST))
+    paths = [STATE_ROOT / f"{host}.slot{i}" for i in range(slots)]
     for path in paths:
         with _flock(path, blocking=False) as held:
             if held:
@@ -172,7 +185,7 @@ def _slot(host: str) -> Iterator[None]:
 
 
 def _wait_for_turn(host: str) -> None:
-    """마지막 요청 시작에서 MIN_INTERVAL_SECONDS가 지나도록 기다리고 지금을 기록한다."""
+    """마지막 요청 시작에서 호스트의 최소 간격이 지나도록 기다리고 지금을 기록한다."""
     path = STATE_ROOT / f"{host}.last"
     with _flock(STATE_ROOT / f"{host}.pace"):
         try:
@@ -180,7 +193,7 @@ def _wait_for_turn(host: str) -> None:
         except (OSError, ValueError):
             last = None
         if last is not None:
-            wait = last + MIN_INTERVAL_SECONDS - _now()
+            wait = last + _limit(host, "min_interval", MIN_INTERVAL_SECONDS) - _now()
             if wait > 0:
                 _sleep(wait)
         try:

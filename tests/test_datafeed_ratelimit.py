@@ -203,3 +203,62 @@ def test_an_unauthorized_response_never_falls_back_to_a_stale_body(monkeypatch) 
     _scripted(monkeypatch, [_http_error(401)])
 
     assert http.get_json(url, authed=True) == (None, "HTTP 401")
+
+
+STOCKEASY = "https://stockeasy.intellio.kr/stockdata/api/v1"
+
+
+def test_stockeasy_requests_are_spaced_wider_than_other_hosts(monkeypatch) -> None:
+    """2026-10-05: 순차 실행으로도 분당 30~40건에서 끊겼다 — StockEasy만 간격을 넓힌다."""
+    slept = _record_sleeps(monkeypatch)
+    _scripted(monkeypatch, [b"{}"] * 4)
+
+    http.get_json(f"{STOCKEASY}/a", authed=False)
+    http.get_json(f"{STOCKEASY}/b", authed=False)
+    http.get_json("https://example.test/a", authed=False)
+    http.get_json("https://example.test/b", authed=False)
+
+    assert slept == [3.0, ratelimit.MIN_INTERVAL_SECONDS]
+
+
+def test_stockeasy_cools_down_for_ten_minutes(monkeypatch) -> None:
+    """2분 뒤 다시 두드리면 차단이 연장됐다 — StockEasy cool-down은 10분이다."""
+    clock = _Clock(1_000_000.0)
+    monkeypatch.setattr(ratelimit, "_now", clock)
+    _scripted(monkeypatch, [_http_error(429)] * ratelimit.MAX_ATTEMPTS + [b'{"ok": 1}'])
+
+    http.get_json(f"{STOCKEASY}/a", authed=False)
+
+    clock.now += ratelimit.COOLDOWN_SECONDS + 1
+    assert http.get_json(f"{STOCKEASY}/a", authed=False)[0] is None
+    clock.now += 600
+    assert http.get_json(f"{STOCKEASY}/a", authed=False) == ({"ok": 1}, None)
+
+
+def test_stockeasy_takes_one_request_at_a_time(monkeypatch) -> None:
+    import threading
+    import time
+
+    lock = threading.Lock()
+    active, peak = [0], [0]
+
+    def slow(url, headers, timeout):
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        time.sleep(0.05)
+        with lock:
+            active[0] -= 1
+        return b"{}"
+
+    monkeypatch.setattr(http, "read_url", slow)
+    threads = [
+        threading.Thread(target=http.get_json, args=(f"{STOCKEASY}/{i}",), kwargs={"authed": False})
+        for i in range(4)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert peak[0] == 1
