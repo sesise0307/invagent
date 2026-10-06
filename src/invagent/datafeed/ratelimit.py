@@ -8,6 +8,7 @@ StockEasy는 짧은 시간에 요청이 몰리면 연결을 끊거나 거절한�
 
 from __future__ import annotations
 
+import json
 import os
 import random
 import tempfile
@@ -42,6 +43,8 @@ MAX_WAIT_SECONDS = 30.0
 # 재시도를 다 써도 거절되면 그 호스트는 이만큼 아무도 부르지 않는다. 한도에 걸린 채 계속
 # 두드리면 차단이 길어지고, 그동안 일봉은 Naver 대체 경로로 간다.
 COOLDOWN_SECONDS = 120.0
+# cool-down 파일·메시지에 남기는 실패 사유의 최대 길이. 오류 문자열은 길이가 제각각이다.
+REASON_MAX_CHARS = 80
 
 # 호스트별로 기본값을 덮어쓰는 한도. StockEasy는 2026-10-05에 순차 실행으로도 분당 30~40건에서
 # 연결을 끊었고, 2분 cool-down 뒤 다시 부르면 차단이 연장됐다 — 분당 20건 이하·한 번에 하나·
@@ -82,7 +85,7 @@ def call_with_retry(host: str, fetch):
     """
     remaining = cooldown_remaining(host)
     if remaining > 0:
-        raise CoolingDown(f"{host} 요청 제한으로 대기 중 — {remaining:.0f}초 남음")
+        raise CoolingDown(f"{host} 요청 제한으로 대기 중 — {remaining:.0f}초 남음 · {cooldown_reason(host)}")
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             with paced(host):
@@ -92,7 +95,7 @@ def call_with_retry(host: str, fetch):
                 raise
             if attempt == MAX_ATTEMPTS:
                 cooldown = _limit(host, "cooldown", COOLDOWN_SECONDS)
-                start_cooldown(host, max(cooldown, retry_after(error) or 0.0))
+                start_cooldown(host, max(cooldown, retry_after(error) or 0.0), reason=failure_reason(error))
                 raise
             _sleep(wait_seconds(error, attempt))
 
@@ -101,23 +104,60 @@ def _cooldown_path(host: str) -> Path:
     return STATE_ROOT / f"{host}.cooldown"
 
 
+def failure_reason(error: BaseException) -> str:
+    """cool-down에 들어가게 한 실패를 한 줄로. 서버 거절(HTTP)과 연결 문제를 구분하는 게 목적이다."""
+    if isinstance(error, urllib.error.HTTPError):
+        return f"HTTP {error.code}"
+    if isinstance(error, TimeoutError) or isinstance(getattr(error, "reason", None), TimeoutError):
+        return "시간 초과"
+    if isinstance(error, urllib.error.URLError):
+        return f"연결 끊김: {str(error.reason)[:REASON_MAX_CHARS]}"
+    return f"연결 끊김: {str(error)[:REASON_MAX_CHARS]}"
+
+
+def _read_cooldown(host: str) -> dict:
+    """cool-down 파일. 옛 형식(해제 시각 숫자 하나)도 읽는다."""
+    try:
+        text = _cooldown_path(host).read_text()
+    except OSError:
+        return {}
+    try:
+        return {"until": float(text)}
+    except ValueError:
+        pass
+    try:
+        state = json.loads(text)
+        return state if isinstance(state, dict) and isinstance(state.get("until"), (int, float)) else {}
+    except ValueError:
+        return {}
+
+
 def cooldown_remaining(host: str) -> float:
     """cool-down이 풀리기까지 남은 초. 없으면 0."""
-    try:
-        until = float(_cooldown_path(host).read_text())
-    except (OSError, ValueError):
-        return 0.0
-    return max(0.0, until - _now())
+    until = _read_cooldown(host).get("until")
+    return 0.0 if until is None else max(0.0, until - _now())
 
 
-def start_cooldown(host: str, seconds: float) -> None:
-    """호스트를 seconds 동안 cool-down에 넣는다. 쓰기 실패는 무시한다 — 보조 장치다."""
+def cooldown_reason(host: str) -> str:
+    """cool-down에 들어간 사유와 시각. 사유가 없는 옛 파일이면 「사유 미기록」."""
+    state = _read_cooldown(host)
+    reason = state.get("reason")
+    if not reason:
+        return "사유 미기록"
+    started = state.get("started")
+    at = f" ({time.strftime('%H:%M:%S', time.localtime(started))} 진입)" if started else ""
+    return f"사유 {reason}{at}"
+
+
+def start_cooldown(host: str, seconds: float, reason: str = "") -> None:
+    """호스트를 seconds 동안 cool-down에 넣고 사유를 남긴다. 쓰기 실패는 무시한다 — 보조 장치다."""
     path = _cooldown_path(host)
+    now = _now()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, raw_tmp = tempfile.mkstemp(prefix=f".{host}.", suffix=".tmp", dir=path.parent)
         with os.fdopen(fd, "w") as handle:
-            handle.write(str(_now() + seconds))
+            json.dump({"until": now + seconds, "started": now, "reason": reason}, handle, ensure_ascii=False)
         Path(raw_tmp).replace(path)
     except OSError:
         pass

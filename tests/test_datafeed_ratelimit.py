@@ -262,3 +262,58 @@ def test_stockeasy_takes_one_request_at_a_time(monkeypatch) -> None:
         t.join()
 
     assert peak[0] == 1
+
+
+def _cool_down_with(monkeypatch, error):
+    """error로 재시도를 다 쓰게 해 호스트를 cool-down에 넣고, 다음 호출의 오류 메시지를 돌려준다."""
+    monkeypatch.setattr(ratelimit, "_now", _Clock(1_000_000.0))
+    _scripted(monkeypatch, [error] * ratelimit.MAX_ATTEMPTS)
+    http.get_json("https://example.test/a", authed=False)
+    payload, err = http.get_json("https://example.test/b", authed=False)
+    assert payload is None
+    return err
+
+
+def test_a_cool_down_names_the_http_status_that_caused_it(monkeypatch) -> None:
+    """차단인지 네트워크 순단인지는 쿨다운 메시지만 보고 알 수 있어야 한다."""
+    err = _cool_down_with(monkeypatch, _http_error(429))
+
+    assert "사유 HTTP 429" in err
+
+
+def test_a_cool_down_after_dropped_connections_says_so(monkeypatch) -> None:
+    err = _cool_down_with(monkeypatch, ConnectionResetError("Connection reset by peer"))
+
+    assert "사유 연결 끊김: Connection reset by peer" in err
+
+
+def test_a_cool_down_after_an_unreachable_host_says_the_connection_dropped(monkeypatch) -> None:
+    err = _cool_down_with(monkeypatch, urllib.error.URLError("Remote end closed connection without response"))
+
+    assert "사유 연결 끊김: Remote end closed connection without response" in err
+
+
+def test_a_cool_down_after_timeouts_says_they_timed_out(monkeypatch) -> None:
+    err = _cool_down_with(monkeypatch, TimeoutError("timed out"))
+
+    assert "사유 시간 초과" in err
+
+
+def test_a_timeout_wrapped_in_a_url_error_is_still_a_timeout(monkeypatch) -> None:
+    """urllib은 소켓 타임아웃을 URLError로 감싸 던지기도 한다."""
+    err = _cool_down_with(monkeypatch, urllib.error.URLError(TimeoutError("timed out")))
+
+    assert "사유 시간 초과" in err
+
+
+def test_a_cool_down_file_from_before_reasons_were_recorded_still_holds(monkeypatch) -> None:
+    """배포 전에 쓰인 파일(해제 시각 숫자 하나)도 cool-down으로 지켜야 한다."""
+    monkeypatch.setattr(ratelimit, "_now", _Clock(1_000_000.0))
+    ratelimit.STATE_ROOT.mkdir(parents=True, exist_ok=True)
+    (ratelimit.STATE_ROOT / "example.test.cooldown").write_text("1000300.0")
+    calls = _scripted(monkeypatch, [b'{"ok": 1}'])
+
+    payload, err = http.get_json("https://example.test/a", authed=False)
+
+    assert payload is None and calls == []
+    assert "300초 남음 · 사유 미기록" in err

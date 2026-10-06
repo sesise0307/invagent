@@ -107,6 +107,8 @@ def get_json(
 def _reason(error: Exception) -> str:
     if isinstance(error, urllib.error.HTTPError):
         return f"HTTP {error.code}"
+    if isinstance(error, ratelimit.CoolingDown):
+        return str(error)  # 직접 만든 메시지 — 끝의 cool-down 사유가 잘리면 안 된다
     return str(error)[:80]
 
 
