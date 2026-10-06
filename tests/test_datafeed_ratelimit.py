@@ -209,7 +209,7 @@ STOCKEASY = "https://stockeasy.intellio.kr/stockdata/api/v1"
 
 
 def test_stockeasy_requests_are_spaced_wider_than_other_hosts(monkeypatch) -> None:
-    """2026-10-05: 순차 실행으로도 분당 30~40건에서 끊겼다 — StockEasy만 간격을 넓힌다."""
+    """순차 실행도 끊겼다 — 10/05 3초 미만 간격 14종목째, 10/06 3초 간격 12건째. StockEasy만 8초로 넓힌다."""
     slept = _record_sleeps(monkeypatch)
     _scripted(monkeypatch, [b"{}"] * 4)
 
@@ -218,7 +218,7 @@ def test_stockeasy_requests_are_spaced_wider_than_other_hosts(monkeypatch) -> No
     http.get_json("https://example.test/a", authed=False)
     http.get_json("https://example.test/b", authed=False)
 
-    assert slept == [3.0, ratelimit.MIN_INTERVAL_SECONDS]
+    assert slept == [8.0, ratelimit.MIN_INTERVAL_SECONDS]
 
 
 def test_stockeasy_cools_down_for_ten_minutes(monkeypatch) -> None:

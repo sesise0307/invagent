@@ -47,7 +47,7 @@ COOLDOWN_SECONDS = 120.0
 # 연결을 끊었고, 2분 cool-down 뒤 다시 부르면 차단이 연장됐다 — 분당 20건 이하·한 번에 하나·
 # 10분 대기로 잡는다.
 HOST_LIMITS = {
-    "stockeasy.intellio.kr": {"min_interval": 3.0, "max_concurrent": 1, "cooldown": 600.0},
+    "stockeasy.intellio.kr": {"min_interval": 8.0, "max_concurrent": 1, "cooldown": 600.0},
 }
 
 

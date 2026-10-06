@@ -470,9 +470,10 @@ subagents analysing several stocks do not know about each other. `src/invagent/d
 therefore sits inside `http.get_json`, per host and only on cache misses: request starts are spaced
 at least `MIN_INTERVAL_SECONDS` (0.5) apart and at most `MAX_CONCURRENT_PER_HOST` (2) run at once,
 both shared across processes through lock files under the gitignored `output/.cache/ratelimit/`.
-`HOST_LIMITS` overrides those per host: StockEasy gets a 3-second interval, one request at a time and
+`HOST_LIMITS` overrides those per host: StockEasy gets an 8-second interval, one request at a time and
 a 600-second cool-down, because on 2026-10-05 a strictly sequential 21-stock run was cut off at the
-fourteenth stock and every retry after the 2-minute cool-down extended the block.
+fourteenth stock and every retry after the 2-minute cool-down extended the block, and on 2026-10-06 a
+sequential scan at the 3-second interval was still cut off around the twelfth request.
 A 429/502/503/504, a dropped connection or a timeout is retried up to `MAX_ATTEMPTS` (3) times with
 exponential backoff plus jitter, honouring `Retry-After`; a 401 is never retried. When retries run
 out the host enters a `COOLDOWN_SECONDS` (120, or its `HOST_LIMITS` value) cool-down during which every process fails fast
