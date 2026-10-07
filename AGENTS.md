@@ -43,7 +43,7 @@ named, with its dates, in the fallback note; without the key, or when `fsc` fail
 applies — StockEasy's three years, then Naver. Every script prints that note: Naver's `siseJson`
 close carries the after-hours price (대덕전자 from 2026-09-14 on, e.g. 9/14 95,600 vs a
 regular close of 97,000원, confirmed against the official bar on 2026-10-07), and rule triggers are
-judged on the regular close (user decision, 2026-09-28). The endpoint is the `_V2` one; the older
+judged on the regular close (user decision, 2026-09-28). KRX's raw prices are not adjusted for corporate actions, so `fsc` back-adjusts every bar before a split, consolidation or rights ex-date by the ratio implied by `vs` (the change against KRX's adjusted base price) and drops halted days with no trade — unadjusted, LS ELECTRIC's 2026-04-13 5:1 split put its 150-day line at 334,474원 and graded a stage-2 stock as stage 4 (2026-10-07). The endpoint is the `_V2` one; the older
 `/service/GetStockSecuritiesInfoService` path rejects new keys with `SERVICE_KEY_IS_NOT_REGISTERED_ERROR`,
 which reads as a key problem — `market-data/SKILL.md` records the setup. **Add a new source here,
 never in a skill script.** A skill script fetches nothing itself; it calls this

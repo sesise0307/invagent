@@ -5,6 +5,9 @@
 97,000원으로 준다. 요청 한도는 개발계정 하루 10,000회라 StockEasy처럼 막히지 않는다.
 
 데이터는 기준일 다음 영업일 13시 이후에 올라온다(T+1). 빠진 최근 봉은 `daily`가 채운다.
+
+가격은 수정주가가 아니다 — LS ELECTRIC 2026-04-13 5:1 분할 전 봉이 788,000원 그대로라 150일선이
+334,474원으로 잡혀 2단계 종목이 4단계로 판정됐다(2026-10-07). 그래서 `adjust_for_splits`가 맞춘다.
 인증키는 `DATA_GO_KR_SERVICE_KEY`(환경변수 → `.env`)에서 읽고 어디에도 출력하지 않는다.
 """
 
@@ -13,6 +16,7 @@ from __future__ import annotations
 import json
 import urllib.parse
 from datetime import date, timedelta
+from fractions import Fraction
 
 from invagent.datafeed import http, naver
 from invagent.datafeed.env import env_value
@@ -51,12 +55,40 @@ def parse_prices(text: str, code: str) -> list[dict]:
                     "low": float(row["lopr"]),
                     "close": float(row["clpr"]),
                     "volume": float(row["trqu"]),
+                    "change": float(row["vs"]) if row.get("vs") not in (None, "") else None,
                 }
             )
         except (KeyError, TypeError, ValueError):
             continue
+        if bars[-1]["open"] == 0 and bars[-1]["volume"] == 0:
+            # 매매정지일 — 체결이 없어 StockEasy·네이버 일봉에는 없는 날이다.
+            bars.pop()
     bars.sort(key=lambda b: b["date"])
-    return bars
+    return adjust_for_splits(bars)
+
+
+def adjust_for_splits(bars: list[dict]) -> list[dict]:
+    """분할·병합 같은 권리 조정을 이전 봉에 거꾸로 적용한다. 입력의 `change`(전일대비, 없으면 None)는 소비한다.
+
+    KRX의 전일대비는 조정 기준가 대비다. 평소에는 `종가 - 전일대비`가 전일 종가와 같고, 조정일에만
+    어긋난다. 그 비율(기준가 ÷ 전일 종가)을 그날 이전 봉의 가격에 곱하고 거래량은 나눈다.
+    """
+    ratios = [Fraction(1)] * len(bars)
+    for i in range(len(bars) - 1, 0, -1):
+        prev_close = Fraction(bars[i - 1]["close"])
+        change = bars[i]["change"]
+        base = Fraction(bars[i]["close"]) - Fraction(change) if change is not None else prev_close
+        ratio = base / prev_close if prev_close > 0 and base > 0 else Fraction(1)
+        ratios[i - 1] = ratios[i] * ratio
+    adjusted = []
+    for bar, ratio in zip(bars, ratios):
+        out = {k: v for k, v in bar.items() if k != "change"}
+        if ratio != 1:
+            for field in ("open", "high", "low", "close"):
+                out[field] = float(Fraction(bar[field]) * ratio)
+            out["volume"] = float(Fraction(bar["volume"]) / ratio)
+        adjusted.append(out)
+    return adjusted
 
 
 def fetch_bars(code: str, days: int, asof: date | str | None = None) -> tuple[list[dict], str | None]:
