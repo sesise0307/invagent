@@ -16,6 +16,35 @@ from datetime import date, timedelta
 from invagent.datafeed import cache, fsc, naver, stockeasy
 
 
+OFFICIAL = "fsc"
+STOCKEASY = "stockeasy"
+NAVER = "naver"
+SOURCE_KEY = "source"
+
+
+def tagged(bars: list[dict], source: str) -> list[dict]:
+    """봉마다 어느 소스에서 왔는지 적는다. `source_label`이 이것으로 출처를 밝힌다."""
+    return [{**b, SOURCE_KEY: source} for b in bars]
+
+
+def source_label(bars: list[dict], note: str | None) -> str:
+    """스크립트 출력용 출처 표기. 실제로 쓴 소스를 구간과 함께 적는다.
+
+    출처 태그가 없는 봉(테스트 대역 등)은 예전 표기 `StockEasy 일봉`을 쓴다.
+    """
+    official = [b for b in bars if b.get(SOURCE_KEY) == OFFICIAL]
+    tail = [b for b in bars if b.get(SOURCE_KEY) == STOCKEASY]
+    if not official:
+        return note or "StockEasy 일봉"
+    parts = [f"금융위 KRX 공식 일봉 ~{official[-1]['date']}"]
+    if note:
+        parts.append(note)
+    elif tail:
+        dates = ", ".join(b["date"] for b in tail)
+        parts.append(f"StockEasy 정규장 {dates}")
+    return " + ".join(parts)
+
+
 def chart_bars(info: dict) -> list[dict]:
     """`info-tab` 응답의 `chart`를 네이버 일봉과 같은 모양의 리스트로 바꾼다."""
     chart = (info or {}).get("chart") or {}
@@ -52,27 +81,28 @@ def fetch_daily_bars(
     start = (end - timedelta(days=days)).strftime("%Y%m%d")
     end_key = end.strftime("%Y%m%d")
     official, _ = fsc.fetch_bars(code, days, asof=end)
+    official = tagged(official, OFFICIAL)
     if official:
         last = official[-1]["date"]
         if not missing_weekdays(last, end):
             return official, None, None
         recent, reason = stockeasy_bars(code, end_key)
-        recent = [b for b in recent if b["date"] > last]
+        recent = tagged([b for b in recent if b["date"] > last], STOCKEASY)
         if recent:
             return official + recent, None, None
         naver_bars, _ = naver.fetch_bars(code, days, asof=end)
-        recent = [b for b in naver_bars if b["date"] > last]
+        recent = tagged([b for b in naver_bars if b["date"] > last], NAVER)
         if recent:
             dates = ", ".join(b["date"] for b in recent)
             return official + recent, None, fallback_note(f"최근 봉 {dates} — {reason or 'StockEasy 일봉 없음'}")
         # 빈 날이 공휴일이었을 수 있다 — 공식 일봉만으로 판정한다.
         return official, None, None
     bars, reason = stockeasy_bars(code, end_key)
-    bars = [b for b in bars if b["date"] >= start]
+    bars = tagged([b for b in bars if b["date"] >= start], STOCKEASY)
     if bars:
         return bars, None, None
     bars, err = naver.fetch_bars(code, days, asof=end)
-    return bars, err, fallback_note(reason)
+    return tagged(bars, NAVER), err, fallback_note(reason)
 
 
 def stockeasy_bars(code: str, end_key: str) -> tuple[list[dict], str | None]:

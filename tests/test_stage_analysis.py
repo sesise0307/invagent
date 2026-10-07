@@ -635,3 +635,19 @@ def test_main_names_stockeasy_as_the_bar_source_when_it_served_the_bars(monkeypa
     assert stage_scan.main(["353200", "--no-fundamental"]) == 0
     header = capsys.readouterr().out.splitlines()[0]
     assert "StockEasy 일봉" in header and "Naver" not in header
+
+
+def test_main_names_the_official_bars_when_they_served_the_history(monkeypatch, capsys):
+    from invagent.datafeed import daily, tickers
+
+    monkeypatch.setattr(
+        tickers,
+        "resolve_stock",
+        lambda q, overrides=None: ({"stock_code": "353200", "stock_name": "대덕전자"}, None, 0),
+    )
+    bars = daily.tagged(_bars([100.0 + i for i in range(400)]), daily.OFFICIAL)
+    monkeypatch.setattr(daily, "fetch_daily_bars", lambda code, days, asof=None: (bars, None, None))
+
+    assert stage_scan.main(["353200", "--no-fundamental"]) == 0
+    header = capsys.readouterr().out.splitlines()[0]
+    assert f"금융위 KRX 공식 일봉 ~{bars[-1]['date']}" in header and "StockEasy 일봉" not in header

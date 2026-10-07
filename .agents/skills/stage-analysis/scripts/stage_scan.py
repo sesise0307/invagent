@@ -7,7 +7,7 @@
 
 데이터 소스 둘:
 
-1. 일봉 OHLCV — `invagent.datafeed.daily` (StockEasy 정규장 우선, 네이버 대체 시 꼬리표). 150일 이동평균·기울기·스윙 고저점·박스권.
+1. 일봉 OHLCV — `invagent.datafeed.daily` (금융위 KRX 공식 일봉 우선, 미공개 최근 봉은 StockEasy 정규장, 네이버 대체 시 꼬리표). 150일 이동평균·기울기·스윙 고저점·박스권.
 2. 분기 영업이익 — StockEasy `info-tab`의 `financials` (로그인 쿠키 필요).
    쿠키가 없거나 만료되면 **가격 전용 판정(와인스타인 원본 버전)으로 강등**하고 그 사실을
    출력에 남긴다. 판정 자체는 계속되므로 종료 코드는 0이다.
@@ -799,7 +799,7 @@ def main(argv: list[str] | None = None) -> int:
 
     bars, e, bar_note = daily.fetch_daily_bars(ticker, args.days)
     if e or not bars:
-        print(f"ERROR: 시세 수집 실패 — {e or '빈 응답'} ({bar_note or 'StockEasy 일봉'}, {ticker})", file=sys.stderr)
+        print(f"ERROR: 시세 수집 실패 — {e or '빈 응답'} ({daily.source_label(bars, bar_note)}, {ticker})", file=sys.stderr)
         return 1
     if len(bars) < MA_DAYS + SLOPE_WINDOW:
         print(
@@ -809,7 +809,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    sources = [bar_note or "StockEasy 일봉"]
+    sources = [daily.source_label(bars, bar_note)]
     financials, primary, name = None, "C", stock.get("stock_name") or ticker
     if not args.no_fundamental:
         # 우선주는 분기 실적이 따로 없다 — 영업이익 축만 본주 코드로 받는다. 일봉·이동평균은

@@ -75,7 +75,7 @@ def cmd_bars(args) -> int:
         print(f"ERROR: 일봉 수집 실패 — {err or '빈 응답'}", file=sys.stderr)
         return 1
 
-    print(f"{ticker}\t{len(bars)}봉\t{bars[0]['date']} ~ {bars[-1]['date']}\t{note or 'StockEasy 일봉'}")
+    print(f"{ticker}\t{len(bars)}봉\t{bars[0]['date']} ~ {bars[-1]['date']}\t{daily.source_label(bars, note)}")
     for bar in bars[-args.tail:]:
         print(f"{bar['date']}\t{bar['close']:,.0f}\t{bar['volume']:,.0f}")
     return 0

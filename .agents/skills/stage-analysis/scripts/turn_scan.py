@@ -375,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
     name = stock.get("stock_name") or ticker
 
     bars, e, bar_note = daily.fetch_daily_bars(ticker, args.days)
-    source = bar_note or "StockEasy 일봉"
+    source = daily.source_label(bars, bar_note)
     if e or not bars:
         print(f"ERROR: 시세 수집 실패 — {e or '빈 응답'} ({source}, {ticker})", file=sys.stderr)
         return 1

@@ -4,7 +4,7 @@
 `extract_portfolio.py`가 만든 포트폴리오 스냅샷을 입력으로 받아 종목별 낙폭을 **두 축**으로
 계산하고, 둘 다 -10/-15/-20/-30% 밴드로 경보한다.
 
-1. **52주 시장 고점 축** — 최근 250거래일 최고 **종가**(StockEasy 정규장 일봉) 대비 하락률.
+1. **52주 시장 고점 축** — 최근 250거래일 최고 **종가**(정규장 일봉 — 금융위 KRX 공식 우선) 대비 하락률.
    내가 사기 전에 형성된 고점까지 포함하므로 "이 종목이 시장에서 얼마나 밀렸나"를 답한다.
 2. **계좌 기록 고점 축** — `output/portfolio/` 스냅샷 이력에 기록된 최고 **현재가**(시트 수집가)
    대비 하락률. 내가 관측을 시작한 뒤의 고점만 보므로 "내 보유 구간에 얼마나 반납했나"를
@@ -23,7 +23,7 @@
 요구하는 추세 훼손 감지를 이 축들이 담당한다.
 
 데이터 소스:
-- 일봉 OHLCV — `invagent.datafeed.daily` (StockEasy 정규장 우선, 네이버 대체 시 꼬리표).
+- 일봉 OHLCV — `invagent.datafeed.daily` (금융위 KRX 공식 일봉 우선, 미공개 최근 봉은 StockEasy 정규장, 네이버 대체 시 꼬리표).
 - 티커 해석 — `context/ticker_overrides.md` → `analyze-stock/scripts/fetch_stock_info.py` 순.
 - 계좌 기록 고점 — `output/portfolio/<yyyy>/<mm>/*.md` 스냅샷의 `## 보유` 표 (외부 조회 없음).
 
@@ -471,7 +471,7 @@ def render(
     lines = [
         SECTION_TITLE,
         "",
-        f"> **52주 시장 고점** = 최근 {PEAK_WINDOW_DAYS}거래일 최고 **종가**(StockEasy 정규장 일봉). "
+        f"> **52주 시장 고점** = 최근 {PEAK_WINDOW_DAYS}거래일 최고 **종가**(정규장 일봉 — 금융위 KRX 공식 우선). "
         f"내가 사기 전 고점까지 포함한다.",
         "> **계좌 기록 고점** = `output/portfolio/` 스냅샷에 기록된 최고 **현재가**(시트 수집가). "
         "내가 관측을 시작한 뒤의 고점만 본다.",

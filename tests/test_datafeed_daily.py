@@ -1,4 +1,4 @@
-"""`invagent.datafeed.daily` — 판정용 일봉 (StockEasy 정규장 우선, 네이버 대체)."""
+"""`invagent.datafeed.daily` — 판정용 일봉 (금융위 KRX 공식 우선, 최근 봉 StockEasy, 네이버 대체)."""
 
 import json
 from datetime import date
@@ -80,6 +80,7 @@ def test_regular_session_close_comes_from_stockeasy_not_naver(monkeypatch) -> No
         "low": 121400.0,
         "close": 123300.0,
         "volume": 1303836.0,
+        "source": "stockeasy",
     }
 
 
@@ -249,3 +250,14 @@ def test_a_missing_bar_stockeasy_cannot_supply_comes_from_naver_and_is_labelled(
         ("20260928", 121700.0),
     ]
     assert "20260928" in note and "STOCKEASY_COOKIE" in note and "시간외" in note
+
+
+def test_the_source_label_names_the_official_bars_and_the_stockeasy_tail(monkeypatch) -> None:
+    """출처 표기는 실제로 쓴 소스를 밝힌다 — 공식 일봉 구간과 StockEasy가 이은 봉."""
+    monkeypatch.setattr(fsc, "load_key", lambda: "k" * 64)
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
+    recording(monkeypatch, fsc_body=official(("20260923", "119000"), ("20260925", "120000")))
+
+    bars, _, note = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+
+    assert daily.source_label(bars, note) == "금융위 KRX 공식 일봉 ~20260925 + StockEasy 정규장 20260928"

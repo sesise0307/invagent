@@ -369,3 +369,15 @@ def test_cli_labels_a_naver_fallback_because_its_close_may_be_after_hours(monkey
 
     assert turn_scan.main(["가나", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["source"] == note
+
+
+def test_cli_names_the_official_bars_when_they_served_the_history(monkeypatch, capsys):
+    """공식 일봉으로 판정했으면 헤더가 금융위를 밝힌다 — StockEasy라고 적지 않는다."""
+    from invagent.datafeed import daily
+
+    bars = daily.tagged(_bars(_path(BASE + [(140, 112.0)])), daily.OFFICIAL)
+    _fake_feed(monkeypatch, bars)
+
+    assert turn_scan.main(["가나"]) == 0
+    header = capsys.readouterr().out.splitlines()[0]
+    assert f"출처 금융위 KRX 공식 일봉 ~{bars[-1]['date']}" in header
