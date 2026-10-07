@@ -38,7 +38,7 @@ StockEasy와 Naver가 함께 `<urlopen error [Errno 8] nodename nor servname pro
 | 종목 투자자별 매매동향(기관·외국인·개인 순매수량) | `invagent.datafeed.naver.fetch_investor_trend` — `m.stock.naver.com/api/stock/<code>/trend`, 최근 60거래일까지 | 불필요 |
 | 종목명·상장 시장(KOSPI·KOSDAQ) 대체 | `invagent.datafeed.naver.fetch_basic` — `m.stock.naver.com/api/stock/<code>/basic`. 정본은 `info-tab`의 `stock_info.market`이고, 그것이 막혔을 때만 쓴다 | 불필요 |
 | 종목명·티커 해석 | `invagent.datafeed.tickers` — 오버라이드 → 네이버 검색(`ac.stock.naver.com/ac`) → 네이버가 실패했을 때만 StockEasy `stock-search`. StockEasy 요청 한도를 StockEasy에만 있는 값에 남겨 두기 위해서다 | 불필요 |
-| 일봉 OHLCV (판정용) | `invagent.datafeed.daily.fetch_daily_bars` — StockEasy `info-tab`의 `chart`(3년치 정규장 1일봉)가 정본. 쿠키가 없거나 실패하면 `invagent.datafeed.naver`(`siseJson`)로 대체하고 대체 사유를 돌려준다. **네이버 종가는 장 마감 후 시간외가가 섞인다**(2026-09-28 사용자 확정) — 대체 꼬리표가 붙은 가격선은 StockEasy 종가로 다시 잰다 | 필요 (대체는 불필요) |
+| 일봉 OHLCV (판정용) | `invagent.datafeed.daily.fetch_daily_bars` — **금융위원회 주식시세정보**(`invagent.datafeed.fsc`, data.go.kr `GetStockSecuritiesInfoService_V2/getStockPriceInfo_V2`)가 정본: KRX 공식 정규장 OHLCV, 한 번에 3년치, 개발계정 하루 10,000회. 기준일 다음 영업일 13시 뒤에 올라오므로 그 뒤의 빈 평일 봉만 StockEasy `info-tab`의 `chart`로 잇는다 — StockEasy는 장중·마감 직후에만 불린다. 빈 봉을 StockEasy로도 못 채우면 그 봉만 네이버로 채우고 날짜를 대체 사유에 적는다. 키가 없거나 공식 호출이 실패하면 StockEasy 3년치 → 네이버(`siseJson`) 순이다. **네이버 종가는 장 마감 후 시간외가가 섞인다**(2026-09-28 사용자 확정; 2026-10-07 공식 일봉으로 대덕전자 9/14 정규장 종가 97,000원 vs 네이버 95,600원 확인) — 대체 꼬리표가 붙은 가격선은 정규장 종가로 다시 잰다 | `DATA_GO_KR_SERVICE_KEY` 권장 (없으면 StockEasy 쿠키, 대체는 불필요) |
 | 시장 지표(지수·빅픽처·breadth·신용잔고) | `invagent.datafeed.stockeasy.fetch_market_json` → `daily-digest/scripts/fetch_market_signals.py` | 불필요 |
 | 텔레그램 저장 메시지·첨부 이미지·링크 본문 | `uv run invagent fetch-messages` | 텔레그램 세션 |
 | 보유 포트폴리오 | Google Drive MCP → `daily-digest/scripts/extract_portfolio.py` | MCP |
@@ -128,6 +128,17 @@ uv run python .agents/skills/daily-digest/scripts/extract_portfolio.py <CSV 응�
   응답을 옮겨 적다 base64가 잘리면 마지막 행이 빠지기 때문이다(2026-09-28). 거부되면 다시 받는다.
 
 같은 날 스냅샷이 이미 있으면 다시 받지 않고 그것을 읽는다.
+
+## 인증 — `DATA_GO_KR_SERVICE_KEY` (공식 일봉)
+
+data.go.kr 로그인 → 「금융위원회_주식시세정보」 활용신청(자동 승인) → 마이페이지의 **일반 인증키**를 `.env`의
+`DATA_GO_KR_SERVICE_KEY`에 넣는다. 값은 어디에도 출력하지 않는다.
+
+- 엔드포인트는 **V2**다: `https://apis.data.go.kr/1160100/GetStockSecuritiesInfoService_V2/getStockPriceInfo_V2`.
+  구버전 경로(`/1160100/service/GetStockSecuritiesInfoService/getStockPriceInfo`)는 새 키를 `SERVICE_KEY_IS_NOT_REGISTERED_ERROR`
+  (code 30)로 거절해 키 문제처럼 보인다(2026-10-06~07, 반나절 허비). 포털 미리보기는 되는데 code 30이면 경로부터 의심한다.
+- 오류도 HTTP 200 본문(`OpenAPI_ServiceResponse.cmmMsgHeader`)으로 온다. `fsc`는 이를 실패로 돌려주고 `errMsg`를 사유로 쓴다.
+- 이용 조건: 공공누리 제4유형 — 개인 분석용, 제3자 재배포 금지.
 
 ## 인증 — `STOCKEASY_COOKIE`
 

@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from invagent.datafeed import cache, daily, http, naver, stockeasy
+from invagent.datafeed import cache, daily, fsc, http, naver, stockeasy
 
 INFO_TAB = {
     "stock_code": "353200",
@@ -34,8 +34,25 @@ def _isolated_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
 
 
-def fake_read(info_tab=INFO_TAB, naver_body=NAVER_SISE, info_error=None):
+@pytest.fixture(autouse=True)
+def _no_official_key(monkeypatch):
+    """기본은 금융위 키 없음 — 실제 `.env`에 키가 있어도 테스트는 그 값을 읽지 않는다."""
+    monkeypatch.setattr(fsc, "load_key", lambda: None)
+
+
+def official(*rows) -> str:
+    """금융위 응답. 행은 `(basDt, 종가)` — 시가·고가·저가는 종가와 같게 둔다."""
+    items = [
+        {"basDt": d, "srtnCd": "353200", "mkp": c, "hipr": c, "lopr": c, "clpr": c, "trqu": "1000"}
+        for d, c in rows
+    ]
+    return json.dumps({"response": {"header": {"resultCode": "00"}, "body": {"items": {"item": items}}}})
+
+
+def fake_read(info_tab=INFO_TAB, naver_body=NAVER_SISE, info_error=None, fsc_body=None):
     def read(url, headers, timeout):
+        if url.startswith(fsc.PRICE_URL) and fsc_body is not None:
+            return fsc_body.encode()
         if url.startswith(stockeasy.API_BASE):
             if info_error:
                 raise info_error
@@ -166,3 +183,69 @@ def test_other_info_tab_callers_keep_the_after_hours_window(monkeypatch) -> None
     monkeypatch.setattr(cache, "_now", lambda: _kst(2026, 10, 1, 18, 0))
 
     assert cache.load(url, authed=True) is None
+
+
+def recording(monkeypatch, **kwargs) -> list[str]:
+    seen = []
+    read = fake_read(**kwargs)
+
+    def wrapped(url, headers, timeout):
+        seen.append(url)
+        return read(url, headers, timeout)
+
+    monkeypatch.setattr(http, "read_url", wrapped)
+    return seen
+
+
+@pytest.mark.parametrize(
+    "asof",
+    [
+        "2026-09-25",  # 금요일까지 다 있다
+        "2026-09-27",  # 일요일 — 금요일 뒤로 빠진 평일이 없다
+    ],
+)
+def test_official_bars_that_reach_the_last_weekday_need_no_stockeasy_call(monkeypatch, asof) -> None:
+    """StockEasy 요청 한도는 공식 일봉에 아직 없는 봉에만 쓴다."""
+    monkeypatch.setattr(fsc, "load_key", lambda: "k" * 64)
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
+    seen = recording(monkeypatch, fsc_body=official(("20260924", "118000"), ("20260925", "120000")))
+
+    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof=asof)
+
+    assert err is None and note is None
+    assert [(b["date"], b["close"]) for b in bars] == [("20260924", 118000.0), ("20260925", 120000.0)]
+    assert not any(url.startswith(stockeasy.API_BASE) for url in seen)
+
+
+def test_a_bar_not_yet_published_is_taken_from_stockeasy(monkeypatch) -> None:
+    """공식 일봉은 다음 영업일 13시 뒤에 올라온다 — 그 사이의 봉만 StockEasy 정규장 봉으로 잇는다."""
+    monkeypatch.setattr(fsc, "load_key", lambda: "k" * 64)
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
+    recording(monkeypatch, fsc_body=official(("20260923", "119000"), ("20260925", "120000")))
+
+    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+
+    assert err is None and note is None
+    # 9/23은 공식 값이 그대로, 9/28만 StockEasy에서 붙는다.
+    assert [(b["date"], b["close"]) for b in bars] == [
+        ("20260923", 119000.0),
+        ("20260925", 120000.0),
+        ("20260928", 123300.0),
+    ]
+
+
+def test_a_missing_bar_stockeasy_cannot_supply_comes_from_naver_and_is_labelled(monkeypatch) -> None:
+    """공식 히스토리는 지키고, 빈 최근 봉만 네이버로 채우되 시간외가가 섞였을 수 있음을 밝힌다."""
+    monkeypatch.setattr(fsc, "load_key", lambda: "k" * 64)
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: None)
+    recording(monkeypatch, fsc_body=official(("20260923", "119000"), ("20260925", "120000")))
+
+    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+
+    assert err is None
+    assert [(b["date"], b["close"]) for b in bars] == [
+        ("20260923", 119000.0),
+        ("20260925", 120000.0),
+        ("20260928", 121700.0),
+    ]
+    assert "20260928" in note and "STOCKEASY_COOKIE" in note and "시간외" in note

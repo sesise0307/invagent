@@ -25,19 +25,27 @@ design notes to `docs/`.
 `src/invagent/datafeed/` is the only place that talks to a market data source.
 `http.get_json` is the single request path and every other module goes through it:
 `stockeasy` (the `/stockdata/api/v1/**` stock endpoints and the `.../market/**`
-ones, the `STOCKEASY_COOKIE` session, stock resolution, `fs_rows`), `naver`
+ones, the `STOCKEASY_COOKIE` session, stock resolution, `fs_rows`), `fsc` (the Financial Services
+Commission's official KRX daily prices on data.go.kr, keyed by `DATA_GO_KR_SERVICE_KEY`), `naver`
 (daily OHLCV), `daily` (the bars every price judgement reads — see below), `cache` (the shared response cache),
 `ratelimit` (per-host request spacing, retry and cool-down — see below), `env` (repository root,
 `output/`, `.env` values), `series` (`sma`), `tickers` (override-first ticker
 resolution — then Naver's `ac.stock.naver.com` search, with StockEasy `stock-search` only when
 Naver fails, so StockEasy's request budget goes to values only it serves — plus the
 preferred-to-common mapping below) and `snapshot` (portfolio
-snapshot tables). `daily.fetch_daily_bars` takes the regular-session bars from the StockEasy
-`info-tab` `chart` (three years of 1-day OHLCV) and falls back to Naver only when the cookie is
-missing or the call fails, returning a fallback note that every script prints: Naver's `siseJson`
+snapshot tables). `daily.fetch_daily_bars` takes the regular-session bars from `fsc` first — KRX's
+official OHLCV, three years in one request, 10,000 requests a day — and, because that data is
+published after 13:00 on the next business day, fills only the weekdays after its last bar from the
+StockEasy `info-tab` `chart`, so StockEasy is called intraday and just after the close rather than
+for every stock's three-year history (sequential scans were cut off around the twelfth to fourteenth
+StockEasy request on 2026-10-05 and 10-06). A gap StockEasy cannot fill is filled from Naver and
+named, with its dates, in the fallback note; without the key, or when `fsc` fails, the old order
+applies — StockEasy's three years, then Naver. Every script prints that note: Naver's `siseJson`
 close carries the after-hours price (대덕전자 from 2026-09-14 on, e.g. 9/14 95,600 vs a
-regular close of 97,000원), and rule triggers are judged on the regular close (user decision,
-2026-09-28). **Add a new source here,
+regular close of 97,000원, confirmed against the official bar on 2026-10-07), and rule triggers are
+judged on the regular close (user decision, 2026-09-28). The endpoint is the `_V2` one; the older
+`/service/GetStockSecuritiesInfoService` path rejects new keys with `SERVICE_KEY_IS_NOT_REGISTERED_ERROR`,
+which reads as a key problem — `market-data/SKILL.md` records the setup. **Add a new source here,
 never in a skill script.** A skill script fetches nothing itself; it calls this
 package and spends its own lines on judgement and output. Nothing under
 `.agents/skills/` may import another skill's scripts — that cross-directory
@@ -554,7 +562,7 @@ Copy `.env.example` to `.env` for local configuration. Telegram commands require
 `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`; `TELEGRAM_SESSION_PATH`,
 `INVAGENT_OUTPUT_DIR`, and `INVAGENT_DEFAULT_CHANNELS` override the defaults in
 `src/invagent/core/config.py`. `invagent.datafeed.env` reads `STOCKEASY_COOKIE`
-(StockEasy session) from the same file, and it reads any key — not just that one — so a
+(StockEasy session) and `DATA_GO_KR_SERVICE_KEY` (official daily bars) from the same file, and it reads any key — not just that one — so a
 new credential needs no new parser. `INVAGENT_REPORT_ARCHIVE` (analyst-PDF root),
 `INVAGENT_HTTP_CACHE` and `INVAGENT_HTTP_CACHE_TTL` are read there too. OpenDART
 agent access requires private per-client MCP configuration; never put its
