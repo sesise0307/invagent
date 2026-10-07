@@ -4118,3 +4118,45 @@ def test_reward_risk_denominator_is_separate_from_the_position_sizing_floor() ->
     assert risk["max_purchase_fraction"] == pytest.approx(
         module.ACCOUNT_RISK_LIMIT / module.MIN_STOP_LOSS
     )
+
+
+def _load_validate_inputs_module():
+    script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "validate_inputs.py"
+    spec = importlib.util.spec_from_file_location("validate_inputs", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_validate_inputs_rejects_valuation_shaped_input_naming_the_envelope(capsys, tmp_path):
+    module = _load_validate_inputs_module()
+    valuation_shaped = {
+        "asof": "2026-10-07",
+        "current_price": 1217000,
+        "consensus": {"low": 1750000, "average": 1865833, "high": 2000000},
+    }
+    path = tmp_path / "valuation-input.json"
+    path.write_text(json.dumps(valuation_shaped), encoding="utf-8")
+
+    exit_code = module.main([str(path)])
+
+    result = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert result["valid"] is False
+    message = result["errors"][0]
+    for field in ("inputs", "value", "status", "source", "fetched_at", "kind", "basis"):
+        assert field in message, f"오류 메시지에 기대 형식의 {field}가 없다: {message}"
+
+
+def test_analyze_stock_skill_envelope_example_validates():
+    module = _load_validate_inputs_module()
+    skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+    match = re.search(r"\*\*입력 봉투\*\*.*?```json\n(.*?)```", skill, re.S)
+    assert match, "SKILL.md 9단계에 「입력 봉투」 json 예시 블록이 없다"
+
+    result = module.validate_document(json.loads(match.group(1)))
+
+    assert result["valid"] is True, result["errors"]
+    assert result["observations"]["consensus_average"]["kind"] == "estimate"

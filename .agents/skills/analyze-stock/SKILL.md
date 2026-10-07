@@ -354,6 +354,30 @@ uv run python .agents/skills/analyze-stock/scripts/find_mentions.py "<종목명>
 
 수치 입력은 `scripts/validate_inputs.py`의 상태·시점·관점 봉투를 먼저 통과시킨다. 합의·시나리오 범위와 위험 한도 계산은 `scripts/valuation_decision.py`로 재현하고 JSON의 `audit`를 근거로 보존한다.
 
+**입력 봉투** — `validate_inputs.py`는 `valuation_decision.py` 입력과 **다른 문서**를 받는다. 숫자마다
+출처·기준일·수집 시각·실적/추정·연결/별도를 붙인 봉투다. `valuation_decision.py` 입력을 그대로 넣으면
+`inputs must be an object`로 거절된다. 봉투를 `output/.analysis/<종목>-<yyyymmdd>/inputs-envelope.json`에
+쓰고 먼저 통과시킨 뒤, 통과한 값으로 `valuation-input.json`을 만든다.
+
+```json
+{"asof": "2026-10-07",
+ "required": ["current_price", "consensus_low", "consensus_average", "consensus_high", "entry_price", "account_value"],
+ "inputs": {
+  "current_price": {"value": 1217000, "status": "ok", "source": "StockEasy 정규장 일봉 003230 최종봉 20261007", "asof": "2026-10-07", "fetched_at": "2026-10-07T15:50:00+09:00", "kind": "actual", "basis": "not_applicable"},
+  "consensus_low": {"value": 1750000, "status": "ok", "source": "StockEasy stock-info/003230 [컨센 요약]", "asof": "2026-10-07", "fetched_at": "2026-10-07T15:50:00+09:00", "kind": "estimate", "basis": "not_applicable"},
+  "consensus_average": {"value": 1865833, "status": "ok", "source": "StockEasy stock-info/003230 [컨센 요약]", "asof": "2026-10-07", "fetched_at": "2026-10-07T15:50:00+09:00", "kind": "estimate", "basis": "not_applicable"},
+  "consensus_high": {"value": 2000000, "status": "ok", "source": "StockEasy stock-info/003230 [컨센 요약]", "asof": "2026-10-07", "fetched_at": "2026-10-07T15:50:00+09:00", "kind": "estimate", "basis": "not_applicable"},
+  "entry_price": {"value": 1293344, "status": "ok", "source": "output/portfolio/2026/10/2026-10-06.md", "asof": "2026-10-06", "fetched_at": "2026-10-06T16:00:00+09:00", "kind": "actual", "basis": "not_applicable"},
+  "account_value": {"value": 557273000, "status": "ok", "source": "output/portfolio/2026/10/2026-10-06.md", "asof": "2026-10-06", "fetched_at": "2026-10-06T16:00:00+09:00", "kind": "actual", "basis": "not_applicable"},
+  "fx_usdkrw": {"status": "missing", "asof": "2026-10-07", "kind": "actual", "basis": "not_applicable"}
+ }}
+```
+
+- `status`가 `ok`가 아니면 `value`를 비우거나 빼라. 0은 값이다 — 결손을 0으로 쓰지 않는다.
+- `required`에 든 항목이 `ok`가 아니면 `valid: false`(exit 2). 판정에 안 쓰는 참고값(환율 등)은 `required`에서 뺀다.
+- `kind: estimate`는 경고로 남는다 — 컨센이 추정치라는 표시이지 실패가 아니다.
+- 값 연결: `current_price`·`entry_price`·`account_value` → 같은 이름, `consensus_low/average/high` → `consensus.low/average/high`.
+
 **컨센 목표가 단독으로 판정하지 않는다.** 증권사 리포트는 매도 의견을 거의 안 내 목표가가 구조적
 상방 편향이다. 컨센과 **자체 Bull/Base/Bear 시나리오**를 동적 가중으로 결합한다.
 출력 형식의 정본은 `template/stock_analysis.md` §2-C·§2-D.

@@ -18,6 +18,11 @@ from typing import Any
 STATUSES = {"ok", "missing", "error", "stale", "market_closed"}
 KINDS = {"actual", "estimate", "not_applicable"}
 BASES = {"consolidated", "separate", "not_applicable"}
+EXPECTED_SHAPE = (
+    '{"asof": "YYYY-MM-DD", "required": [name, ...], "inputs": {name: '
+    '{"value", "status", "source", "asof", "fetched_at", "kind", "basis"}}} '
+    "— one envelope per number, not the valuation_decision.py input"
+)
 
 
 class InputValidationError(ValueError):
@@ -101,7 +106,7 @@ def validate_document(payload: Any) -> dict[str, Any]:
     decision_asof = _date(payload.get("asof"), "asof")
     inputs = payload.get("inputs")
     if not isinstance(inputs, dict):
-        raise InputValidationError("inputs must be an object")
+        raise InputValidationError(f"inputs must be an object; expected {EXPECTED_SHAPE}")
     required = payload.get("required", list(inputs))
     if not isinstance(required, list) or not all(isinstance(v, str) for v in required):
         raise InputValidationError("required must be a list of input names")
