@@ -261,3 +261,64 @@ def test_the_source_label_names_the_official_bars_and_the_stockeasy_tail(monkeyp
     bars, _, note = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
 
     assert daily.source_label(bars, note) == "금융위 KRX 공식 일봉 ~20260925 + StockEasy 정규장 20260928"
+
+
+def test_todays_bar_before_the_regular_session_settles_comes_from_naver(monkeypatch) -> None:
+    """15:40 전 오늘 봉은 장중 현재가다 — StockEasy 요청 한도를 쓰지 않고 네이버로 잇는다."""
+    monkeypatch.setattr(fsc, "load_key", lambda: "k" * 64)
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
+    monkeypatch.setattr(cache, "_now", lambda: _kst(2026, 9, 28, 14, 0))
+    seen = recording(monkeypatch, fsc_body=official(("20260923", "119000"), ("20260925", "120000")))
+
+    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+
+    assert err is None and note is None
+    assert [(b["date"], b["close"], b["source"]) for b in bars][-1] == ("20260928", 121700.0, "naver_intraday")
+    assert not any(url.startswith(stockeasy.API_BASE) for url in seen)
+
+
+def test_before_the_official_bar_is_published_yesterday_stays_on_stockeasy(monkeypatch) -> None:
+    """네이버 지난 봉 종가에는 시간외가가 섞인다 — 장중에도 네이버로 잇는 것은 오늘 봉뿐이다."""
+    info_tab = json.loads(json.dumps(INFO_TAB))
+    info_tab["chart"]["data"] = [
+        ["2026-09-25T00:00:00+09:00", 120000.0, 121000.0, 119000.0, 120500.0, 1000, 0.0],
+        ["2026-09-28T00:00:00+09:00", 124600.0, 129100.0, 121400.0, 123300.0, 1303836, 3.27],
+    ]
+    monkeypatch.setattr(fsc, "load_key", lambda: "k" * 64)
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
+    monkeypatch.setattr(cache, "_now", lambda: _kst(2026, 9, 28, 10, 0))
+    recording(monkeypatch, info_tab=info_tab, fsc_body=official(("20260924", "118000")))
+
+    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+
+    assert err is None and note is None
+    assert [(b["date"], b["close"], b["source"]) for b in bars] == [
+        ("20260924", 118000.0, "fsc"),
+        ("20260925", 120500.0, "stockeasy"),
+        ("20260928", 121700.0, "naver_intraday"),
+    ]
+
+
+def test_the_source_label_names_an_intraday_naver_bar(monkeypatch) -> None:
+    """장중 네이버 봉은 대체가 아니지만 종가도 아니다 — 출처 표기에서 장중 값임을 밝힌다."""
+    monkeypatch.setattr(fsc, "load_key", lambda: "k" * 64)
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
+    monkeypatch.setattr(cache, "_now", lambda: _kst(2026, 9, 28, 14, 0))
+    recording(monkeypatch, fsc_body=official(("20260923", "119000"), ("20260925", "120000")))
+
+    bars, _, note = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+
+    assert daily.source_label(bars, note) == "금융위 KRX 공식 일봉 ~20260925 + 네이버 장중 20260928"
+
+
+def test_todays_bar_after_the_regular_session_settles_comes_from_stockeasy(monkeypatch) -> None:
+    """15:40부터 네이버 종가에는 시간외가가 섞일 수 있다 — 오늘 봉도 StockEasy 정규장 봉으로 잇는다."""
+    monkeypatch.setattr(fsc, "load_key", lambda: "k" * 64)
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
+    monkeypatch.setattr(cache, "_now", lambda: _kst(2026, 9, 28, 15, 40))
+    recording(monkeypatch, fsc_body=official(("20260923", "119000"), ("20260925", "120000")))
+
+    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+
+    assert note is None
+    assert (bars[-1]["date"], bars[-1]["close"], bars[-1]["source"]) == ("20260928", 123300.0, "stockeasy")

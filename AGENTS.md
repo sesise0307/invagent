@@ -36,7 +36,11 @@ preferred-to-common mapping below) and `snapshot` (portfolio
 snapshot tables). `daily.fetch_daily_bars` takes the regular-session bars from `fsc` first — KRX's
 official OHLCV, three years in one request, 10,000 requests a day — and, because that data is
 published after 13:00 on the next business day, fills only the weekdays after its last bar from the
-StockEasy `info-tab` `chart`, so StockEasy is called intraday and just after the close rather than
+StockEasy `info-tab` `chart` — except today's bar asked for before 15:40 KST
+(`cache.REGULAR_SESSION_SETTLED`), which is still an intraday price and comes from Naver, tagged
+`naver_intraday` and labelled 「네이버 장중」, so an intraday scan after 13:00 makes no StockEasy call at all
+(user decision, 2026-10-08; earlier missing days stay on StockEasy because Naver's past closes carry the
+after-hours price) — so StockEasy is called only for a not-yet-published past bar or after 15:40 rather than
 for every stock's three-year history (sequential scans were cut off around the twelfth to fourteenth
 StockEasy request on 2026-10-05 and 10-06). A gap StockEasy cannot fill is filled from Naver and
 named, with its dates, in the fallback note; without the key, or when `fsc` fails, the old order

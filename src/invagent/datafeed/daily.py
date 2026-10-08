@@ -6,12 +6,15 @@ StockEasy와 매일 어긋났다: 9/14 95,600 vs 97,000원). 룰 발동은 정�
 정본은 금융위원회 주식시세정보(`fsc`)다 — KRX 공식 종가이고 요청 한도가 넉넉하다. 다만 다음
 영업일 13시 뒤에 올라오므로 그 사이의 봉만 StockEasy `info-tab`의 `chart`로 잇는다. 그래서
 StockEasy는 장중·장 마감 직후에만 불린다 — 종목마다 3년치를 받던 때에는 연속 스캔이 열몇 번째
-요청에서 끊겼다(2026-10-05·06). 공식 일봉이 없으면(키 없음·실패) StockEasy 3년치 → 네이버 순이다.
+요청에서 끊겼다(2026-10-05·06). KST 오늘 봉을 15:40 전에 물으면 그 봉은 장중 현재가라 네이버에서
+받고(`naver_intraday`, 출처 표기 「네이버 장중」) StockEasy는 지난 빈 봉에만 쓴다 — 13시 뒤 장중이면
+StockEasy 호출이 없다. 네이버 지난 봉 종가에는 시간외가가 섞이므로 어제 봉은 네이버로 잇지 않는다.
+공식 일봉이 없으면(키 없음·실패) StockEasy 3년치 → 네이버 순이다.
 """
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from invagent.datafeed import cache, fsc, naver, stockeasy
 
@@ -19,6 +22,8 @@ from invagent.datafeed import cache, fsc, naver, stockeasy
 OFFICIAL = "fsc"
 STOCKEASY = "stockeasy"
 NAVER = "naver"
+# 15:40 전 오늘 봉 — 대체가 아니라 아직 종가가 아닌 장중 현재가다.
+NAVER_INTRADAY = "naver_intraday"
 SOURCE_KEY = "source"
 
 
@@ -34,6 +39,7 @@ def source_label(bars: list[dict], note: str | None) -> str:
     """
     official = [b for b in bars if b.get(SOURCE_KEY) == OFFICIAL]
     tail = [b for b in bars if b.get(SOURCE_KEY) == STOCKEASY]
+    intraday = [b for b in bars if b.get(SOURCE_KEY) == NAVER_INTRADAY]
     if not official:
         return note or "StockEasy 일봉"
     parts = [f"금융위 KRX 공식 일봉 ~{official[-1]['date']}"]
@@ -42,6 +48,8 @@ def source_label(bars: list[dict], note: str | None) -> str:
     elif tail:
         dates = ", ".join(b["date"] for b in tail)
         parts.append(f"StockEasy 정규장 {dates}")
+    if intraday:
+        parts.append(f"네이버 장중 {', '.join(b['date'] for b in intraday)}")
     return " + ".join(parts)
 
 
@@ -86,17 +94,30 @@ def fetch_daily_bars(
         last = official[-1]["date"]
         if not missing_weekdays(last, end):
             return official, None, None
+        # 15:40 전 오늘 봉은 장중 현재가다 — 네이버로 잇고 StockEasy는 지난 봉에만 쓴다.
+        today: list[dict] = []
+        if settling_today(end):
+            naver_bars, _ = naver.fetch_bars(code, days, asof=end)
+            today = tagged([b for b in naver_bars if b["date"] == end_key], NAVER_INTRADAY)
+            end -= timedelta(days=1)
+            end_key = end.strftime("%Y%m%d")
+            if not missing_weekdays(last, end):
+                return official + today, None, None
         recent, reason = stockeasy_bars(code, end_key)
         recent = tagged([b for b in recent if b["date"] > last], STOCKEASY)
         if recent:
-            return official + recent, None, None
+            return official + recent + today, None, None
         naver_bars, _ = naver.fetch_bars(code, days, asof=end)
         recent = tagged([b for b in naver_bars if b["date"] > last], NAVER)
         if recent:
             dates = ", ".join(b["date"] for b in recent)
-            return official + recent, None, fallback_note(f"최근 봉 {dates} — {reason or 'StockEasy 일봉 없음'}")
+            return (
+                official + recent + today,
+                None,
+                fallback_note(f"최근 봉 {dates} — {reason or 'StockEasy 일봉 없음'}"),
+            )
         # 빈 날이 공휴일이었을 수 있다 — 공식 일봉만으로 판정한다.
-        return official, None, None
+        return official + today, None, None
     bars, reason = stockeasy_bars(code, end_key)
     bars = tagged([b for b in bars if b["date"] >= start], STOCKEASY)
     if bars:
@@ -120,6 +141,12 @@ def stockeasy_bars(code: str, end_key: str) -> tuple[list[dict], str | None]:
     if bars:
         return bars, None
     return [], f"StockEasy 조회 실패 — {err}" if err else "StockEasy chart 일봉 없음"
+
+
+def settling_today(end: date) -> bool:
+    """`end`가 KST 오늘이고 정규장 종가가 아직 확정 전(15:40 전)인가."""
+    now = datetime.fromtimestamp(cache._now(), cache.KST)
+    return end == now.date() and now.time() < cache.REGULAR_SESSION_SETTLED
 
 
 def missing_weekdays(last: str, end: date) -> bool:
