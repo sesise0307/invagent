@@ -67,7 +67,7 @@ uv run python .agents/skills/analyze-stock/scripts/fetch_stock_info.py "<종목�
 
 ```bash
 uv run python .agents/skills/stage-analysis/scripts/stage_scan.py "<종목명 또는 티커>" [--no-cache]
-uv run python .agents/skills/daily-digest/scripts/fetch_market_signals.py
+uv run python .agents/skills/daily-digest/scripts/fetch_market_signals.py [--no-cache]
 uv run invagent daily-prep   # 시장 신호 + 전고점 낙폭을 한 번에
 ```
 
@@ -198,7 +198,7 @@ gitignore된 `.env`에 한 줄로, 따옴표로 감싸 둔다. 추적되는 파�
 - 성공한 응답만 저장한다. 일시적 401·타임아웃이 TTL 내내 굳지 않는다.
 - 저장 위치는 gitignore된 `output/.cache/http/`.
 - 끄기: `INVAGENT_HTTP_CACHE=0`, 창 조정: `INVAGENT_HTTP_CACHE_TTL`(초), 스크립트 플래그: `--no-cache`.
-  `fetch_market_signals.py`에는 argparse가 없어 플래그를 받지 못하므로 환경변수를 쓴다.
+  `invagent daily-prep`은 단계마다 플래그를 붙이지 않고 환경변수 하나로 모든 단계의 캐시를 끈다.
 
 ## 요청 제한
 

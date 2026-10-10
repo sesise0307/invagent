@@ -12,6 +12,7 @@ stockeasy.intellio.kr의 `/stockdata/api/v1/market/*` JSON API에서 시장 데�
 실패 시 stderr에 에러 출력 후 exit 1 — 호출측(스킬)은 실패해도 브리핑을 계속 진행한다.
 """
 
+import argparse
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -373,7 +374,13 @@ def fetch_all() -> tuple[dict, dict]:
     return data, errors
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="StockEasy 시장 신호 수집")
+    parser.add_argument("--no-cache", action="store_true", help="캐시를 쓰지 않고 매번 새로 받는다 (캐시 오염 의심 시)")
+    args = parser.parse_args(argv)
+    if args.no_cache:
+        http_cache.disable()
+
     data, errors = fetch_all()
 
     indices_data, bp = data["indices"], data["big_picture"]

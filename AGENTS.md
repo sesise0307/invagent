@@ -464,9 +464,9 @@ whether a cookie was sent — never by the cookie's value, which is written nowh
 unauthenticated HTTP 401 body can never be replayed to an authenticated call. Only successful
 responses are stored, so a transient 401 or timeout does not stick for the rest of the TTL.
 `INVAGENT_HTTP_CACHE=0` disables it, `INVAGENT_HTTP_CACHE_TTL` overrides the window in seconds,
-and every script that has an `argparse` exposes `--no-cache` — `fetch_market_signals.py` has
-none, which is why `invagent daily-prep` reaches all three steps with the environment variable
-rather than a flag. Change the
+and every script that touches the network exposes `--no-cache`, `fetch_market_signals.py`
+included. `invagent daily-prep` still reaches its steps with the environment variable rather than
+the flag, so one switch lands on every step the same way whatever flags each script takes. Change the
 constant and the minutes quoted here together; a test compares them. One exception keeps evening
 and pre-dawn re-runs off the network: a quote URL (`info-tab`, Naver `siseJson`) stored while the
 market is closed — weekdays after the 20:00 NXT close until 09:00 KST, and weekends — stays fresh

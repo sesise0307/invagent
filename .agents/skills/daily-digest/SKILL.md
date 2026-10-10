@@ -80,7 +80,7 @@ uv run invagent daily-prep [--snapshot output/portfolio/$(date +%Y/%m/%Y-%m-%d).
 StockEasy 시장 분석 페이지에서 시장 신호를 수집한다:
 
 ```bash
-uv run python .agents/skills/daily-digest/scripts/fetch_market_signals.py
+uv run python .agents/skills/daily-digest/scripts/fetch_market_signals.py [--no-cache]
 ```
 
 출력 내용 (신호등, 오닐 빅픽처, 지수, breadth, 신용/수급)을 해석해 브리핑 템플릿 최상단

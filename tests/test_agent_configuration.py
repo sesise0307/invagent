@@ -414,7 +414,7 @@ def test_market_signal_main_renders_api_payload(
     }
     monkeypatch.setattr(module, "fetch_api", lambda name: (payloads[name], None))
 
-    assert module.main() == 0
+    assert module.main([]) == 0
 
     out = capsys.readouterr().out
     assert "green" in out
@@ -506,8 +506,33 @@ def test_market_signal_main_reports_api_failure(
     module = load_script("daily-digest", "fetch_market_signals")
     monkeypatch.setattr(module, "fetch_api", lambda name: (None, "HTTP 404"))
 
-    assert module.main() == 1
+    assert module.main([]) == 1
     assert "HTTP 404" in capsys.readouterr().err
+
+
+def test_market_signal_no_cache_flag_refetches_every_endpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--no-cache`는 다른 스크립트처럼 캐시를 건너뛴다 — 직전 실행이 남긴 응답을 쓰지 않는다."""
+    module = load_script("daily-digest", "fetch_market_signals")
+    monkeypatch.setattr(module.http_cache, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(module.http_cache, "_forced_off", False)
+    monkeypatch.delenv("INVAGENT_HTTP_CACHE", raising=False)
+
+    calls: list[str] = []
+
+    def fake_read_url(url, headers, timeout):
+        calls.append(url)
+        return b"{}"
+
+    monkeypatch.setattr(datafeed_http, "read_url", fake_read_url)
+
+    module.main([])
+    first_run = len(calls)
+    assert first_run == len(module.ENDPOINTS)
+
+    module.main(["--no-cache"])
+    assert len(calls) == 2 * first_run, "--no-cache인데 캐시가 응답했다"
 
 
 STOCK_INFO_PAYLOAD = {
@@ -936,7 +961,8 @@ def test_no_cache_flag_forces_a_fresh_fetch(
     for name in ("analyze-stock/scripts/fetch_stock_info.py",
                  "stage-analysis/scripts/stage_scan.py",
                  "stage-analysis/scripts/turn_scan.py",
-                 "daily-digest/scripts/peak_drawdown.py"):
+                 "daily-digest/scripts/peak_drawdown.py",
+                 "daily-digest/scripts/fetch_market_signals.py"):
         text = (SKILLS_ROOT / name).read_text(encoding="utf-8")
         assert "--no-cache" in text, f"{name}에 --no-cache가 없다"
         assert "http_cache.disable()" in text, f"{name}이 플래그를 캐시에 연결하지 않았다"
