@@ -129,7 +129,7 @@ def test_find_prior_report_main_reports_new_and_inherited(
     assert "reports/종목/ㅇ/율촌화학_2026-09-01.md" in out
     assert "증분 기준일(`--since`): 2026-08-14" in out
     assert "과거 중복 후보 1건" in out
-    assert "승계 파일명을 목표 경로로 먼저 변경" in out
+    assert "--inherit --expected-sha256" in out
     assert "복사본을 만들지 마라" in out
     # 옛 보고서는 `## 12. 개정 이력`, 현 템플릿은 `## 11. 개정 이력` — 번호가 아니라 절 이름으로 찾는다.
     assert "승계본의 `개정 이력` 절을 반드시 읽어라" in out

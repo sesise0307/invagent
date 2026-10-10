@@ -172,7 +172,10 @@ def render(result: Lookup, output_root: Path) -> str:
         if result.same_path:
             lines.append("- 같은 경로 여부: **yes** → 같은 날 재실행. 본문은 현재 상태로 갱신하고 변경은 §11에 한 줄로 남겨라.")
         else:
-            lines.append("- 같은 경로 여부: no → 승계 파일명을 목표 경로로 먼저 변경한 뒤 같은 파일에 증분을 추가하라. 복사본을 만들지 마라.")
+            lines.append(
+                f"- 같은 경로 여부: no → 먼저 `--inherit --expected-sha256 {result.inherit.sha256}`로 "
+                "승계본을 목표 경로로 옮긴 뒤 같은 파일에 증분을 추가하라. 복사본을 만들지 마라."
+            )
         lines.append(f"- 증분 기준일(`--since`): {inherit.date}")
         lines.append(f"- 승계본 sha256(`--expected-sha256`): {inherit.sha256}")
 
@@ -187,7 +190,7 @@ def render(result: Lookup, output_root: Path) -> str:
         lines += [
             "",
             "승계본 전문을 먼저 읽어라. 이후 단계는 증분 기준일 이후만 새로 수집한다.",
-            "승계본과 목표 경로가 다르면 수집·작성 전에 파일명을 목표 경로로 변경한다.",
+            "승계본과 목표 경로가 다르면 수집·작성 전에 `--inherit --expected-sha256 <해시>`로 옮긴다.",
             "승계본의 `개정 이력` 절을 반드시 읽어라 (옛 배치는 `## 12.`) — 과거 판단·정정 이력이 거기에만 있다.",
             "승계본 섹션 순서가 템플릿과 다르면 템플릿 섹션 순서로 재배치한다. 내용은 옮기기만 하고 버리지 않는다.",
             "본문은 현재 상태만 유지한다. 옛 날짜 블록·보존 블록은 §11에 한 줄로 옮긴 뒤 본문에서 뺀다.",
