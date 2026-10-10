@@ -538,8 +538,10 @@ Use `uv` for local development.
   module. No test reaches the network — the request path is faked at
   `datafeed.http.read_url`, so the whole suite runs with sockets blocked.
 - `uv run pytest tests/test_agent_configuration.py -q`: check skill wiring,
-  skill-script behavior, and the credential/absolute-path guard after editing
-  anything under `.agents/skills/` or `template/`.
+  doc-sync, and the credential/absolute-path guard after editing anything under
+  `.agents/skills/` or `template/`.
+- `uv run pytest tests/test_peak_drawdown.py -q`: one skill script's behaviour —
+  each script has its own `tests/test_<script>.py`.
 - `uv run invagent fetch-messages --days 1`: manually verify message fetching.
 - `uv run invagent daily-prep`: run the briefing's independent prep steps at once.
 
@@ -662,11 +664,17 @@ stock tracking. Prefer small unit tests with mocks over live network calls. Name
 test modules `tests/test_<area>.py` and functions `test_<behavior>()`. The collection
 layer is tested as an ordinary package — `tests/test_datafeed_*.py`, one file per module,
 importing it normally and faking the network at `datafeed.http.read_url`, which is the
-single seam every request passes through. Skill behavior is covered by two files that load
-the skill scripts by path: `tests/test_agent_configuration.py` (skill wiring plus the script
-behavior that matters) and `tests/test_stage_analysis.py` (stage grading, against synthetic
-price series). Keep their assertions about documented thresholds and output rules in step
-with the SKILL.md files they mirror. A test that needs to stop a network call patches
+single seam every request passes through. Skill scripts are tested one file per script,
+`tests/test_<script>.py` (`test_fetch_stock_info.py`, `test_entry_policy.py`,
+`test_peak_drawdown.py`, `test_stage_analysis.py` for `stage_scan`, and so on), each loading
+its script by path through `load_script(skill, name)` in `tests/conftest.py`; cache behaviour
+that crosses several scripts sits in `tests/test_http_cache.py`, and a helper more than one
+file needs goes in `tests/_helpers.py`. `tests/test_agent_configuration.py` holds only skill
+wiring (SKILL.md frontmatter, `openai.yaml`, symlinks, every script named by a document), the
+doc-sync checks that compare a script constant or rule text with SKILL.md, AGENTS.md or
+`context/my_rules.md`, and the credential/absolute-path guard — a new behaviour test goes in
+its script's file, not there. Keep assertions about documented thresholds and output rules in
+step with the SKILL.md files they mirror. A test that needs to stop a network call patches
 `invagent.datafeed`, never a script's own name for it.
 
 ## Git and Security
