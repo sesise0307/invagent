@@ -380,6 +380,18 @@ uv run python .agents/skills/analyze-stock/scripts/find_mentions.py "<종목명>
 - `required`에 든 항목이 `ok`가 아니면 `valid: false`(exit 2). 판정에 안 쓰는 참고값(환율 등)은 `required`에서 뺀다.
 - `kind: estimate`는 경고로 남는다 — 컨센이 추정치라는 표시이지 실패가 아니다.
 - 값 연결: `current_price`·`entry_price`·`account_value` → 같은 이름, `consensus_low/average/high` → `consensus.low/average/high`.
+- **컨센 봉투·블록은 스크립트가 만든다.** 6단계를 `--json`으로 한 번 더 돌려(캐시가 받아 준다) 나온
+  `consensus_envelopes`(`consensus_low/average/high` 봉투 3개 — 출처·asof·수집 시각까지 채워짐)를 봉투
+  문서 `inputs`에, `consensus_input`을 `valuation-input.json`의 `consensus`에 **손대지 않고 그대로** 넣는다.
+  `[컨센 요약]` 줄에서 숫자를 옮겨 적지 않는다 — 그 줄은 사람이 읽는 표시용이다.
+  - `consensus_input`의 null 칸은 `consensus_input_gaps`에 사유가 붙은 **모델 판단 칸**이다. 지금은
+    `eps_revision` 하나 — `[EPS 컨센 변화]`를 보고 `persistent_down/down/flat/up/unknown` 중 하나로 채운다.
+    null 그대로 넘기면 `valuation_decision.py`가 거절한다. 다른 칸은 고치지 않는다.
+  - 스크립트 정의: `low/average/high`·`coverage`·`latest_report_date` = 증권사별 최신 1건 중 숫자 목표가
+    (최신이 NR인 증권사 제외), `recent_report_count` = 수집일 기준 3개월 안의 숫자 목표가 리포트 건수(같은
+    증권사 중복 포함, NR 제외). 우선주면 본주 목표가·본주 출처(`stock-info/<본주>`)다.
+  - 목표가 제시 리포트가 하나도 없으면 `consensus_input`이 null이고 봉투가 `status: missing`이다 —
+    `valid: false`가 정상이다. 컨센 봉투를 `required`에서 빼고 아래 예외 표 「컨센 없음」 행(`w_c = 0`)으로 간다.
 
 **컨센 목표가 단독으로 판정하지 않는다.** 증권사 리포트는 매도 의견을 거의 안 내 목표가가 구조적
 상방 편향이다. 컨센과 **자체 Bull/Base/Bear 시나리오**를 동적 가중으로 결합한다.
@@ -396,8 +408,8 @@ uv run python .agents/skills/analyze-stock/scripts/find_mentions.py "<종목명>
 |---|---|
 | 6단계 StockEasy | 평균 목표가 · 커버 사수 · 최신 리포트 발간일 · 목표가 산포(최고/최저) · 상향/하향 · EPS 컨센 변화 · 연간 컨센 추정 실적 |
 
-> ⛔ **컨센 입력은 스크립트 `[컨센 요약]` 줄을 그대로 쓴다.** 이 줄은 **증권사별 최신 1건**만
-> 집계한 값이다. 바로 아래 `↳` 줄의 「전체 이력 단순평균」은 옛 목표가·중복이 섞여 있어
+> ⛔ **컨센 입력은 스크립트 `--json`의 `consensus_input`·`consensus_envelopes`를 그대로 쓴다.** 둘은
+> 사람이 읽는 `[컨센 요약]` 줄과 같은 **증권사별 최신 1건** 집계다. 바로 아래 `↳` 줄의 「전체 이력 단순평균」은 옛 목표가·중복이 섞여 있어
 > **blend 입력이 아니다.** 목표주가 표를 손으로 훑어 평균·최저를 직접 세지 마라 —
 > 최신분이 오래된 증권사가 표 밖에 있어 커버 수와 최저값이 어긋난다.
 | 5단계 DART | 확정 실적 · CAPEX · 가동률 · 매출 구성 · 수주 |

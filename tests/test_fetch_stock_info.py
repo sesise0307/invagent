@@ -731,6 +731,8 @@ def _check_golden(name: str, actual: str) -> None:
 
 def _run_golden(monkeypatch, capsys, argv, info_tabs, parent) -> tuple[str, str]:
     module = load_script("analyze-stock", "fetch_stock_info")
+    # 봉투의 asof·fetched_at과 최근 3개월 리포트 수가 날짜를 타지 않게 수집 시각을 고정한다.
+    monkeypatch.setattr(module, "_now", lambda: _kst(2026, 9, 30, 15, 50))
     _golden_network(monkeypatch, info_tabs, parent)
     assert module.main(argv) == 0
     captured = capsys.readouterr()
@@ -767,3 +769,112 @@ def test_golden_text_output_for_a_preferred_share(monkeypatch, capsys) -> None:
 def test_golden_json_output_for_a_preferred_share(monkeypatch, capsys) -> None:
     out, err = _run_golden(monkeypatch, capsys, [*PREFERRED_ARGV, "--json"], PREFERRED_TABS, "005930")
     _check_golden("fetch_stock_info_preferred.json", _json_without_clock(out) + "--- stderr ---\n" + err)
+
+
+# --- valuation 입력 블록 ---------------------------------------------------------
+# `--json`의 `consensus_input`은 `valuation_decision.py`의 `consensus` 모양 그대로다. 모델이 판단해야
+# 하는 칸은 null + `consensus_input_gaps` 사유로 남고, 나머지는 손대지 않고 넘긴다.
+
+
+def _kst(*args):
+    from datetime import datetime, timedelta, timezone
+
+    return datetime(*args, tzinfo=timezone(timedelta(hours=9)))
+
+
+def _consensus_json(monkeypatch, capsys, argv, info_tabs, parent, now):
+    module = load_script("analyze-stock", "fetch_stock_info")
+    monkeypatch.setattr(module, "_now", lambda: now)
+    _golden_network(monkeypatch, info_tabs, parent)
+    assert module.main([*argv, "--json"]) == 0
+    return json.loads(capsys.readouterr().out)
+
+
+NR_HISTORY_PAYLOAD = {
+    **STOCK_INFO_PAYLOAD,
+    "target_price_history": [
+        *STOCK_INFO_PAYLOAD["target_price_history"],
+        # NH의 옛 숫자 목표가 — 최신이 NR(05-28)이라 되살아나면 안 된다.
+        {"report_date": "2026-03-10", "securities_company": "NH투자증권",
+         "investment_opinion": "Buy", "target_price": 50000},
+        {"report_date": "2026-06-15", "securities_company": "KB증권",
+         "investment_opinion": "Buy", "target_price": 60000, "target_price_change": "유지"},
+    ],
+}
+
+
+def test_consensus_input_passes_valuation_decision_once_judgement_fields_are_filled(monkeypatch, capsys):
+    summary = _consensus_json(
+        monkeypatch, capsys, ["064290"], {"064290": NR_HISTORY_PAYLOAD}, "064290", _kst(2026, 7, 20, 15, 50)
+    )
+    consensus_input = summary["consensus_input"]
+
+    # 증권사별 최신 1건: 메리츠 75,000(07-03) · KB 60,000(06-15). NH는 최신이 NR이라 빠진다.
+    assert consensus_input == {
+        "low": 60000.0,
+        "average": 67500.0,
+        "high": 75000.0,
+        "coverage": 2,
+        "latest_report_date": "2026-07-03",
+        # 2026-04-20 이후 숫자 목표가 리포트: 07-03 · 06-15 · 04-22 (NR 05-28은 세지 않는다)
+        "recent_report_count": 3,
+        "eps_revision": None,
+    }
+    assert set(summary["consensus_input_gaps"]) == {"eps_revision"}
+
+    decision = load_script("analyze-stock", "valuation_decision")
+    with pytest.raises(decision.DecisionInputError):
+        decision._consensus(consensus_input)  # 판단 칸을 비운 채 넘기면 거절된다
+    filled = {**consensus_input, "eps_revision": "flat"}
+    assert decision._consensus(filled) == filled
+
+
+def test_consensus_envelopes_pass_validate_inputs(monkeypatch, capsys):
+    summary = _consensus_json(
+        monkeypatch, capsys, ["064290"], {"064290": NR_HISTORY_PAYLOAD}, "064290", _kst(2026, 7, 20, 15, 50)
+    )
+    envelopes = summary["consensus_envelopes"]
+    names = ["consensus_low", "consensus_average", "consensus_high"]
+
+    validator = load_script("analyze-stock", "validate_inputs")
+    result = validator.validate_document({"asof": "2026-07-20", "required": names, "inputs": envelopes})
+
+    assert result["valid"], result["errors"]
+    assert result["values"] == {"consensus_low": 60000.0, "consensus_average": 67500.0, "consensus_high": 75000.0}
+    assert envelopes["consensus_low"] == {
+        "value": 60000.0,
+        "status": "ok",
+        "source": "StockEasy stock-info/064290 [컨센 요약]",
+        "asof": "2026-07-20",
+        "fetched_at": "2026-07-20T15:50:00+09:00",
+        "kind": "estimate",
+        "basis": "not_applicable",
+    }
+
+
+def test_consensus_envelopes_are_missing_when_every_latest_report_is_not_rated(monkeypatch, capsys):
+    payload = {**STOCK_INFO_PAYLOAD, "target_price_history": [STOCK_INFO_PAYLOAD["target_price_history"][2]]}
+    summary = _consensus_json(
+        monkeypatch, capsys, ["064290"], {"064290": payload}, "064290", _kst(2026, 7, 20, 15, 50)
+    )
+
+    assert summary["consensus_input"] is None
+    assert "consensus" in summary["consensus_input_gaps"]
+    validator = load_script("analyze-stock", "validate_inputs")
+    names = ["consensus_low", "consensus_average", "consensus_high"]
+    result = validator.validate_document(
+        {"asof": "2026-07-20", "required": names, "inputs": summary["consensus_envelopes"]}
+    )
+    assert not result["valid"]
+    assert result["errors"] == [f"inputs.{name} is required but status is missing" for name in names]
+
+
+def test_preferred_consensus_upside_is_measured_against_the_common_share(monkeypatch, capsys):
+    summary = _consensus_json(
+        monkeypatch, capsys, ["005935"], PREFERRED_TABS, "005930", _kst(2026, 7, 20, 15, 50)
+    )
+
+    # 메리츠 75,000 vs 본주 80,000원 → -6.25% (우선주 61,000원에 대면 +23.0%로 부풀려진다)
+    assert summary["consensus"]["upside_percent"] == pytest.approx(-6.25)
+    assert summary["consensus_input"]["average"] == 75000.0
+    assert summary["consensus_envelopes"]["consensus_average"]["source"] == "StockEasy stock-info/005930 [컨센 요약]"

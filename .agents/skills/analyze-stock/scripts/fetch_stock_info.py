@@ -29,13 +29,22 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from math import isfinite
 
 from invagent.datafeed import cache as http_cache, stockeasy, stockinfo, tickers
 
 # 추정치는 컨센서스이지 공시가 아니다. 표 헤더에 그대로 박아 보고서로 흘려보낸다.
 ESTIMATE_NOTE = "추정 — 컨센서스, DART 데이터 아님"
+
+KST = timezone(timedelta(hours=9))
+# 9단계 가중치 규칙 3의 「최근 3개월 리포트」 창.
+RECENT_REPORT_MONTHS = 3
+
+
+def _now() -> datetime:
+    """수집 시각(KST). 테스트가 시계를 고정하는 자리다."""
+    return datetime.now(KST)
 
 
 # --- 값 정리 ---------------------------------------------------------------
@@ -270,6 +279,83 @@ def build_consensus_summary(history: list, current_price: float | None = None) -
     else:
         summary["upside_percent"] = None
     return summary
+
+
+def _iso_date(raw) -> date | None:
+    try:
+        return date.fromisoformat(str(raw or "")[:10])
+    except ValueError:
+        return None
+
+
+def _months_before(day: date, months: int) -> date:
+    month_index = day.year * 12 + day.month - 1 - months
+    year, month = divmod(month_index, 12)
+    for candidate in range(day.day, 0, -1):
+        try:
+            return date(year, month + 1, candidate)
+        except ValueError:
+            continue
+    raise AssertionError("unreachable")
+
+
+def build_consensus_input(summary: dict, history: list, asof: date) -> tuple[dict | None, dict]:
+    """`valuation_decision.py`의 `consensus` 블록을 9단계 정의대로 만든다.
+
+    목표가 3점·커버·최신 발간일은 증권사별 최신 1건 집계(`summary`)에서, 최근 3개월 리포트 수는
+    숫자 목표가가 붙은 리포트 이력에서 센다(NR은 컨센에 값을 보태지 않으니 세지 않는다). 「EPS 컨센
+    하향 지속」은 9단계가 기계적 기준을 두지 않은 모델 판단이라 null로 두고 `gaps`에 사유를 남긴다.
+    목표가 제시 리포트가 하나도 없으면 블록 전체가 null이다.
+    """
+    gaps: dict[str, str] = {}
+    if not summary["included"]:
+        gaps["consensus"] = "목표가 제시 리포트 없음 (증권사별 최신이 전부 NR/미제시)"
+        return None, gaps
+    dates = [d for d in (_iso_date(row.get("report_date")) for row in summary["included"]) if d]
+    since = _months_before(asof, RECENT_REPORT_MONTHS)
+    recent = 0
+    for row in history or []:
+        day = _iso_date(row.get("report_date"))
+        if numeric_target(row.get("target_price")) is not None and day and since <= day <= asof:
+            recent += 1
+    gaps["eps_revision"] = (
+        "모델 판단 — [EPS 컨센 변화]를 보고 persistent_down/down/flat/up/unknown 중 하나로 채운다 "
+        "(9단계 「EPS 컨센 하향 지속」에 기계적 기준이 없다)"
+    )
+    return {
+        "low": summary["minimum"],
+        "average": summary["average"],
+        "high": summary["maximum"],
+        "coverage": summary["included_brokers"],
+        "latest_report_date": max(dates).isoformat() if dates else None,
+        "recent_report_count": recent,
+        "eps_revision": None,
+    }, gaps
+
+
+CONSENSUS_ENVELOPE_FIELDS = {"consensus_low": "low", "consensus_average": "average", "consensus_high": "high"}
+
+
+def build_consensus_envelopes(consensus_input: dict | None, code: str, fetched: datetime) -> dict:
+    """`validate_inputs.py` 봉투 3개(컨센 최저·평균·최고). 출처·수집 시각은 스크립트가 정확히 안다.
+
+    `code`는 목표가가 매겨진 종목(우선주면 본주)이다. 블록이 null이면 `status: missing`이다.
+    """
+    stamp = fetched.astimezone(KST)
+    envelopes = {}
+    for name, key in CONSENSUS_ENVELOPE_FIELDS.items():
+        envelope = {
+            "status": "missing" if consensus_input is None else "ok",
+            "source": f"StockEasy stock-info/{code} [컨센 요약]",
+            "asof": stamp.date().isoformat(),
+            "fetched_at": stamp.isoformat(timespec="seconds"),
+            "kind": "estimate",
+            "basis": "not_applicable",
+        }
+        if consensus_input is not None:
+            envelope = {"value": consensus_input[key], **envelope}
+        envelopes[name] = envelope
+    return envelopes
 
 
 def print_target_prices(history: list, current_price: float | None, limit: int, since: str | None) -> None:
@@ -534,15 +620,20 @@ def build_summary(
     시세·52주·수급·시간외가는 시세 축(`payloads.price`), 실적·컨센·목표주가는 실적 축
     (`payloads.fundamentals`)에서 읽는다. 둘은 우선주면 가격이 다르므로 섞지 않는다.
     """
+    fetched = _now()
     info = payloads.fundamentals or {}
     price = payloads.price or {}
     quote = price.get("stock_info")
     parent_prc = unsigned((info.get("stock_info") or {}).get("cur_prc"))
     own_prc = unsigned((quote or {}).get("cur_prc")) if payloads.info.is_preferred else None
+    history = info.get("target_price_history") or []
+    # 목표주가는 본주에 매겨진다 — 우선주 주가에 대면 괴리율만큼 상승여력이 부풀려진다.
+    consensus = build_consensus_summary(history, parent_prc)
+    consensus_input, consensus_gaps = build_consensus_input(consensus, history, fetched.astimezone(KST).date())
     return {
         "stock_code": stock.get("stock_code"),
         "stock_name": stock.get("stock_name"),
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "fetched_at": fetched.astimezone(timezone.utc).isoformat(),
         "preferred_of": payloads.info.parent_code,
         "preferred_discount_pct": (
             (own_prc / parent_prc - 1) * 100 if own_prc and parent_prc else None
@@ -556,9 +647,12 @@ def build_summary(
         "rs_data": info.get("rs_data"),
         "investment": info.get("investment"),
         "target_price_history": info.get("target_price_history"),
-        # 목표주가는 본주에 매겨진다 — 우선주 주가에 대면 괴리율만큼 상승여력이 부풀려진다.
-        "consensus": build_consensus_summary(
-            info.get("target_price_history") or [], parent_prc
+        "consensus": consensus,
+        # 9단계 `valuation_decision.py` 입력의 `consensus` 블록 그대로. null 칸은 `consensus_input_gaps` 사유대로 모델이 채운다.
+        "consensus_input": consensus_input,
+        "consensus_input_gaps": consensus_gaps,
+        "consensus_envelopes": build_consensus_envelopes(
+            consensus_input, payloads.info.parent_code or stock.get("stock_code"), fetched
         ),
         "financials": info.get("financials"),
         "eps_changes": info.get("eps_changes"),

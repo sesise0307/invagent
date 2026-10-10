@@ -121,6 +121,47 @@
   "downgrades": 0,
   "upside_percent": -6.25
  },
+ "consensus_input": {
+  "low": 75000.0,
+  "average": 75000.0,
+  "high": 75000.0,
+  "coverage": 1,
+  "latest_report_date": "2026-07-03",
+  "recent_report_count": 1,
+  "eps_revision": null
+ },
+ "consensus_input_gaps": {
+  "eps_revision": "모델 판단 — [EPS 컨센 변화]를 보고 persistent_down/down/flat/up/unknown 중 하나로 채운다 (9단계 「EPS 컨센 하향 지속」에 기계적 기준이 없다)"
+ },
+ "consensus_envelopes": {
+  "consensus_low": {
+   "value": 75000.0,
+   "status": "ok",
+   "source": "StockEasy stock-info/005930 [컨센 요약]",
+   "asof": "2026-09-30",
+   "fetched_at": "2026-09-30T15:50:00+09:00",
+   "kind": "estimate",
+   "basis": "not_applicable"
+  },
+  "consensus_average": {
+   "value": 75000.0,
+   "status": "ok",
+   "source": "StockEasy stock-info/005930 [컨센 요약]",
+   "asof": "2026-09-30",
+   "fetched_at": "2026-09-30T15:50:00+09:00",
+   "kind": "estimate",
+   "basis": "not_applicable"
+  },
+  "consensus_high": {
+   "value": 75000.0,
+   "status": "ok",
+   "source": "StockEasy stock-info/005930 [컨센 요약]",
+   "asof": "2026-09-30",
+   "fetched_at": "2026-09-30T15:50:00+09:00",
+   "kind": "estimate",
+   "basis": "not_applicable"
+  }
+ },
  "financials": {
   "consolidated": [
    {

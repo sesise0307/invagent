@@ -246,7 +246,15 @@ in `target_price_history`. One broker publishing six times a year would otherwis
 count six times, and targets cut since publication would drag the average toward
 stale highs — the blend in step 9 needs today's consensus. The all-history simple
 average is still printed on the following `↳` line, labelled as not being the
-blend input.
+blend input. That line is for people; step 9 takes the same aggregate from
+`fetch_stock_info --json` instead — `consensus_input` in exactly
+`valuation_decision.py`'s `consensus` shape and `consensus_envelopes` (the
+`validate_inputs.py` envelopes for consensus low/average/high, with source and
+KST fetch time filled in) — and passes both through unedited rather than copying
+numbers off the printed line. `eps_revision` is left null with its reason in
+`consensus_input_gaps`, because step 9 gives "persistent EPS downgrade" no
+mechanical test; a null there is rejected by `valuation_decision.py`, so the model
+cannot forget to fill it.
 
 Broker consensus is an input to the target price, not the verdict, and the target
 price is always a **range, never a single number** — a consensus average carries
