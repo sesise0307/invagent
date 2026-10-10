@@ -735,9 +735,13 @@ uv run python .agents/skills/analyze-stock/scripts/entry_decision.py "<5단계�
 "이 단계를 안 돌린 것"을 구분하는 근거가 된다.
 
 ```bash
-uv run python .agents/skills/analyze-stock/scripts/run_manifest.py <매니페스트 경로> \
-  --run-id <실행 식별자> --step 6=ok:1200 --step 5=skipped
+uv run python .agents/skills/analyze-stock/scripts/run_manifest.py <종목명> \
+  --run-id <실행 식별자> [--date YYYY-MM-DD] --step 6=ok:1200 --step 5=skipped
 ```
+
+경로는 스크립트가 정한다 — `output/reports/run-manifests/<yyyy>/<mm>/<yyyy-mm-dd>_<종목명>.json`
+(`--date` 기본 오늘). 같은 `--run-id`로 다시 부르면 자기 파일을 갱신한다. 같은 날 같은 종목의
+다른 실행은 덮지 않고 `<yyyy-mm-dd>_<종목명>_<run-id>.json`에 따로 남긴다. `--run-id`는 영숫자와 `. _ -`만.
 
 ## 출력 품질 기준
 
