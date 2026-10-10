@@ -40,6 +40,11 @@ def cmd_search(args) -> int:
 
 
 def cmd_quote(args) -> int:
+    # info-tab은 로그인 전용이다. 쿠키가 없으면 종목명 해석도 하지 않고 요청 0건으로 멈춘다.
+    if not stockeasy.load_cookie():
+        print(f"ERROR: {stockeasy.COOKIE_ENV} 미설정 — .env에 브라우저 Cookie 헤더가 필요하다", file=sys.stderr)
+        return 1
+
     ticker, code = _resolve(args.query)
     if not ticker:
         return code

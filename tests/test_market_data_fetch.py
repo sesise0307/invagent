@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from invagent.datafeed import http as datafeed_http
 from invagent.datafeed import stockeasy as datafeed_stockeasy
 from invagent.datafeed.daily import Bars
 from tests.conftest import load_script
@@ -36,11 +37,30 @@ def test_market_data_fetch_quote_names_the_cookie_on_a_401(
     monkeypatch.setattr(
         module.tickers, "resolve_stock", lambda q: ({"stock_code": "005930"}, None, 0)
     )
-    monkeypatch.setattr(datafeed_stockeasy, "load_cookie", lambda: None)
+    monkeypatch.setattr(datafeed_stockeasy, "load_cookie", lambda: "session=expired")
     monkeypatch.setattr(datafeed_stockeasy, "fetch_stock_json", lambda *a, **k: (None, "HTTP 401"))
 
     assert module.main(["quote", "삼성전자"]) == 1
-    assert "ERROR: 시세 수집 실패 — HTTP 401 (STOCKEASY_COOKIE 미설정)" in capsys.readouterr().err
+    assert "ERROR: 시세 수집 실패 — HTTP 401 (쿠키 만료·무효)" in capsys.readouterr().err
+
+
+def test_market_data_fetch_quote_stops_before_any_request_without_a_cookie(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """쿠키가 없으면 종목명 해석부터 하지 않는다 — 요청 0건으로 원인을 알린다."""
+    module = load_script("market-data", "fetch")
+    calls: list[str] = []
+
+    def fake_read(url, headers, timeout):
+        calls.append(url)
+        raise AssertionError(f"요청하면 안 된다: {url}")
+
+    monkeypatch.setattr(datafeed_http, "read_url", fake_read)
+    monkeypatch.setattr(datafeed_stockeasy, "load_cookie", lambda: None)
+
+    assert module.main(["quote", "삼성전자"]) == 1
+    assert calls == []
+    assert "ERROR: STOCKEASY_COOKIE 미설정" in capsys.readouterr().err
 
 
 def test_market_data_fetch_reports_a_failure_without_raising(

@@ -385,19 +385,17 @@ def test_stock_info_detail_content_sections_flatten(
     assert "본문: 3Q26 전망: 수주잔고 인식 본격화" in capsys.readouterr().out
 
 
-def test_stock_info_missing_cookie_only_skips_reports(
+def test_stock_info_missing_cookie_exits_without_a_stockeasy_request(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """쿠키가 없으면 리포트 섹션만 비고 나머지는 정상 출력된다 (비블로킹)."""
+    """info-tab은 로그인 전용이다 — 쿠키가 없으면 무인증 요청(반드시 401)을 보내지 않고 쿠키를 원인으로 끝낸다."""
     module = load_script("analyze-stock", "fetch_stock_info")
-    _patch_stock_info_fetch(module, monkeypatch, cookie=None)
+    calls = _patch_stock_info_fetch(module, monkeypatch, cookie=None)
 
-    assert module.main(["064290"]) == 0
+    assert module.main(["064290"]) == 1
 
-    captured = capsys.readouterr()
-    assert "[리포트 요약] 미수집 — 요청 안 함 (STOCKEASY_COOKIE 미설정)" in captured.out
-    assert "[시세] 30,850원" in captured.out
-    assert "STOCKEASY_COOKIE 미설정" in captured.err
+    assert not any(path.startswith("/stock-info/") for path in calls)
+    assert "info_tab=HTTP 401 (STOCKEASY_COOKIE 미설정)" in capsys.readouterr().err
 
 
 def test_stock_info_expired_cookie_hints_refresh(

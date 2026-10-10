@@ -34,7 +34,7 @@ StockEasy와 Naver가 함께 `<urlopen error [Errno 8] nodename nor servname pro
 | 종목 뉴스 | 같음 (`news/by-stock-code`) | 필요 |
 | 종목 DART 공시 목록 | 같음 (`stock-info/analysis-tab` — 2026-09 개편 페이지의 소식 탭, 공시·리포트·뉴스 각 최근 20건) | 필요 |
 | 시간외·NXT 체결가 (참고) | 같음 (`info-tab`의 `after_hours_quote`·`nxt_quote`) — `stock_info.cur_prc`와 차트 종가는 정규장가 그대로다. 판정에 쓰지 않는다 | 필요 |
-| `info-tab` 두 축(시세·실적) | `invagent.datafeed.stockinfo.fetch(ticker)` — `.price`는 종목 자기 것(시세 축), `.fundamentals`는 본주 것(실적 축). 처음 읽힐 때 받으므로 보통주는 요청 하나, 실적만 읽는 우선주도 본주 요청 하나다. 실패 사유(`gaps` — 401 쿠키 힌트·빈 응답)와 출처(`sources`), 주 재무제표(C/S) 분기·연간 확정/추정 시계열(`quarterly`·`yearly`)과 행(`rows`), 종목 자기 이름(`name`)도 이 모듈이 만든다. `info-tab`을 읽는 스크립트(`stage_scan`·`canslim_scan`·`extract_earnings`·`fetch_stock_info`·`fetch.py quote`)는 모두 이것을 거친다 | 필요 |
+| `info-tab` 두 축(시세·실적) | `invagent.datafeed.stockinfo.fetch(ticker)` — `.price`는 종목 자기 것(시세 축), `.fundamentals`는 본주 것(실적 축). 처음 읽힐 때 받으므로 보통주는 요청 하나, 실적만 읽는 우선주도 본주 요청 하나다. 실패 사유(`gaps` — 401 쿠키 힌트·빈 응답)와 출처(`sources`) — 쿠키가 없으면 반드시 401인 무인증 요청을 보내지 않고 `HTTP 401 (STOCKEASY_COOKIE 미설정)`만 남긴다(요청 예산 보존) —, 주 재무제표(C/S) 분기·연간 확정/추정 시계열(`quarterly`·`yearly`)과 행(`rows`), 종목 자기 이름(`name`)도 이 모듈이 만든다. `info-tab`을 읽는 스크립트(`stage_scan`·`canslim_scan`·`extract_earnings`·`fetch_stock_info`·`fetch.py quote`)는 모두 이것을 거친다 | 필요 |
 | 종목 RS(상대강도)·RS선 | 같음 (`info-tab`의 `rs_data`·`rs_line_chart`) → `analyze-stock/scripts/canslim_scan.py`. 업종 RS(`/rs/dashboard-data`)는 앱 토큰 없이는 HTTP 403이라 받지 않는다 | 필요 |
 | 종목 투자자별 매매동향(기관·외국인·개인 순매수량) | `invagent.datafeed.naver.fetch_investor_trend` — `m.stock.naver.com/api/stock/<code>/trend`, 최근 60거래일까지 | 불필요 |
 | 종목명·상장 시장(KOSPI·KOSDAQ) 대체 | `invagent.datafeed.naver.fetch_basic` — `m.stock.naver.com/api/stock/<code>/basic`. 정본은 `info-tab`의 `stock_info.market`이고, 그것이 막혔을 때만 쓴다 | 불필요 |
@@ -151,7 +151,7 @@ gitignore된 `.env`에 한 줄로, 따옴표로 감싸 둔다. 추적되는 파�
 
 증상 구분:
 
-- `HTTP 401` + `STOCKEASY_COOKIE 미설정` → `.env`에 값이 없다.
+- `HTTP 401` + `STOCKEASY_COOKIE 미설정` → `.env`에 값이 없다. 이때 `info-tab`은 실제로 요청하지 않는다(`datafeed.stockinfo`), `fetch.py quote`는 종목명 해석 전에 멈춘다.
 - `HTTP 401` + `쿠키 만료·무효` → 값은 있으나 세션이 죽었다. 갱신한다.
 - 쿠키가 없으면 시세·멀티플·컨센서스·뉴스를 아예 못 받는다. 리포트 요약만 비블로킹으로 빠진다.
 

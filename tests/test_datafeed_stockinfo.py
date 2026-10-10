@@ -109,13 +109,17 @@ def test_a_401_with_a_cookie_names_an_expired_cookie(monkeypatch, cookie) -> Non
     assert info.sources == []
 
 
-def test_a_401_without_a_cookie_names_the_missing_variable(monkeypatch) -> None:
+def test_no_cookie_sends_no_request_and_names_the_missing_variable(monkeypatch) -> None:
+    """무인증 info-tab은 반드시 401이다 — StockEasy의 빠듯한 요청 예산을 쓰지 않는다."""
     monkeypatch.setattr(stockeasy, "load_cookie", lambda: None)
-    _refuse_401(monkeypatch)
+    calls = _serve(monkeypatch, {})
 
     info = stockinfo.fetch("005930")
-    info.fundamentals
 
+    assert info.fundamentals is None
+    assert info.price is None
+    assert calls == []
+    # 사유 문구는 401을 받았을 때와 같다 — 스크립트 출력이 달라지지 않는다.
     assert info.gaps == ["HTTP 401 (STOCKEASY_COOKIE 미설정)"]
 
 

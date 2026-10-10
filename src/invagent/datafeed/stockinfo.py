@@ -6,7 +6,8 @@
 
 두 축은 처음 읽힐 때 받는다. 보통주는 두 축이 같은 응답이라 요청 하나로 끝나고, 실적 축만 읽는
 스크립트는 우선주 자기 `info-tab`을 받지 않는다. 실패 사유는 `gaps`, 출처는 `sources`에 쌓여
-스크립트는 그 문구를 그대로 찍는다.
+스크립트는 그 문구를 그대로 찍는다. `STOCKEASY_COOKIE`가 없으면 무인증 요청은 반드시 401이므로
+보내지 않고, 401을 받았을 때와 같은 사유(`HTTP 401 (STOCKEASY_COOKIE 미설정)`)만 남긴다.
 """
 
 from __future__ import annotations
@@ -103,6 +104,11 @@ class StockInfo:
         if not self._cookie_loaded:
             self._cookie = stockeasy.load_cookie()
             self._cookie_loaded = True
+        if not self._cookie:
+            # 무인증 info-tab은 반드시 401이다. 요청 예산을 쓰지 않고 401과 같은 사유를 남긴다.
+            self._payloads[code] = None
+            self.gaps.append(stockeasy.gap_reason("HTTP 401", None))
+            return None
         payload, err = stockeasy.fetch_stock_json(
             stockeasy.ENDPOINTS["info_tab"].format(code=code),
             referer=f"{stockeasy.PAGE_BASE}/{code}",
