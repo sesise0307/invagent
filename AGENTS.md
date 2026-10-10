@@ -229,7 +229,7 @@ early accumulation before the turn, the proviso added to 「매매규칙 2」 on
 turn_scan's `accumulation` price check passes (a base at least 30 sessions old after a 20%
 or deeper decline, a box no more than 25% above the low, a close within 10% of it), the
 latest confirmed quarter's operating profit beat the same quarter a year earlier
-(`stage_scan`'s `op_growth.latest.increased`, which counts a narrowing loss as an increase),
+(`stage_scan`'s `growth.latest.increased`, which counts a narrowing loss as an increase),
 and the value gate passes; `entry_policy.py` then caps the entry at half the first tranche,
 with the stop at the base's closing low minus 3%. A backtest over eight watchlist names
 (2015–2026, fundamentals taken point-in-time) set those numbers: base age barely separated
@@ -240,6 +240,22 @@ rising 60-day line, the third on a stage-2 verdict or a rising 20-week line. The
 thresholds are this skill's operating choices, live as constants at the top of the
 script, and are tabled with their rationale in `stage-analysis/SKILL.md`; a test compares
 the two.
+
+The model no longer copies those inputs into `entry_policy.py` by hand — that translation is
+what picks path A, B or C, and it was untested. `analyze-stock` step 10 runs
+`.agents/skills/analyze-stock/scripts/entry_decision.py <ticker> --valuation <json> --context <json>`,
+which runs `stage_scan.py` and `turn_scan.py` **by path as subprocesses** with `--json` (never an
+import, so the layout rule above holds; the re-run is absorbed by the response cache) and builds
+`stage`, `turn` and `accumulation` from them, with `op_yoy_increased` `null` when earnings are
+unknown. A child that exits non-zero or prints no JSON leaves its key `unknown` with the stderr
+reason, which withholds. It recomputes `valuation_decision` on the step-9 input for
+`valuation_grade` and the value gate (`downside_blocked` is `risk.downside <= 0`, `reward_risk` is
+`risk.reward_risk`, the tranche fractions and trigger come from the context's `tranche_plan`),
+passes the context's `account_pause`, `event`, `long_bull`, `earnings` and `instrument` through
+verbatim — unknown or missing keys exit 2 — and prints `entry_policy.decide`'s result plus the
+whole envelope as `inputs` for the report to quote. `entry_policy.py` stays as the module it
+calls; its CLI is no longer the documented entry. `tests/test_entry_decision.py` fakes the
+children at `run_child` with their real `--json` output.
 
 The `[컨센 요약]` line aggregates **the latest report per broker**, not every row
 in `target_price_history`. One broker publishing six times a year would otherwise

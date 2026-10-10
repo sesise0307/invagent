@@ -149,7 +149,7 @@ uv run python .agents/skills/stage-analysis/scripts/stage_scan.py "<종목명 �
 손절선 `stop`은 바닥 종가 -3%(종가 판정)다.
 
 가격 조건만으로는 경로가 열리지 않는다. **최근 확정 분기 영업이익이 전년 동기보다 증가**
-(`stage_scan` 출력의 `op_growth.latest.increased`, 적자 축소 포함)와 밸류 게이트를 함께 통과해야
+(`stage_scan --json`의 `growth.latest.increased`, 적자 축소 포함)와 밸류 게이트를 함께 통과해야
 `analyze-stock` 10단계가 1차 트랜치의 절반을 연다. 근거는 2026-09-25 백테스트(관심 종목 8개,
 2015~2026, 진입일 기준 공시된 분기만 사용): 바닥 30일 기준 영업이익 YoY 증가 그룹은 승률 47%·손절 53%,
 감소 그룹은 승률 19%·손절 81%였고, 이 그룹에서 선매집이 고개 들기 진입보다 250일 평균 +7%p 앞섰다.

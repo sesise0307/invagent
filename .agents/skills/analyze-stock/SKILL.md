@@ -223,19 +223,17 @@ uv run python .agents/skills/stage-analysis/scripts/turn_scan.py "<5단계가 �
 
 - 일봉만 쓴다 — StockEasy `info-tab` 정규장 일봉(쿠키 필요, 없거나 실패하면 네이버 `siseJson`으로 대체하고 출력에 꼬리표). 쿠키가 없어도 판정은 돈다.
 - 출력의 `판정`·`감시선` 줄은 §5 📈 「단기 바닥 전환」 불릿과 10단계 진입 경로·증량 트리거의 입력이다.
-  상태 코드를 `entry_policy.py`의 `turn`으로 넘긴다 — 하락 중 `falling` / 바닥 다지기 `basing` /
-  고개 들기 `turning` / 초입 지남 `extended`.
-- `바닥 다지기`면 출력의 `선매집(경로 C) 가격 조건` 줄도 읽는다. `--json`의 `accumulation.eligible`과
-  위 `stage_scan` 출력의 `전년 동기 대비 증가`(= `op_growth.latest.increased`)를 `entry_policy.py`의
-  `accumulation`으로 넘긴다 — `{"status":"ok","eligible":…,"op_yoy_increased":…}`. 실적이 `모름`이면
-  `op_yoy_increased`는 `null`이다.
+  상태 코드는 하락 중 `falling` / 바닥 다지기 `basing` / 고개 들기 `turning` / 초입 지남 `extended`다.
+- `바닥 다지기`면 출력의 `선매집(경로 C) 가격 조건` 줄도 읽어 §5에 옮긴다.
+- 진입 게이트 입력(`stage`·`turn`·`accumulation`)은 **모델이 옮겨 적지 않는다.** 10단계
+  `entry_decision.py`가 두 스크립트를 `--json`으로 다시 돌려 직접 만든다 — 같은 실행 안이면 응답 캐시가 받는다.
 - 실패하면(exit 1) §5에 `미수집 — …`만 남긴다. 경로 B·C는 `미수집`이면 열리지 않는다.
   **모델이 차트를 눈대중해 상태를 매기지 않는다.**
 
 **CAN SLIM 점검 (참고 — 판단 미반영)**
 
 같은 티커로 오닐 CAN SLIM 7항목을 결정론적으로 채점한다. **참고 지표다.** 10단계 최종 판단·확신도·
-진입 경로·1차 수량·`entry_policy.py` 입력 어디에도 넣지 않고, §5 「📋 CAN SLIM 점검」에 그대로 옮겨
+진입 경로·1차 수량·`entry_decision.py` 입력 어디에도 넣지 않고, §5 「📋 CAN SLIM 점검」에 그대로 옮겨
 지켜본다(사용자 결정, 2026-10-05). 방법론 배경은 `../advice/references/trend_following.md`.
 
 ```bash
@@ -540,7 +538,40 @@ w_s = 1 - w_c
 
 ### 10단계 — 투자 판단 (`advice` 스킬 위임)
 
-단계·단기 바닥 전환(`turn`)·계좌 MDD·이벤트 제한의 결합 게이트는 `scripts/entry_policy.py`에 넘긴다. 알 수 없음은 허가로 승격하지 않으며, 결과의 `action`과 `max_tranche_fraction`을 그대로 기재한다.
+단계·단기 바닥 전환·선매집·밸류 게이트·계좌 MDD·이벤트 제한의 결합 판정은 `scripts/entry_decision.py`가 낸다.
+알 수 없음은 허가로 승격하지 않으며, 결과의 `action`과 `max_tranche_fraction`을 그대로 기재하고 `inputs` 블록을
+§10에 감사용으로 인용한다.
+
+```bash
+uv run python .agents/skills/analyze-stock/scripts/entry_decision.py "<5단계가 확정한 티커>" \
+  --valuation <9단계 valuation_decision 입력 JSON> --context <context JSON> [--asof YYYY-MM-DD] [--no-cache]
+```
+
+- 스크립트가 직접 채우는 것 — 모델이 손으로 옮기지 않는다:
+  - `stage`·`turn`·`accumulation`: `stage-analysis`의 `stage_scan.py`·`turn_scan.py`를 `--json`으로 경로 실행한
+    결과다. `accumulation.op_yoy_increased`는 `stage_scan`의 `growth.latest.increased`(적자 축소 포함)이고,
+    실적이 `모름`이면 `null`이라 경로 C가 열리지 않는다. 자식 스크립트가 실패하면 그 키가
+    `{"status":"unknown","reason":…}`가 되고 판정은 보류된다 — §5의 `미수집`과 같다.
+  - `valuation_grade`·`value_gate`: `--valuation`을 `valuation_decision.py`로 다시 계산한다. 밸류 게이트
+    1번 하방 막힘은 `risk.downside ≤ 0`(하단목표가 ≥ 현재가), 2번 손익비는 `risk.reward_risk`다.
+- 모델이 `--context`로 주는 것 — 키는 아래가 전부다. 모르는 키·빠진 필수 키는 exit 2:
+
+  ```json
+  {"account_pause": {"status":"ok","active":false,"remaining_trading_days":0,"review_complete":true},
+   "event":        {"status":"ok","enabled":false},
+   "long_bull":    {"status":"ok","active":false},
+   "earnings":     {"status":"ok","surprise":false},
+   "instrument":   {"status":"ok","kind":"stock","leveraged":false},
+   "tranche_plan": {"first_tranche_fraction":0.03,"target_weight_fraction":0.10,
+                    "next_tranche_trigger":"저점 높임 유지 + 60일선 상향 전환"}}
+  ```
+
+  - 앞 5개는 필수다. 모르면 `{"status":"unknown"}`으로 넣는다 — 키를 빼지 않는다. 판정은 보류된다.
+  - `tranche_plan`(선택)은 「매매규칙 4」 사전 계획과 밸류 게이트 4번 증량 트리거다. 없으면 경로 B·C가 열리지 않는다.
+    `leverage`(선택)는 레버리지 지수·섹터 상품일 때만, `asof`(선택)는 `--asof`가 없을 때 기준일이다.
+  - 형식과 각 게이트의 판정 규칙은 `scripts/entry_policy.py` 모듈 docstring이 정본이다(`entry_decision.py`가
+    그 `decide`를 부른다). `entry_policy.py`를 따로 실행하지 않는다.
+- 종료 코드: `0` 판정 완료(보류 포함) · `2` 입력 오류 → `errors`를 고쳐 다시 돌린다.
 
 방법론은 `../advice/SKILL.md`와 `../advice/references/{value_investing,trend_following,macro,second_level_thinking}.md`.
   `second_level_thinking.md`(막스·클라만)는 별도 섹션을 만들지 말고 **가치 관점의 「이미 가격에 반영됐나」와
@@ -589,7 +620,7 @@ w_s = 1 - w_c
     반대로 20주선 위라는 것만으로 매수 근거를 삼지 않는다.
 - **진입 경로 판정 (6단계 `stage_scan` 판정 인용)** — 신규 매수 판정을 낼 때 통과시킨다.
   스테이지는 3관점 중 1표가 아니라 **어느 경로로 들어가느냐를 정하는 게이트**다.
-  결합 판정은 `scripts/entry_policy.py`가 낸다 — 모델이 손으로 등급을 매기지 않는다.
+  결합 판정은 `scripts/entry_decision.py`가 낸다 — 모델이 손으로 등급을 매기지 않는다.
 
   ```
   경로 A (추세 확인 진입) — 판정 `2단계`
@@ -642,7 +673,7 @@ w_s = 1 - w_c
 
 - **오버행 참고 (5-1단계 요약 인용)** — §5 「최종」 아래 한 줄로 언급만 한다. 매수 / 관망 / 회피
   판정·확신도·진입 경로·1차 수량은 오버행이 `미해소`·`미수집`이어도 그대로 둔다.
-  `entry_policy.py`에도 넘기지 않는다.
+  `entry_decision.py` context에도 넣지 않는다.
 - 조건부 룰 — 해당하면 반드시 적용:
   - 6단계에서 **서프라이즈/쇼크 감지** 시 「매매규칙 13」: 진입 조건에
     「서프라이즈 원인 규명 + 장대양봉 소화 후」를 명시한다.
