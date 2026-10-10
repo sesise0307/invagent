@@ -299,20 +299,6 @@ uv run python .agents/skills/stage-analysis/scripts/turn_scan.py "<종목명 또
 - 모든 수준을 종가로 잡는다. 장중 저점으로 그은 차트의 지지선과 몇 % 다를 수 있다.
 - 이 판정은 **타이밍**만 답한다. 싸냐·하방이 막혔냐는 `analyze-stock` 9단계 밸류가 답한다.
 
-## 보조 도구 — 미너비니 추세 템플릿 점수
-
-**`scripts/technical_score.py`** — 단계 판정과 별개로, 미너비니 추세 템플릿 8개 항목을 채점한다.
-단계는 "지금 어느 국면인가"를, 이 점수는 "그 국면 안에서 얼마나 정석에 가까운가"를 답한다.
-
-```bash
-uv run python .agents/skills/stage-analysis/scripts/technical_score.py <일봉 JSON>
-```
-
-- 일봉 200개 미만이면 채점하지 않는다.
-- `relative_strength`는 항상, `ma200_rising`은 봉이 400개 미만이면 `None`으로 남는다.
-  **모르는 항목은 `?`로 표기하고 분모에서 빼지 않는다** — `advice` 스킬의 표기 규칙과 같다.
-  8점 만점이 아니라 `passed/known`으로 읽는다.
-
 ## 하지 않는 것
 
 - 지수·업종 판정은 이 스킬 범위 밖이다. 개별 종목만 본다.
