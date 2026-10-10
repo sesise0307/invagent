@@ -1,20 +1,14 @@
 """`analyze-stock/scripts/canslim_scan.py` — 오닐 CAN SLIM 7항목 참고 채점."""
 
-import importlib.util
 from pathlib import Path
+
+from tests.conftest import load_script
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / ".agents" / "skills" / "analyze-stock" / "scripts" / "canslim_scan.py"
 
 
-def _load_module():
-    spec = importlib.util.spec_from_file_location("canslim_scan", SCRIPT)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-canslim = _load_module()
+canslim = load_script("analyze-stock", "canslim_scan")
 
 
 def _quarter(year: int, quarter: int, eps: float | None, value_type: str = "A") -> dict:

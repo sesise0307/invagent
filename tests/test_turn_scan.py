@@ -5,23 +5,14 @@
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
+
+from tests.conftest import load_script
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = REPO_ROOT / ".agents" / "skills" / "stage-analysis" / "scripts" / "turn_scan.py"
 
-
-def _load_module():
-    spec = importlib.util.spec_from_file_location("turn_scan", SCRIPT)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-turn_scan = _load_module()
+turn_scan = load_script("stage-analysis", "turn_scan")
 
 
 def _path(anchors: list[tuple[int, float]]) -> list[float]:

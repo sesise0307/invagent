@@ -8,15 +8,13 @@ stockeasy.intellio.kr의 `/stockdata/api/v1/market/*` JSON API에서 시장 데�
 클라이언트 렌더링으로 전환하면서 payload가 사라져 수집이 실패했다. 지금은
 페이지가 실제로 호출하는 API를 같은 방식으로 호출한다.
 
-의존성: stdlib만 사용 (urllib, json).
+의존성: stdlib + 저장소 패키지(`invagent.datafeed`). 네트워크는 전부 `datafeed.http`를 거친다.
 실패 시 stderr에 에러 출력 후 exit 1 — 호출측(스킬)은 실패해도 브리핑을 계속 진행한다.
 """
 
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 from invagent.datafeed import cache as http_cache, stockeasy

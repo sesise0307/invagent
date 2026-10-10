@@ -18,7 +18,7 @@ stockeasy.intellio.kr의 `/stockdata/api/v1/**` JSON API에서 개별 종목의 
 따로 싣고, 소식 탭(`analysis-tab`)은 종목별 DART 공시 목록을 싣는다. 시간외가는 참고줄로만 찍는다 —
 판정 가격은 정규장 종가(`stock_info.cur_prc`)다.
 
-의존성: stdlib만 사용 (urllib, json, argparse).
+의존성: stdlib + 저장소 패키지(`invagent.datafeed`). 네트워크는 전부 `datafeed.http`를 거친다.
 종료 코드: 0 정상(부분 누락 포함) / 1 수집 실패 / 2 종목명 후보 다수.
 """
 
@@ -29,9 +29,6 @@ import json
 import os
 import re
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from math import isfinite

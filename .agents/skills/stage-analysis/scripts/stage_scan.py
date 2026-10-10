@@ -12,10 +12,10 @@
    쿠키가 없거나 만료되면 **가격 전용 판정(와인스타인 원본 버전)으로 강등**하고 그 사실을
    출력에 남긴다. 판정 자체는 계속되므로 종료 코드는 0이다.
 
-티커 해석·쿠키 로딩·재무 행 선택은 `analyze-stock/scripts/fetch_stock_info.py`를 재사용한다.
+티커 해석·쿠키 로딩·재무 행 선택은 `invagent.datafeed`(`tickers`·`stockeasy`)를 쓴다.
 같은 규칙을 두 곳에 두면 갈라진다.
 
-의존성: stdlib만 사용 (urllib, json, argparse).
+의존성: stdlib + 저장소 패키지(`invagent.datafeed`). 네트워크는 전부 `datafeed.http`를 거친다.
 종료 코드: 0 정상(부분 누락 포함) / 1 시세 수집 실패 / 2 종목명 후보 다수.
 """
 
@@ -25,8 +25,6 @@ import argparse
 import json
 import math
 import sys
-import urllib.error
-import urllib.request
 from datetime import date, timedelta
 from pathlib import Path
 

@@ -5,26 +5,17 @@
 
 from __future__ import annotations
 
-import importlib.util
 import math
 from pathlib import Path
 
 import pytest
 
+from tests.conftest import load_script
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = REPO_ROOT / ".agents" / "skills" / "stage-analysis" / "scripts" / "stage_scan.py"
 
-
-def _load_module():
-    spec = importlib.util.spec_from_file_location("stage_scan", SCRIPT)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-stage_scan = _load_module()
+stage_scan = load_script("stage-analysis", "stage_scan")
 
 
 def _bars(closes: list[float], start_index: int = 0) -> list[dict]:

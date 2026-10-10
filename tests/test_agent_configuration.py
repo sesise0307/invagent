@@ -3,22 +3,24 @@
 from __future__ import annotations
 
 import base64
-import importlib.util
 import json
 import os
 import time
 import re
 import sys
 import tomllib
+import urllib.error
 from datetime import date
 from pathlib import Path
 
 import pytest
 
 from invagent.core.archive import dated_path
+from invagent.datafeed import http as datafeed_http
 from invagent.datafeed import naver as datafeed_naver
 from invagent.datafeed import stockeasy as datafeed_stockeasy
 from invagent.datafeed import tickers as datafeed_tickers
+from tests.conftest import load_script
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -342,18 +344,9 @@ def test_project_codex_config_is_credential_free() -> None:
     assert "mcp_servers" not in config
 
 
-def _load_market_signal_module():
-    script_path = SKILLS_ROOT / "daily-digest" / "scripts" / "fetch_market_signals.py"
-    spec = importlib.util.spec_from_file_location("fetch_market_signals", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_market_signal_endpoints_point_at_stockdata_api() -> None:
     """사이트가 클라이언트 렌더링으로 바뀐 뒤 실제 호출 경로는 /stockdata/api/v1/market."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
 
     assert module.API_BASE == "https://stockeasy.intellio.kr/stockdata/api/v1/market"
     assert set(module.ENDPOINTS) == {
@@ -367,7 +360,7 @@ def test_market_signal_endpoints_point_at_stockdata_api() -> None:
 def test_market_signal_main_renders_api_payload(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
 
     payloads = {
         "indices": {
@@ -440,7 +433,7 @@ def _monitor_rows(kospi: list[float], kosdaq: list[float] | None = None) -> list
 
 def test_leverage_rule_three_fires_on_three_volatile_days_in_ten() -> None:
     """「레버리지 규칙 3」은 하드 트리거인데 지금까지 아무도 계산하지 않고 모델이 눈대중했다."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
 
     # 10개 변화 중 ±5%가 정확히 3일 (-6.00 / -5.82 / -5.03)
     closes = [100.0, 94.0, 94.5, 89.0, 89.5, 85.0, 85.5, 86.0, 86.5, 87.0, 87.5]
@@ -453,7 +446,7 @@ def test_leverage_rule_three_fires_on_three_volatile_days_in_ten() -> None:
 
 def test_leverage_rule_three_stays_quiet_below_the_threshold() -> None:
     """2일이면 발동하지 않는다 — 룰이 요구하는 것은 3일 이상이다."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
 
     # ±5%가 2일뿐 (-6.00 / -5.82)
     closes = [100.0, 94.0, 94.5, 89.0, 89.5, 90.0, 90.5, 91.0, 91.5, 92.0, 92.5]
@@ -465,7 +458,7 @@ def test_leverage_rule_three_stays_quiet_below_the_threshold() -> None:
 
 def test_leverage_rule_three_exempts_a_run_that_is_all_upward() -> None:
     """룰의 예외는 '상승 방향으로 일관적인 변동'이다 — 음의 복리는 방향이 섞일 때 생긴다."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
 
     # ±5% 3일이 전부 상승 (+6.00 / +6.13 / +6.22)
     closes = [100.0, 106.0, 112.5, 119.5, 120.0, 120.5, 121.0, 121.5, 122.0, 122.5, 123.0]
@@ -484,7 +477,7 @@ def test_leverage_rule_three_exempts_a_run_that_is_all_upward() -> None:
 
 def test_leverage_rule_three_judges_each_index_separately_and_no_sectors() -> None:
     """레버리지 상품은 지수별로 다르다. 섹터 레버리지는 「레버리지 규칙 2」대로 사용자 판단이다."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
 
     calm = [100.0] * 11
     wild = [100.0, 94.0, 94.5, 89.0, 89.5, 85.0, 85.5, 86.0, 86.5, 87.0, 87.5]
@@ -500,7 +493,7 @@ def test_leverage_rule_three_judges_each_index_separately_and_no_sectors() -> No
 
 def test_leverage_rule_three_needs_a_full_window() -> None:
     """행이 모자라면 '판정 불가'다 — 짧은 창을 채운 셈 치고 발동시키지 않는다."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
 
     verdict = module.leverage_liquidation(_monitor_rows([100.0, 94.0, 99.0]))["KOSPI"]
     assert verdict["fired"] is False and verdict["insufficient"] is True
@@ -510,20 +503,11 @@ def test_market_signal_main_reports_api_failure(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """지수·빅픽처가 모두 실패하면 사유를 stderr에 남기고 exit 1."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
     monkeypatch.setattr(module, "fetch_api", lambda name: (None, "HTTP 404"))
 
     assert module.main() == 1
     assert "HTTP 404" in capsys.readouterr().err
-
-
-def _load_stock_info_module():
-    script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "fetch_stock_info.py"
-    spec = importlib.util.spec_from_file_location("fetch_stock_info", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 STOCK_INFO_PAYLOAD = {
@@ -776,10 +760,9 @@ def test_http_cache_key_never_carries_the_cookie(tmp_path: Path, monkeypatch: py
     실제 쿠키를 붙여 수집 경로를 통째로 한 번 태운 뒤, 캐시 루트 어디에도 그 값이 없는지 본다.
     """
     secret = "SESSIONID=super-secret-value-42"
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     monkeypatch.setattr(module.http_cache, "CACHE_ROOT", tmp_path)
-    monkeypatch.setattr(module.urllib.request, "urlopen",
-                        lambda req, timeout=None: _FakeResponse(b'{"ok": 1}'))
+    monkeypatch.setattr(datafeed_http, "read_url", lambda url, headers, timeout: b'{"ok": 1}')
 
     payload, err = datafeed_stockeasy.fetch_stock_json("/stock-info/info-tab/000660", cookie=secret)
     assert (payload, err) == ({"ok": 1}, None)
@@ -849,34 +832,20 @@ def test_http_cache_can_be_switched_off(tmp_path: Path, monkeypatch: pytest.Monk
     assert module.load("https://example.test/x", authed=False) is None
 
 
-class _FakeResponse:
-    def __init__(self, body: bytes):
-        self._body = body
-
-    def read(self) -> bytes:
-        return self._body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc) -> bool:
-        return False
-
-
 def test_stock_info_serves_a_repeat_call_from_the_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """한 번의 analyze-stock 실행이 info-tab(약 128KB)을 두 번 받던 경로를 없앤다."""
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     monkeypatch.setattr(module.http_cache, "CACHE_ROOT", tmp_path)
 
     calls: list[str] = []
 
-    def fake_urlopen(req, timeout=None):
-        calls.append(req.full_url)
-        return _FakeResponse(b'{"stock_code": "064290"}')
+    def fake_read_url(url, headers, timeout):
+        calls.append(url)
+        return b'{"stock_code": "064290"}'
 
-    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(datafeed_http, "read_url", fake_read_url)
 
     first, err1 = datafeed_stockeasy.fetch_stock_json("/stock-info/info-tab/064290")
     second, err2 = datafeed_stockeasy.fetch_stock_json("/stock-info/info-tab/064290")
@@ -888,17 +857,17 @@ def test_stock_info_serves_a_repeat_call_from_the_cache(
 
 def test_stock_info_never_caches_a_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """일시적인 401·타임아웃이 TTL 동안 고착되면 쿠키를 고쳐도 계속 실패로 보인다."""
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     monkeypatch.setattr(module.http_cache, "CACHE_ROOT", tmp_path)
 
     state = {"fail": True}
 
-    def flaky_urlopen(req, timeout=None):
+    def flaky_read_url(url, headers, timeout):
         if state["fail"]:
-            raise module.urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
-        return _FakeResponse(b'{"ok": 1}')
+            raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+        return b'{"ok": 1}'
 
-    monkeypatch.setattr(module.urllib.request, "urlopen", flaky_urlopen)
+    monkeypatch.setattr(datafeed_http, "read_url", flaky_read_url)
 
     assert datafeed_stockeasy.fetch_stock_json("/stock-info/info-tab/064290") == (None, "HTTP 401")
     state["fail"] = False
@@ -906,44 +875,35 @@ def test_stock_info_never_caches_a_failure(tmp_path: Path, monkeypatch: pytest.M
     assert (payload, err) == ({"ok": 1}, None)
 
 
-def _load_stage_scan_module():
-    script_path = SKILLS_ROOT / "stage-analysis" / "scripts" / "stage_scan.py"
-    spec = importlib.util.spec_from_file_location("stage_scan_cache", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_daily_bars_and_market_signals_share_the_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """peak_drawdown은 종목마다, stage_scan은 종목마다 같은 네이버 일봉을 다시 받는다."""
-    stage = _load_stage_scan_module()
+    stage = load_script("stage-analysis", "stage_scan")
     monkeypatch.setattr(stage.http_cache, "CACHE_ROOT", tmp_path)
 
     body = "[['날짜'],\n['20260903', 1, 2, 3, 4, 5, 0.0]]".encode("utf-8")
     calls: list[str] = []
 
-    def fake_urlopen(req, timeout=None):
-        calls.append(req.full_url)
-        return _FakeResponse(body)
+    def fake_read_url(url, headers, timeout):
+        calls.append(url)
+        return body
 
-    monkeypatch.setattr(stage.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(datafeed_http, "read_url", fake_read_url)
     first, err1 = datafeed_naver.fetch_bars("000660", 400)
     second, err2 = datafeed_naver.fetch_bars("000660", 400)
     assert (err1, err2) == (None, None)
     assert first == second and len(calls) == 1
 
-    signals = _load_market_signal_module()
+    signals = load_script("daily-digest", "fetch_market_signals")
     monkeypatch.setattr(signals.http_cache, "CACHE_ROOT", tmp_path)
     sig_calls: list[str] = []
 
-    def fake_signal_urlopen(req, timeout=None):
-        sig_calls.append(req.full_url)
-        return _FakeResponse(b'{"indices": []}')
+    def fake_signal_read_url(url, headers, timeout):
+        sig_calls.append(url)
+        return b'{"indices": []}'
 
-    monkeypatch.setattr(signals.urllib.request, "urlopen", fake_signal_urlopen)
+    monkeypatch.setattr(datafeed_http, "read_url", fake_signal_read_url)
     assert signals.fetch_api("indices") == ({"indices": []}, None)
     assert signals.fetch_api("indices") == ({"indices": []}, None)
     assert len(sig_calls) == 1
@@ -953,17 +913,17 @@ def test_no_cache_flag_forces_a_fresh_fetch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """캐시 오염이 의심될 때 껐다 확인할 수 있어야 한다 — 네트워크를 타는 스크립트 전부에 붙인다."""
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     monkeypatch.setattr(module.http_cache, "CACHE_ROOT", tmp_path)
     monkeypatch.delenv("INVAGENT_HTTP_CACHE", raising=False)
 
     calls: list[str] = []
 
-    def fake_urlopen(req, timeout=None):
-        calls.append(req.full_url)
-        return _FakeResponse(b'{"ok": 1}')
+    def fake_read_url(url, headers, timeout):
+        calls.append(url)
+        return b'{"ok": 1}'
 
-    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(datafeed_http, "read_url", fake_read_url)
 
     datafeed_stockeasy.fetch_stock_json("/stock-info/info-tab/064290")
     assert len(calls) == 1
@@ -1011,7 +971,7 @@ def test_http_cache_ttl_is_documented_where_it_is_explained() -> None:
 
 def test_stock_info_endpoints_point_at_stockdata_api() -> None:
     """종목 데이터는 /stockdata/api/v1 경로에서 받는다."""
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
 
     assert module.API_BASE == "https://stockeasy.intellio.kr/stockdata/api/v1"
     assert set(module.ENDPOINTS) == {"search", "info_tab", "analysis_tab", "news", "reports"}
@@ -1022,7 +982,7 @@ def test_stock_info_sends_cookie_to_info_tab_and_news(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """2026-08 이후 info-tab·news도 로그인 세션을 요구한다 — 쿠키를 함께 보낸다."""
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     calls = _patch_stock_info_fetch(module, monkeypatch)
 
     assert module.main(["064290", "--news", "3"]) == 0
@@ -1038,7 +998,7 @@ def test_stock_info_consensus_counts_latest_report_per_broker(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """같은 증권사의 옛 목표가가 평균을 끌어올리면 안 된다 — 증권사별 최신 1건만 센다."""
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     _patch_stock_info_fetch(module, monkeypatch)
 
     assert module.main(["064290"]) == 0
@@ -1056,7 +1016,7 @@ def test_stock_info_info_tab_401_points_at_cookie(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """info-tab이 401이면 원인은 쿠키다 — 사유를 stderr에 특정해 준다."""
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
 
     def fake_fetch(path, params=None, referer=module.PAGE_BASE, cookie=None):
         if path == module.ENDPOINTS["search"]:
@@ -1073,7 +1033,7 @@ def test_stock_info_info_tab_401_points_at_cookie(
 
 def test_stock_info_price_fields_strip_direction_sign() -> None:
     """`cur_prc: "-30850"`의 부호는 등락 방향 마커다. 가격은 절대값으로 읽는다."""
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
 
     assert module.unsigned("-30850") == 30850
     assert module.unsigned("+54100") == 54100
@@ -1086,7 +1046,7 @@ def test_stock_info_price_fields_strip_direction_sign() -> None:
 def test_stock_info_main_renders_quote_and_consensus(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     _patch_stock_info_fetch(module, monkeypatch)
 
     assert module.main(["064290"]) == 0
@@ -1109,7 +1069,7 @@ def test_stock_info_since_filters_news_and_flags_new_reports(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """승계 작성 시 --since 이후 뉴스만 남기고 신규 리포트를 표시한다."""
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     _patch_stock_info_fetch(module, monkeypatch)
 
     assert module.main(["064290", "--since", "2026-08-01"]) == 0
@@ -1124,7 +1084,7 @@ def test_stock_info_renders_report_summaries_with_cookie(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """`securities-reports`는 로그인 쿠키를 붙여야 요약이 나온다."""
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     calls = _patch_stock_info_fetch(module, monkeypatch, cookie="session=abc")
 
     assert module.main(["064290", "--since", "2026-08-01"]) == 0
@@ -1149,7 +1109,7 @@ def test_stock_info_detail_content_sections_flatten(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """`detail_content`는 문자열이 아니라 card_news_sections dict로 온다."""
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     _patch_stock_info_fetch(module, monkeypatch)
 
     assert module.main(["064290", "--detail-chars", "200"]) == 0
@@ -1160,7 +1120,7 @@ def test_stock_info_missing_cookie_only_skips_reports(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """쿠키가 없으면 리포트 섹션만 비고 나머지는 정상 출력된다 (비블로킹)."""
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     _patch_stock_info_fetch(module, monkeypatch, cookie=None)
 
     assert module.main(["064290"]) == 0
@@ -1174,7 +1134,7 @@ def test_stock_info_missing_cookie_only_skips_reports(
 def test_stock_info_expired_cookie_hints_refresh(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     _patch_stock_info_fetch(module, monkeypatch, reports_error="HTTP 401")
 
     assert module.main(["064290"]) == 0
@@ -1187,7 +1147,7 @@ def test_stock_info_cookie_read_from_env_file(
     """저장소는 dotenv를 쓰지 않으므로 수집 계층이 .env를 직접 훑는다."""
     from invagent.datafeed import env
 
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     monkeypatch.delenv(module.COOKIE_ENV, raising=False)
 
     nested = tmp_path / "src" / "invagent" / "datafeed"
@@ -1212,7 +1172,7 @@ def test_stock_info_shows_after_hours_quotes_apart_from_the_regular_close(
     판정은 정규장 종가(`cur_prc`)로만 하므로 시간외가는 참고줄로 떼어 보여 주고, 차이는
     API의 `flu_rt`(전일 종가 대비)가 아니라 오늘 정규장가 대비로 다시 잰다.
     """
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     _patch_stock_info_fetch(module, monkeypatch)
     payload = {
         **STOCK_INFO_PAYLOAD,
@@ -1249,7 +1209,7 @@ def test_stock_info_shows_after_hours_quotes_apart_from_the_regular_close(
 def test_stock_info_omits_the_after_hours_line_when_none_is_served(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     _patch_stock_info_fetch(module, monkeypatch)
 
     assert module.main(["064290"]) == 0
@@ -1288,7 +1248,7 @@ def test_stock_info_lists_disclosures_from_the_analysis_tab(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """2026-09 개편 페이지의 소식 탭(`analysis-tab`)이 종목별 DART 공시 목록을 싣는다."""
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     calls = _patch_stock_info_fetch(module, monkeypatch)
     fake = datafeed_stockeasy.fetch_stock_json
 
@@ -1313,7 +1273,7 @@ def test_stock_info_lists_disclosures_from_the_analysis_tab(
 def test_stock_info_missing_disclosures_do_not_block(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     _patch_stock_info_fetch(module, monkeypatch)  # analysis-tab → HTTP 404
 
     assert module.main(["064290"]) == 0
@@ -1326,7 +1286,7 @@ def test_stock_info_ambiguous_name_exits_2(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """후보가 여러 개면 스킬이 사용자에게 되묻도록 exit 2로 알린다."""
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     _patch_stock_info_fetch(
         module,
         monkeypatch,
@@ -1343,7 +1303,7 @@ def test_stock_info_ambiguous_name_exits_2(
 def test_stock_info_unknown_name_exits_1(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     _patch_stock_info_fetch(module, monkeypatch, search=[])
 
     assert module.main(["없는종목명"]) == 1
@@ -1372,17 +1332,8 @@ PORTFOLIO_DUMP = """|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
 """
 
 
-def _load_portfolio_module():
-    script_path = SKILLS_ROOT / "daily-digest" / "scripts" / "extract_portfolio.py"
-    spec = importlib.util.spec_from_file_location("extract_portfolio", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_portfolio_parser_extracts_first_sheet_only() -> None:
-    module = _load_portfolio_module()
+    module = load_script("daily-digest", "extract_portfolio")
     snapshot = module.build_snapshot(PORTFOLIO_DUMP, "2026-08-09")
 
     assert "# 포트폴리오 스냅샷 — 2026-08-09" in snapshot
@@ -1397,7 +1348,7 @@ def test_portfolio_parser_extracts_first_sheet_only() -> None:
 
 
 def test_portfolio_parser_unescapes_and_flags_rules() -> None:
-    module = _load_portfolio_module()
+    module = load_script("daily-digest", "extract_portfolio")
     snapshot = module.build_snapshot(PORTFOLIO_DUMP, "2026-08-09")
 
     assert "-16.48%" in snapshot and "\\-16.48%" not in snapshot
@@ -1430,7 +1381,7 @@ def _drive_download_response(csv_text: str) -> str:
 
 def test_portfolio_parser_reads_drive_csv_download(tmp_path: Path) -> None:
     """read_file_content가 요약만 돌려주게 된 뒤(2026-09-28) 정본 입력은 CSV 내보내기 응답이다."""
-    module = _load_portfolio_module()
+    module = load_script("daily-digest", "extract_portfolio")
     dump = tmp_path / "download.json"
     dump.write_text(_drive_download_response(PORTFOLIO_CSV), encoding="utf-8")
 
@@ -1445,7 +1396,7 @@ def test_portfolio_parser_reads_drive_csv_download(tmp_path: Path) -> None:
 
 
 def test_portfolio_parser_reads_plain_csv(tmp_path: Path) -> None:
-    module = _load_portfolio_module()
+    module = load_script("daily-digest", "extract_portfolio")
     dump = tmp_path / "portfolio.csv"
     dump.write_text(PORTFOLIO_CSV, encoding="utf-8")
 
@@ -1458,7 +1409,7 @@ def test_portfolio_parser_reads_plain_csv(tmp_path: Path) -> None:
 def test_portfolio_parser_rejects_truncated_holdings(tmp_path: Path) -> None:
     """행이 잘린 입력은 스냅샷이 되지 않는다 — 2026-09-28 CSV 옮겨 적기에서 마지막 행이 빠져
     이수페타시스가 「전량 청산」으로 읽힐 뻔했다. 보유 행 합계를 시트의 잔고와 대조해 잡는다."""
-    module = _load_portfolio_module()
+    module = load_script("daily-digest", "extract_portfolio")
     truncated = PORTFOLIO_CSV.rsplit("\r\n", 1)[0]  # 오메가기판 행 누락
     dump = tmp_path / "download.json"
     dump.write_text(_drive_download_response(truncated), encoding="utf-8")
@@ -1483,7 +1434,7 @@ STOP_TIER_DUMP = """|  |  |  |  |  |  |  |  |  |  |  |  |
 
 def test_portfolio_grades_stop_loss_in_two_tiers() -> None:
     """「매매규칙 6」은 -15% 1차 분할 + -20% 전량 두 티어다. 깊은 티어가 얕은 티어를 흡수한다."""
-    module = _load_portfolio_module()
+    module = load_script("daily-digest", "extract_portfolio")
     snapshot = module.build_snapshot(STOP_TIER_DUMP, "2026-09-05")
 
     assert "매매규칙 6(-20% 전량 매도): 앱실론 -22.00% (비중 12.0%) ← **위반**" in snapshot
@@ -1509,7 +1460,7 @@ WEIGHT_DUMP = """|  |  |  |  |  |  |  |  |  |  |  |  |
 
 def test_portfolio_weight_cap_is_the_valuation_axis() -> None:
     """「매매규칙 9」의 35%는 **평가 비중** 상한이다. 매수원금 비중 상한(2%÷손절률)과 다른 축이라 라벨로 갈라 쓴다."""
-    module = _load_portfolio_module()
+    module = load_script("daily-digest", "extract_portfolio")
     snapshot = module.build_snapshot(WEIGHT_DUMP, "2026-09-05")
 
     assert "매매규칙 9(평가 비중 35% 상한): 이오타 36.0% ← **위반**" in snapshot
@@ -1537,7 +1488,7 @@ def _deep_drawdown(credit: list[dict]) -> list[dict]:
 
 def test_margin_call_climax_fires_beyond_two_sigma() -> None:
     """지수 급락의 반대매매 클라이맥스는 지수 레버리지 신규 매수가 허용되는 자리다."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
 
     calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30      # 150일 평온
     credit = _credit_rows(calm + [2000.0])
@@ -1550,7 +1501,7 @@ def test_margin_call_climax_fires_beyond_two_sigma() -> None:
 
 
 def test_margin_call_climax_stays_quiet_on_an_ordinary_day() -> None:
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
     calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
     # 기준선 평균 103.0 · σ 10.77 → 임계 124.5. 그 안쪽 값은 클라이맥스가 아니다.
     credit = _credit_rows(calm + [115.0])
@@ -1562,7 +1513,7 @@ def test_margin_call_climax_stays_quiet_on_an_ordinary_day() -> None:
 
 def test_margin_call_climax_excludes_today_from_its_own_baseline() -> None:
     """오늘 값이 평균·표준편차에 섞이면 큰 값일수록 자기 임계를 끌어올려 신호가 무뎌진다."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
     calm = [100.0] * 150
     credit = _credit_rows(calm + [500.0])
 
@@ -1579,7 +1530,7 @@ def _ladder_monitor(closes: list[float]) -> list[dict]:
 
 def test_drawdown_ladder_reports_every_five_percent_from_ten() -> None:
     """고점 대비 -10%부터 5%마다 단을 둔다 — 어느 단까지 밟았는지가 분할 매수의 눈금이다."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
 
     assert module.DRAWDOWN_RUNGS[:5] == (-10.0, -15.0, -20.0, -25.0, -30.0)
     assert -35.0 in module.DRAWDOWN_RUNGS and -40.0 in module.DRAWDOWN_RUNGS
@@ -1595,7 +1546,7 @@ def test_drawdown_ladder_reports_every_five_percent_from_ten() -> None:
 
 def test_drawdown_ladder_flags_the_rung_first_touched_today() -> None:
     """새로 밟은 단이 행동 시점이다. 2026-07-30 저점에서 KOSPI는 -35%를 T-1에 처음 밟았다."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
 
     # 어제 -22%(=-20% 단), 오늘 -27%(=-25% 단 신규)
     ladder = module.drawdown_ladder(_ladder_monitor([100.0] * 60 + [78.0, 73.0]), "KOSPI")
@@ -1613,7 +1564,7 @@ def test_drawdown_ladder_does_not_re_announce_a_rung_it_just_left() -> None:
     실측 재현에서 KOSPI는 2026-07-28에 -30%를 처음 밟고, 반등 뒤 08-03·08-06에 같은 단을
     다시 「신규」로 알렸다. 분할 매수 신호가 같은 자리에서 세 번 울리면 눈금 구실을 못 한다.
     """
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
 
     # -30% 밟음 → 회복 → 재이탈. 재이탈은 신규가 아니다.
     closes = [100.0] * 60 + [69.0, 75.0, 69.5]
@@ -1628,7 +1579,7 @@ def test_drawdown_ladder_does_not_re_announce_a_rung_it_just_left() -> None:
 
 def test_drawdown_ladder_is_quiet_above_the_first_rung() -> None:
     """-10%에 못 미치면 사다리는 아직 시작도 안 했다."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
     ladder = module.drawdown_ladder(_ladder_monitor([100.0] * 60 + [95.0]), "KOSPI")
 
     assert ladder["breached"] == [] and ladder["next_rung"] == -10.0
@@ -1636,7 +1587,7 @@ def test_drawdown_ladder_is_quiet_above_the_first_rung() -> None:
 
 def test_leverage_entry_window_needs_both_the_drawdown_and_the_climax() -> None:
     """「레버리지 규칙 2」 베팅 가능 구간 = 낙폭 -10% 이하 **그리고** 반대매매 2σ."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
     calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
     credit = _credit_rows(calm + [2000.0])
     deep = _deep_drawdown(credit)
@@ -1656,7 +1607,7 @@ def test_margin_call_climax_is_judged_per_index() -> None:
     실측(2025-01~2026-09): 같은 반대매매 시리즈에 KOSPI 게이트는 8건, KOSDAQ 게이트는 9건이
     걸리고 겹치는 날은 3일뿐이다.
     """
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
     calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
     credit = _credit_rows(calm + [2000.0])
     n = len(credit)
@@ -1682,7 +1633,7 @@ def test_margin_call_climax_requires_the_index_to_be_deep_in_drawdown() -> None:
     사용자 조건은 "지수 급락 → 반대매매 클라이맥스"다. 급락은 그날 하락률이 아니라
     국면(고점 대비 낙폭)으로 읽는다 — 실제 클라이맥스 2026-07-31은 그날 +18.05%였다.
     """
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
     calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
     credit = _credit_rows(calm + [2000.0])
 
@@ -1697,7 +1648,7 @@ def test_margin_call_climax_requires_the_index_to_be_deep_in_drawdown() -> None:
 
 def test_margin_call_climax_needs_a_full_baseline() -> None:
     """창을 못 채우면 판정 불가다 — 짧은 표본의 σ로 레버리지 진입을 허가하지 않는다."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
     credit = _credit_rows([100.0] * 10)
     verdict = module.margin_call_climax(credit, _deep_drawdown(credit))["KOSPI"]
 
@@ -1721,7 +1672,7 @@ def test_margin_call_climax_is_an_index_only_carve_out() -> None:
 
 def test_leverage_rule_three_constants_match_the_documented_table() -> None:
     """임계값은 스킬의 운영 선택이다 — 상수만 바꾸고 근거 표가 남으면 다음 사람이 못 읽는다."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
     skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
     rules = _my_rules()
 
@@ -1740,7 +1691,7 @@ def test_leverage_rule_three_constants_match_the_documented_table() -> None:
 
 def test_drawdown_ladder_constants_are_documented() -> None:
     """단 간격과 쿨다운은 운영 선택이다 — 근거가 남아야 다음 사람이 바꿀 수 있다."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
     skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "`DRAWDOWN_RUNGS`" in skill
@@ -1752,7 +1703,7 @@ def test_drawdown_ladder_constants_are_documented() -> None:
 
 def test_margin_call_window_rationale_is_documented() -> None:
     """창 길이는 이 스킬의 운영 선택이다 — 왜 120인지가 남아야 다음 사람이 바꿀 수 있다."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
     skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
 
     assert f"`MARGIN_CALL_WINDOW_DAYS` | {module.MARGIN_CALL_WINDOW_DAYS}" in skill
@@ -1776,19 +1727,10 @@ def test_long_bull_candle_is_wired_into_the_entry_rules() -> None:
     assert "stage_scan" in block or "장대 양봉 줄" in block
 
 
-def _load_market_data_fetch_module():
-    script_path = SKILLS_ROOT / "market-data" / "scripts" / "fetch.py"
-    spec = importlib.util.spec_from_file_location("market_data_fetch", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_market_data_fetch_prints_a_quote(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    module = _load_market_data_fetch_module()
+    module = load_script("market-data", "fetch")
     monkeypatch.setattr(
         module.tickers, "resolve_stock", lambda q: ({"stock_code": "005930"}, None, 0)
     )
@@ -1808,7 +1750,7 @@ def test_market_data_fetch_reports_a_failure_without_raising(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """수집 실패는 비블로킹이라는 공통 원칙을 이 CLI도 따른다 — 사유를 stderr에 남긴다."""
-    module = _load_market_data_fetch_module()
+    module = load_script("market-data", "fetch")
     monkeypatch.setattr(module.daily, "fetch_daily_bars", lambda code, days, asof=None: ([], "HTTP 500", None))
     monkeypatch.setattr(
         module.tickers, "resolve_stock", lambda q: ({"stock_code": "005930"}, None, 0)
@@ -1824,7 +1766,7 @@ def test_market_data_fetch_bars_names_a_naver_fallback(
     """직통 조회도 판정용 일봉과 같은 경로다 — 네이버 대체면 시간외가 가능성을 밝힌다."""
     from invagent.datafeed import daily
 
-    module = _load_market_data_fetch_module()
+    module = load_script("market-data", "fetch")
     note = daily.fallback_note("STOCKEASY_COOKIE 미설정")
     monkeypatch.setattr(
         daily,
@@ -1842,7 +1784,7 @@ def test_market_data_fetch_bars_names_a_naver_fallback(
 def test_market_data_fetch_passes_an_ambiguous_name_back(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    module = _load_market_data_fetch_module()
+    module = load_script("market-data", "fetch")
     monkeypatch.setattr(
         module.tickers, "resolve_stock", lambda q: (None, "종목명 후보 다수 — 가나(000001)", 2)
     )
@@ -2056,7 +1998,7 @@ def test_portfolio_thresholds_match_my_rules() -> None:
     2026-09-02 「매매규칙 6·7」이 바뀌었는데 스크립트가 옛 -8%·단일 -15%에 머문 적이 있다.
     상수를 문자열로 못 박지 않고 룰 원문에서 파싱해 대조한다.
     """
-    module = _load_portfolio_module()
+    module = load_script("daily-digest", "extract_portfolio")
     rules = _my_rules()
 
     trim = re.search(r"^7\. \*\*(-\d+)% 비중 축소\*\*", rules, re.MULTILINE)
@@ -2077,15 +2019,6 @@ def test_portfolio_thresholds_match_my_rules() -> None:
     )
 
 
-def _load_find_reports_module():
-    script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "find_reports.py"
-    spec = importlib.util.spec_from_file_location("find_reports", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 @pytest.mark.parametrize(
     ("stock", "expected"),
     [
@@ -2098,7 +2031,7 @@ def _load_find_reports_module():
     ],
 )
 def test_find_reports_routes_by_chosung(stock: str, expected: str) -> None:
-    module = _load_find_reports_module()
+    module = load_script("analyze-stock", "find_reports")
 
     assert module.chosung_dir(stock) == expected
 
@@ -2114,7 +2047,7 @@ def test_find_reports_routes_by_chosung(stock: str, expected: str) -> None:
     ],
 )
 def test_find_reports_parses_leading_date(filename: str, expected: str | None) -> None:
-    module = _load_find_reports_module()
+    module = load_script("analyze-stock", "find_reports")
 
     assert module.parse_date(filename) == expected
 
@@ -2137,7 +2070,7 @@ def _build_archive(root: Path) -> None:
 
 def test_find_reports_collects_sorted_with_aux_dirs(tmp_path: Path) -> None:
     _build_archive(tmp_path)
-    module = _load_find_reports_module()
+    module = load_script("analyze-stock", "find_reports")
 
     items, dirs, kind = module.collect(tmp_path, "율촌화학")
 
@@ -2159,7 +2092,7 @@ def test_find_reports_limit_and_missing_stock(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _build_archive(tmp_path)
-    module = _load_find_reports_module()
+    module = load_script("analyze-stock", "find_reports")
     monkeypatch.setenv("INVAGENT_REPORT_ARCHIVE", str(tmp_path))
 
     assert module.main(["율촌화학", "--limit", "2"]) == 0
@@ -2176,22 +2109,10 @@ def test_find_reports_limit_and_missing_stock(
 
 def test_find_reports_archive_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """저장소·스킬 파일에 절대경로를 박지 않기 위한 환경변수 오버라이드."""
-    module = _load_find_reports_module()
+    module = load_script("analyze-stock", "find_reports")
     monkeypatch.setenv("INVAGENT_REPORT_ARCHIVE", str(tmp_path))
 
     assert module.archive_root() == tmp_path
-
-
-def _load_find_mentions_module():
-    script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "find_mentions.py"
-    spec = importlib.util.spec_from_file_location("find_mentions", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    # dataclass가 `from __future__ import annotations` 하에서 타입을 해석하려면
-    # 모듈이 sys.modules에 등록돼 있어야 한다.
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 INDEX_MD = """# 월간 누적 컨텍스트 (인덱스)
@@ -2251,7 +2172,7 @@ def _build_telegram_archive(root: Path) -> Path:
 
 
 def test_find_mentions_parses_records_per_source(tmp_path: Path) -> None:
-    module = _load_find_mentions_module()
+    module = load_script("analyze-stock", "find_mentions")
     archive = _build_telegram_archive(tmp_path)
 
     result = module.collect(archive, ["알파전자"])
@@ -2274,7 +2195,7 @@ def test_find_mentions_parses_records_per_source(tmp_path: Path) -> None:
 
 def test_find_mentions_groups_indented_block_into_head_record(tmp_path: Path) -> None:
     """`- **종목**` 헤드에 딸린 들여쓴 하위 불릿은 같은 레코드의 본문이다."""
-    module = _load_find_mentions_module()
+    module = load_script("analyze-stock", "find_mentions")
     archive = _build_telegram_archive(tmp_path)
 
     result = module.collect(archive, ["엡실론소재"])
@@ -2286,7 +2207,7 @@ def test_find_mentions_groups_indented_block_into_head_record(tmp_path: Path) ->
 
 
 def test_find_mentions_excludes_duplicate_sources(tmp_path: Path) -> None:
-    module = _load_find_mentions_module()
+    module = load_script("analyze-stock", "find_mentions")
     archive = _build_telegram_archive(tmp_path)
 
     paths = {hit.path.name for hit in module.collect(archive, ["알파전자"]).all_hits}
@@ -2297,7 +2218,7 @@ def test_find_mentions_excludes_duplicate_sources(tmp_path: Path) -> None:
 
 
 def test_find_mentions_alias_expands_search(tmp_path: Path) -> None:
-    module = _load_find_mentions_module()
+    module = load_script("analyze-stock", "find_mentions")
     archive = _build_telegram_archive(tmp_path)
 
     plain = module.collect(archive, ["알파전자"]).daily_hits
@@ -2309,7 +2230,7 @@ def test_find_mentions_alias_expands_search(tmp_path: Path) -> None:
 
 def test_find_mentions_falls_back_to_line_scan(tmp_path: Path) -> None:
     """레코드 구조가 없는 파일도 놓치지 않는다."""
-    module = _load_find_mentions_module()
+    module = load_script("analyze-stock", "find_mentions")
     archive = _build_telegram_archive(tmp_path)
     (archive / "themes" / "깨진테마.md").write_text(BROKEN_MD, encoding="utf-8")
 
@@ -2322,7 +2243,7 @@ def test_find_mentions_falls_back_to_line_scan(tmp_path: Path) -> None:
 def test_find_mentions_output_is_locator_only(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    module = _load_find_mentions_module()
+    module = load_script("analyze-stock", "find_mentions")
     _build_telegram_archive(tmp_path)
     monkeypatch.setenv("INVAGENT_OUTPUT_DIR", str(tmp_path))
 
@@ -2338,16 +2259,6 @@ def test_find_mentions_output_is_locator_only(
 
     assert module.main(["없는종목명", "--count-only"]) == 0
     assert "아카이브 언급 없음" in capsys.readouterr().out
-
-
-def _load_find_prior_report_module():
-    script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "find_prior_report.py"
-    spec = importlib.util.spec_from_file_location("find_prior_report", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 PRIOR_REPORT_FILES = (
@@ -2374,7 +2285,7 @@ def _build_reports_dir(root: Path) -> Path:
 
 
 def test_find_prior_report_inherits_latest_own_report(tmp_path: Path) -> None:
-    module = _load_find_prior_report_module()
+    module = load_script("analyze-stock", "find_prior_report")
     reports = _build_reports_dir(tmp_path)
 
     result = module.lookup(reports, "율촌화학", "2026-09-01")
@@ -2389,7 +2300,7 @@ def test_find_prior_report_inherits_latest_own_report(tmp_path: Path) -> None:
 
 def test_find_prior_report_treats_comparison_report_as_related(tmp_path: Path) -> None:
     """산업·기타 보고서는 다른 종목 내용도 담겼다 — 참고만 하고 원본을 유지한다."""
-    module = _load_find_prior_report_module()
+    module = load_script("analyze-stock", "find_prior_report")
     reports = _build_reports_dir(tmp_path)
 
     result = module.lookup(reports, "기가비스", "2026-09-01")
@@ -2413,7 +2324,7 @@ def test_find_prior_report_treats_comparison_report_as_related(tmp_path: Path) -
 def test_find_prior_report_target_routes_by_chosung(
     tmp_path: Path, stock: str, expected_dir: str
 ) -> None:
-    module = _load_find_prior_report_module()
+    module = load_script("analyze-stock", "find_prior_report")
     reports = _build_reports_dir(tmp_path)
 
     target = module.lookup(reports, stock, "2026-09-01").target
@@ -2423,7 +2334,7 @@ def test_find_prior_report_target_routes_by_chosung(
 
 def test_find_prior_report_reads_new_filename_convention(tmp_path: Path) -> None:
     """`<종목명>_<날짜>.md`로 바뀐 뒤에도 기존 보고서를 승계 대상으로 잡아야 한다."""
-    module = _load_find_prior_report_module()
+    module = load_script("analyze-stock", "find_prior_report")
     reports = _build_reports_dir(tmp_path)
     (reports / "종목" / "ㅇ").mkdir(parents=True, exist_ok=True)
     (reports / "종목" / "ㅇ" / "와이지-원_2026-08-20.md").write_text("# x\n", encoding="utf-8")
@@ -2437,7 +2348,7 @@ def test_find_prior_report_reads_new_filename_convention(tmp_path: Path) -> None
 
 
 def test_find_prior_report_ignores_undated_and_pdf_date_dirs(tmp_path: Path) -> None:
-    module = _load_find_prior_report_module()
+    module = load_script("analyze-stock", "find_prior_report")
     reports = _build_reports_dir(tmp_path)
 
     scanned = {report.path.name for report in module.scan(reports)}
@@ -2447,7 +2358,7 @@ def test_find_prior_report_ignores_undated_and_pdf_date_dirs(tmp_path: Path) -> 
 
 
 def test_find_prior_report_flags_same_path_rerun(tmp_path: Path) -> None:
-    module = _load_find_prior_report_module()
+    module = load_script("analyze-stock", "find_prior_report")
     reports = _build_reports_dir(tmp_path)
     rerun = reports / "종목" / "ㅇ" / "에이피알_2026-09-01.md"
     rerun.parent.mkdir(parents=True, exist_ok=True)
@@ -2461,7 +2372,7 @@ def test_find_prior_report_flags_same_path_rerun(tmp_path: Path) -> None:
 def test_find_prior_report_main_reports_new_and_inherited(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    module = _load_find_prior_report_module()
+    module = load_script("analyze-stock", "find_prior_report")
     _build_reports_dir(tmp_path)
     monkeypatch.setenv("INVAGENT_OUTPUT_DIR", str(tmp_path))
 
@@ -2487,7 +2398,7 @@ def test_find_prior_report_main_reports_new_and_inherited(
 
 
 def test_find_mentions_since_filter(tmp_path: Path) -> None:
-    module = _load_find_mentions_module()
+    module = load_script("analyze-stock", "find_mentions")
     archive = _build_telegram_archive(tmp_path)
 
     result = module.collect(archive, ["알파전자"], since="2026-08-01")
@@ -2517,15 +2428,6 @@ PEAK_SNAPSHOT = """# 포트폴리오 스냅샷 — 2026-08-28
 """
 
 
-def _load_peak_drawdown_module():
-    script_path = SKILLS_ROOT / "daily-digest" / "scripts" / "peak_drawdown.py"
-    spec = importlib.util.spec_from_file_location("peak_drawdown", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def _bars(closes: list[tuple[str, float]]) -> list[dict]:
     return [
         {"date": d, "open": c, "high": c, "low": c, "close": c, "volume": 1.0}
@@ -2548,14 +2450,14 @@ def _bars(closes: list[tuple[str, float]]) -> list[dict]:
     ],
 )
 def test_peak_drawdown_bands_take_the_deepest_hit(drawdown, expected) -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
 
     assert module.band_for(drawdown) == expected
 
 
 def test_peak_drawdown_band_survives_float_boundary() -> None:
     """90,000/100,000-1 = -9.999999999999998 — 표에 -10.0%로 찍히면 밴드도 걸려야 한다."""
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     result = module.peak_drawdown(
         _bars([("20260601", 100_000.0), ("20260828", 90_000.0)])
     )
@@ -2565,7 +2467,7 @@ def test_peak_drawdown_band_survives_float_boundary() -> None:
 
 
 def test_peak_drawdown_parses_holdings_and_drops_cash() -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
 
     holdings = module.parse_holdings(PEAK_SNAPSHOT)
 
@@ -2575,7 +2477,7 @@ def test_peak_drawdown_parses_holdings_and_drops_cash() -> None:
 
 
 def test_peak_is_highest_close_in_window_with_its_date() -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     # 창(250거래일) 밖의 더 높은 종가는 전고점으로 잡히지 않는다
     old = [(f"2024{i:04d}", 999_000.0) for i in range(1, 3)]
     window = [("20260101", 80_000.0), ("20260615", 100_000.0), ("20260828", 70_000.0)]
@@ -2591,7 +2493,7 @@ def test_peak_is_highest_close_in_window_with_its_date() -> None:
 def test_peak_drawdown_unresolved_ticker_does_not_block_others(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     monkeypatch.setattr(
         datafeed_tickers,
         "resolve_stock",
@@ -2622,7 +2524,7 @@ def test_peak_drawdown_flags_holdings_measured_on_naver_fallback_bars(
     """52주 시장 축은 정규장 종가(StockEasy)로 잰다. 네이버로 대체된 종목은 섹션이 이름째 밝힌다."""
     from invagent.datafeed import daily
 
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     monkeypatch.setattr(
         datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
     )
@@ -2644,7 +2546,7 @@ def test_peak_drawdown_flags_holdings_measured_on_naver_fallback_bars(
 
 
 def test_peak_drawdown_overrides_win_over_api(monkeypatch: pytest.MonkeyPatch) -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     monkeypatch.setattr(
         datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "999999"}, None, 0)
     )
@@ -2654,7 +2556,7 @@ def test_peak_drawdown_overrides_win_over_api(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_peak_drawdown_overrides_file_ignores_comments(tmp_path: Path) -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     path = tmp_path / "ticker_overrides.md"
     path.write_text(
         "# 티커 오버라이드\n> 설명 줄\n- 불릿 줄\n\n알파전자 = 000660   # 표기 오타\n베타파마 = bad\n",
@@ -2665,7 +2567,7 @@ def test_peak_drawdown_overrides_file_ignores_comments(tmp_path: Path) -> None:
 
 
 def test_peak_drawdown_fetch_failure_is_non_blocking(monkeypatch: pytest.MonkeyPatch) -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     monkeypatch.setattr(
         datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
     )
@@ -2687,7 +2589,7 @@ def _write_snapshot(root: Path, day: str, text: str) -> Path:
 
 
 def test_account_mdd_uses_snapshot_balance_peak(tmp_path: Path) -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     for day, balance in (("2026-08-20", 100_000_000), ("2026-08-25", 95_000_000)):
         _write_snapshot(tmp_path, day, f"> 잔고 ₩{balance:,} · 수익률 1.00%\n")
 
@@ -2704,7 +2606,7 @@ def test_account_mdd_uses_snapshot_balance_peak(tmp_path: Path) -> None:
 
 def test_stock_band_warns_before_it_is_hit() -> None:
     """종목도 밴드를 밟기 전에 경고한다 — trailing stop은 밟은 뒤 정하면 늦다."""
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
 
     pending = module.pending_bands(-9.8, 112_700.0, module.DRAWDOWN_BANDS)
     near = module.approaching_band(pending, module.DRAWDOWN_WARN_MARGIN_PP)
@@ -2717,7 +2619,7 @@ def test_stock_band_warns_before_it_is_hit() -> None:
 
 def test_stock_band_already_hit_is_not_an_approach() -> None:
     """발동한 밴드는 임박 대상이 아니고, 다음 밴드로 넘어간다."""
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
 
     pending = module.pending_bands(-13.0, 100_000.0, module.DRAWDOWN_BANDS)
 
@@ -2731,7 +2633,7 @@ def test_stock_band_already_hit_is_not_an_approach() -> None:
 
 def test_stock_approach_uses_displayed_precision() -> None:
     """-12.969%는 표에 -13.0%로 찍히므로 -15%까지 2.0%p로 읽힌다 — 경고도 그 값으로 판단한다."""
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     drawdown = (406_000 / 466_500 - 1) * 100  # 에이피알 실제값 = -12.969%
 
     pending = module.pending_bands(drawdown, 466_500.0, module.DRAWDOWN_BANDS)
@@ -2743,14 +2645,14 @@ def test_stock_approach_uses_displayed_precision() -> None:
 
 
 def test_stock_deepest_band_leaves_nothing_to_warn() -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
 
     assert module.pending_bands(-45.3, 2_919_000.0, module.DRAWDOWN_BANDS) == []
     assert module.approaching_band([], 2.0) is None
 
 
 def test_render_lists_stock_approaches_per_axis(monkeypatch: pytest.MonkeyPatch) -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     monkeypatch.setattr(
         datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
     )
@@ -2776,7 +2678,7 @@ def test_render_lists_stock_approaches_per_axis(monkeypatch: pytest.MonkeyPatch)
 def test_render_omits_approach_line_when_nothing_is_close(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     monkeypatch.setattr(
         datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
     )
@@ -2797,12 +2699,12 @@ def test_render_omits_approach_line_when_nothing_is_close(
 def _account(tmp_path: Path, today_balance: float, peak: float = 100_000_000.0) -> dict:
     """스냅샷 고점이 `peak`인 계좌에서 오늘 잔고가 `today_balance`일 때의 MDD 판정."""
     _write_snapshot(tmp_path, "2026-08-20", f"> 잔고 ₩{peak:,.0f} · 수익률 1.00%\n")
-    return _load_peak_drawdown_module().account_mdd(tmp_path, today_balance, "2026-08-28")
+    return load_script("daily-digest", "peak_drawdown").account_mdd(tmp_path, today_balance, "2026-08-28")
 
 
 def test_account_mdd_warns_before_band_is_hit(tmp_path: Path) -> None:
     """-15% 밟은 뒤 알리면 「기본 원칙 13」 대응을 준비할 시간이 없다 — 도달 전에 경고한다."""
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
 
     account = _account(tmp_path, 86_500_000.0)  # MDD -13.5%
 
@@ -2822,7 +2724,7 @@ def test_account_mdd_warns_before_band_is_hit(tmp_path: Path) -> None:
 
 
 def test_account_mdd_stays_quiet_outside_warn_margin(tmp_path: Path) -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
 
     account = _account(tmp_path, 87_500_000.0)  # MDD -12.5% = -15%까지 2.5%p
 
@@ -2835,7 +2737,7 @@ def test_account_mdd_stays_quiet_outside_warn_margin(tmp_path: Path) -> None:
 
 def test_account_mdd_warn_margin_boundary_counts_as_approaching(tmp_path: Path) -> None:
     """경계값(정확히 2.0%p)은 경고에 포함한다 — 한 발 늦는 쪽으로 반올림하지 않는다."""
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
 
     account = _account(tmp_path, 87_000_000.0)  # MDD -13.0% = -15%까지 정확히 2.0%p
 
@@ -2844,7 +2746,7 @@ def test_account_mdd_warn_margin_boundary_counts_as_approaching(tmp_path: Path) 
 
 
 def test_account_mdd_deepest_band_hit_has_nothing_left_to_warn(tmp_path: Path) -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
 
     account = _account(tmp_path, 80_000_000.0)  # MDD -20%
 
@@ -2856,7 +2758,7 @@ def test_account_mdd_deepest_band_hit_has_nothing_left_to_warn(tmp_path: Path) -
 
 def test_account_mdd_shows_distance_to_both_bands_when_healthy(tmp_path: Path) -> None:
     """오늘 같은 -6.8% 구간 = 경고는 없지만 두 발동선까지의 거리는 항상 찍힌다."""
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
 
     account = _account(tmp_path, 93_200_000.0)  # MDD -6.8%
 
@@ -2871,7 +2773,7 @@ def test_peak_drawdown_fetches_holdings_concurrently_keeping_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """보유 10종목이면 네이버 왕복 10회가 직렬로 쌓인다. 병렬로 돌리되 출력 순서는 입력 순서다."""
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     monkeypatch.setattr(datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0))
 
     import threading
@@ -2905,7 +2807,7 @@ def test_peak_drawdown_fetches_holdings_concurrently_keeping_order(
 
 def test_market_signals_fetch_endpoints_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
     """4개 엔드포인트를 순서대로 기다릴 이유가 없다 — 서로 독립이다."""
-    module = _load_market_signal_module()
+    module = load_script("daily-digest", "fetch_market_signals")
 
     import threading
     import time
@@ -2932,7 +2834,7 @@ def test_market_signals_fetch_endpoints_concurrently(monkeypatch: pytest.MonkeyP
 
 def test_account_mdd_action_text_matches_my_rules(tmp_path: Path) -> None:
     """경고에 붙는 대응 문구는 「기본 원칙 13」 원문에서 온다 — 룰이 바뀌면 같이 바뀌어야 한다."""
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     rules = (REPO_ROOT / "context" / "my_rules.md").read_text(encoding="utf-8")
 
     assert set(module.ACCOUNT_MDD_ACTION) == set(module.ACCOUNT_MDD_BANDS)
@@ -2947,7 +2849,7 @@ def test_account_mdd_action_text_matches_my_rules(tmp_path: Path) -> None:
 def test_peak_drawdown_append_is_idempotent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     monkeypatch.setattr(
         datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
     )
@@ -2975,7 +2877,7 @@ def test_peak_drawdown_append_is_idempotent(
 def test_peak_drawdown_exits_1_on_unparsable_snapshot(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     broken = tmp_path / "2026-08-28.md"
     broken.write_text("# 스냅샷\n\n표가 없다\n", encoding="utf-8")
 
@@ -3113,18 +3015,9 @@ def test_daily_digest_documents_link_summary_step() -> None:
     assert "output/daily-digest/links/{today}/**" in skill
 
 
-def _load_apply_link_summaries_module():
-    script_path = SKILLS_ROOT / "daily-digest" / "scripts" / "apply_link_summaries.py"
-    spec = importlib.util.spec_from_file_location("apply_link_summaries", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_apply_link_summaries_replaces_marker_with_sidecar(tmp_path) -> None:
     """요약 대기 마커를 원문 옆 요약 파일 내용으로 바꾸고 파일 줄은 남긴다"""
-    module = _load_apply_link_summaries_module()
+    module = load_script("daily-digest", "apply_link_summaries")
     body = tmp_path / "example.com_43ecaebf74.md"
     body.write_text("URL: https://example.com/report\n\n원문\n", encoding="utf-8")
     (tmp_path / "example.com_43ecaebf74.summary.md").write_text(
@@ -3148,7 +3041,7 @@ def test_apply_link_summaries_replaces_marker_with_sidecar(tmp_path) -> None:
 
 def test_apply_link_summaries_reads_sidecar_next_to_pdf_body(tmp_path) -> None:
     """PDF로 저장된 링크(`X.pdf`)도 옆의 `X.summary.md`로 마커를 바꾼다"""
-    module = _load_apply_link_summaries_module()
+    module = load_script("daily-digest", "apply_link_summaries")
     body = tmp_path / "vo.la_167396fe47.pdf"
     body.write_bytes(b"%PDF-1.7\n")
     (tmp_path / "vo.la_167396fe47.summary.md").write_text("요약: 메리츠 「인텍플러스」\n", encoding="utf-8")
@@ -3164,7 +3057,7 @@ def test_apply_link_summaries_reads_sidecar_next_to_pdf_body(tmp_path) -> None:
 
 def test_apply_link_summaries_leaves_marker_when_summary_is_missing(tmp_path) -> None:
     """요약 파일이 아직 없으면 마커를 그대로 두어 다시 돌려도 안전하다"""
-    module = _load_apply_link_summaries_module()
+    module = load_script("daily-digest", "apply_link_summaries")
     body = tmp_path / "news.example_0123456789.md"
     body.write_text("URL: https://news.example/a\n\n원문\n", encoding="utf-8")
     original = f"> 파일: {body}\n> [요약 대기]\n"
@@ -3178,7 +3071,7 @@ def test_apply_link_summaries_leaves_marker_when_summary_is_missing(tmp_path) ->
 
 def test_apply_link_summaries_reports_counts_without_summary_text(tmp_path, capsys) -> None:
     """출력은 반영·대기 건수와 대기 중인 원문 경로뿐이고 요약 내용은 찍지 않는다"""
-    module = _load_apply_link_summaries_module()
+    module = load_script("daily-digest", "apply_link_summaries")
     done = tmp_path / "done.example_aaaaaaaaaa.md"
     done.write_text("원문", encoding="utf-8")
     (tmp_path / "done.example_aaaaaaaaaa.summary.md").write_text(
@@ -3198,7 +3091,7 @@ def test_apply_link_summaries_reports_counts_without_summary_text(tmp_path, caps
 
 
 def test_peak_drawdown_thresholds_match_documented_bands() -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
 
     assert module.PEAK_WINDOW_DAYS == 250
     assert module.DRAWDOWN_BANDS == (-10.0, -15.0, -20.0, -30.0)
@@ -3227,7 +3120,7 @@ def _record_snapshot(date: str, prices: dict[str, int]) -> str:
 
 def test_record_history_skips_unparsable_snapshot(tmp_path: Path) -> None:
     """`## 보유` 표가 없는 손글씨 스냅샷(실제 2026-08-15)이 섞여도 나머지로 계속 계산한다."""
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     _write_snapshot(tmp_path, "2026-08-10", _record_snapshot("2026-08-10", {"알파전자": 355_000}))
     _write_snapshot(
         tmp_path,
@@ -3247,7 +3140,7 @@ def test_record_history_skips_unparsable_snapshot(tmp_path: Path) -> None:
 
 
 def test_record_drawdown_uses_history_peak() -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     history = {"알파전자": [("2026-08-01", 300_000.0), ("2026-08-10", 355_000.0)]}
 
     result = module.record_drawdown("알파전자", 283_000.0, "2026-09-03", history)
@@ -3260,7 +3153,7 @@ def test_record_drawdown_uses_history_peak() -> None:
 
 def test_record_drawdown_today_value_overrides_disk_entry() -> None:
     """오늘 일자 항목은 디스크 값을 버리고 방금 파싱한 값을 쓴다(`account_mdd`와 같은 규약)."""
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     history = {"알파전자": [("2026-09-03", 999_000.0), ("2026-08-10", 355_000.0)]}
 
     result = module.record_drawdown("알파전자", 283_000.0, "2026-09-03", history)
@@ -3272,7 +3165,7 @@ def test_record_drawdown_today_value_overrides_disk_entry() -> None:
 
 def test_record_drawdown_without_prior_history_is_flat() -> None:
     """편입 첫날 = 고점도 오늘, 현재가도 오늘 → 낙폭 0%. 마커 없이 숫자만 남는다."""
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
 
     result = module.record_drawdown("신규종목", 100_000.0, "2026-09-03", {})
 
@@ -3288,7 +3181,7 @@ def test_record_drawdown_without_prior_history_is_flat() -> None:
 
 def test_record_axis_survives_market_data_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """네트워크가 죽어 52주 축이 비어도 계좌 기록 축은 그대로 표에 남아야 한다."""
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     monkeypatch.setattr(
         datafeed_tickers, "resolve_stock", lambda name, overrides=None: (None, "종목 검색 결과 없음", 1)
     )
@@ -3308,7 +3201,7 @@ def test_peak_drawdown_reads_history_across_month_folders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """스냅샷은 `<yyyy>/<mm>/<날짜>.md`에 쌓인다 — 이력·MDD·상태 파일은 월 폴더가 아니라 루트 기준."""
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     monkeypatch.setattr(
         datafeed_tickers, "resolve_stock", lambda name, overrides=None: (None, "종목 검색 결과 없음", 1)
     )
@@ -3333,7 +3226,7 @@ def test_peak_drawdown_reads_history_across_month_folders(
 
 
 def test_render_names_both_axes_and_forbids_summing(monkeypatch: pytest.MonkeyPatch) -> None:
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     monkeypatch.setattr(
         datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
     )
@@ -3367,7 +3260,7 @@ def test_render_names_both_axes_and_forbids_summing(monkeypatch: pytest.MonkeyPa
 
 def test_append_section_removes_legacy_title(tmp_path: Path) -> None:
     """옛 제목으로 쓰인 스냅샷에 재실행해도 섹션이 둘로 갈라지지 않는다."""
-    module = _load_peak_drawdown_module()
+    module = load_script("daily-digest", "peak_drawdown")
     snapshot = tmp_path / "2026-08-28.md"
     snapshot.write_text(
         PEAK_SNAPSHOT
@@ -3383,16 +3276,6 @@ def test_append_section_removes_legacy_title(tmp_path: Path) -> None:
     assert module.LEGACY_SECTION_TITLES[0] not in text
     assert "-45.3%" not in text  # 옛 섹션 본문까지 걷어낸다
     assert "매매규칙 6(-15% 손절)" in text  # 다른 섹션은 보존
-
-
-def _load_entry_policy_module():
-    script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "entry_policy.py"
-    spec = importlib.util.spec_from_file_location("entry_policy", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def _entry_payload(**overrides) -> dict:
@@ -3420,7 +3303,7 @@ def _entry_payload(**overrides) -> dict:
 
 def test_entry_policy_stage_two_stays_eligible() -> None:
     """가드 — 밸류 경로를 여는 동안 2단계 정상 진입이 깨지면 안 된다."""
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     result = module.decide(_entry_payload())
 
@@ -3430,7 +3313,7 @@ def test_entry_policy_stage_two_stays_eligible() -> None:
 
 def test_entry_policy_leaves_overhang_out_of_the_decision() -> None:
     """오버행은 §6-A 참고 사항이다 — 미해소·미수집이어도 action과 1차 수량 상한을 바꾸지 않는다."""
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     unresolved = module.decide(_entry_payload(overhang={"status": "ok", "value": "unresolved"}))
     unknown = module.decide(_entry_payload(overhang={"status": "missing"}))
@@ -3445,7 +3328,7 @@ def test_entry_policy_leaves_overhang_out_of_the_decision() -> None:
 
 def test_entry_policy_withholds_when_stage_is_unknown() -> None:
     """가드 — 알 수 없음은 허가로 승격되지 않는다."""
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     result = module.decide(_entry_payload(stage={"status": "missing"}))
 
@@ -3464,7 +3347,7 @@ VALUE_GATE_PASS = {
 
 def test_entry_policy_opens_stage_one_for_a_passing_value_gate() -> None:
     """1단계는 매집 구간이다. 하방이 막힌 저평가면 1차 분할이 열려야 한다."""
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     result = module.decide(
         _entry_payload(stage={"status": "ok", "value": 1}, value_gate=dict(VALUE_GATE_PASS))
@@ -3476,7 +3359,7 @@ def test_entry_policy_opens_stage_one_for_a_passing_value_gate() -> None:
 
 def test_entry_policy_withholds_stage_one_without_a_value_gate() -> None:
     """밸류 근거 없이 1단계에 들어가는 것은 여전히 막는다 — 진입 수량 0."""
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     result = module.decide(_entry_payload(stage={"status": "ok", "value": 1}))
 
@@ -3486,7 +3369,7 @@ def test_entry_policy_withholds_stage_one_without_a_value_gate() -> None:
 
 def test_entry_policy_treats_stage_three_like_stage_one() -> None:
     """3단계도 밸류 게이트 통과 시 1차 분할만 예외로 연다. 미통과면 수량 0."""
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     opened = module.decide(
         _entry_payload(stage={"status": "ok", "value": 3}, value_gate=dict(VALUE_GATE_PASS))
@@ -3504,7 +3387,7 @@ def test_entry_policy_opens_stage_four_only_once_the_stock_turns_up() -> None:
     2026-09-12 사용자 확정 — 4단계도 「고개 들기」 + 밸류 게이트면 1차 분할이 열린다.
     바닥을 다지는 중이거나 밸류 게이트가 없으면 여전히 닫혀 있다.
     """
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
     stage4 = {"status": "ok", "value": 4}
 
     turned = module.decide(_entry_payload(stage=stage4, value_gate=dict(VALUE_GATE_PASS)))
@@ -3523,7 +3406,7 @@ def test_entry_policy_opens_stage_four_only_once_the_stock_turns_up() -> None:
 
 def test_entry_policy_waits_for_the_turn_before_the_value_path_opens() -> None:
     """「매매규칙 2」는 바닥을 다진 '후' 고개 드는 초반에 산다 — 다지는 중이나 초입을 지난 뒤는 수량 0."""
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     for value in ("basing", "extended"):
         result = module.decide(
@@ -3540,7 +3423,7 @@ ACCUMULATION_PASS = {"status": "ok", "eligible": True, "op_yoy_increased": True}
 def test_entry_policy_opens_half_a_first_tranche_before_the_turn_for_a_growing_quiet_base() -> None:
     """경로 C — 「매매규칙 2」 단서. 바닥 30일 + 바닥 +10% 이내 + 영업이익 YoY 증가 + 밸류 게이트면 고개 들기 전에
     1차 트랜치의 절반을 연다. 4단계도 같다 (2026-09-25 백테스트, 사용자 확정)."""
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     for stage in (1, 3, 4):
         result = module.decide(
@@ -3554,7 +3437,7 @@ def test_entry_policy_opens_half_a_first_tranche_before_the_turn_for_a_growing_q
 
 def test_entry_policy_keeps_the_base_closed_when_any_accumulation_condition_is_missing() -> None:
     """실적 감소, 가격 조건 미충족, 판정 못 받음, 밸류 게이트 없음 — 하나라도 빠지면 고개 들기를 기다린다."""
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
     basing = {"status": "ok", "value": "basing"}
     cases = {
         "영업이익 감소": dict(value_gate=dict(VALUE_GATE_PASS), accumulation={**ACCUMULATION_PASS, "op_yoy_increased": False}),
@@ -3570,7 +3453,7 @@ def test_entry_policy_keeps_the_base_closed_when_any_accumulation_condition_is_m
 
 
 def test_entry_policy_never_accumulates_into_a_stock_that_is_still_falling() -> None:
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     result = module.decide(
         _entry_payload(stage={"status": "ok", "value": 4}, value_gate=dict(VALUE_GATE_PASS),
@@ -3582,7 +3465,7 @@ def test_entry_policy_never_accumulates_into_a_stock_that_is_still_falling() -> 
 
 def test_entry_policy_avoids_a_stock_that_is_still_falling() -> None:
     """방금 신저가를 쓴 종목은 밸류가 아무리 좋아도 하락하는 와중이다."""
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     result = module.decide(
         _entry_payload(stage={"status": "ok", "value": 1}, value_gate=dict(VALUE_GATE_PASS),
@@ -3595,7 +3478,7 @@ def test_entry_policy_avoids_a_stock_that_is_still_falling() -> None:
 
 def test_entry_policy_withholds_the_value_path_when_the_turn_is_unknown() -> None:
     """가드 — 단기 판정을 못 받았으면 허가로 승격하지 않는다."""
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     missing = _entry_payload(stage={"status": "ok", "value": 3}, value_gate=dict(VALUE_GATE_PASS))
     del missing["turn"]
@@ -3610,7 +3493,7 @@ def test_entry_policy_withholds_the_value_path_when_the_turn_is_unknown() -> Non
 
 def test_entry_policy_stage_two_does_not_consult_the_turn() -> None:
     """2단계는 경로 A다 — 단기 판정은 1·3·4단계의 타이밍 게이트일 뿐 주도주 진입을 막지 않는다."""
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     payload = _entry_payload(turn={"status": "ok", "value": "extended"})
     result = module.decide(payload)
@@ -3621,7 +3504,7 @@ def test_entry_policy_stage_two_does_not_consult_the_turn() -> None:
 
 def test_value_gate_requires_a_blocked_downside() -> None:
     """하방 막힘이 필수 조건이다. 기대수익만 큰 종목으로 경로가 열리면 안 된다."""
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     result = module.decide(
         _entry_payload(
@@ -3641,7 +3524,7 @@ def test_value_gate_requires_a_higher_reward_risk_than_the_general_rule() -> Non
     기대수익 45%를 요구해 「기본 원칙 2」 본문의 50%와 겹치고, 20% 분모 시절에는
     60%를 요구해 룰 원문보다 엄격했다.
     """
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     assert module.VALUE_GATE_MIN_REWARD_RISK == pytest.approx(2.5)
     below = module.decide(
@@ -3663,7 +3546,7 @@ def test_value_gate_requires_a_higher_reward_risk_than_the_general_rule() -> Non
 
 def test_value_gate_caps_the_first_tranche_at_a_third_of_target_weight() -> None:
     """경로 B는 1차 분할 한정이다. 목표 비중을 통째로 싣는 tranche는 통과시키지 않는다."""
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     oversized = module.decide(
         _entry_payload(
@@ -3687,7 +3570,7 @@ def test_value_gate_caps_the_first_tranche_at_a_third_of_target_weight() -> None
 
 def test_value_gate_requires_a_next_tranche_trigger() -> None:
     """나머지 tranche를 무엇이 여는지 안 적었으면 1차도 열지 않는다 — 「매매규칙 4」 사전 계획."""
-    module = _load_entry_policy_module()
+    module = load_script("analyze-stock", "entry_policy")
 
     blank = module.decide(
         _entry_payload(
@@ -3759,18 +3642,9 @@ def test_advice_records_the_entry_stage_conflict_resolution() -> None:
     assert "1차 분할 한정" in table
 
 
-def _load_weekly_upsert_module():
-    script_path = SKILLS_ROOT / "weekly-investment-review" / "scripts" / "weekly_upsert.py"
-    spec = importlib.util.spec_from_file_location("weekly_upsert", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_weekly_upsert_guard_rejects_a_lost_heading() -> None:
     """2026-09-20 사고 고정점 — 본문 헤딩이 하나라도 사라지면 병합 결과를 거부한다."""
-    module = _load_weekly_upsert_module()
+    module = load_script("weekly-investment-review", "weekly_upsert")
 
     before = "## 19\\~20(주말)\n- 주간 투자 반성\n\n## 18(금)\n- 매매 없음\n"
     after = "## 19\\~20(주말)\n- 주간 투자 반성\n"
@@ -3800,7 +3674,7 @@ _WEEKLY_BODY = (
 
 def test_weekly_upsert_replaces_only_the_weekly_block() -> None:
     """주말 헤딩 아래 블록만 갈아끼우고, 다른 날짜 헤딩은 전부 남는다."""
-    module = _load_weekly_upsert_module()
+    module = load_script("weekly-investment-review", "weekly_upsert")
 
     merged = module.upsert(_WEEKLY_BODY, "- 주간 투자 반성\n\t- 새 내용\n", "19~20")
 
@@ -3815,7 +3689,7 @@ def test_weekly_upsert_replaces_only_the_weekly_block() -> None:
 
 def test_weekly_upsert_inserts_when_no_prior_block_exists() -> None:
     """주말 헤딩은 있는데 반성 블록이 아직 없으면 헤딩 바로 뒤에 넣는다."""
-    module = _load_weekly_upsert_module()
+    module = load_script("weekly-investment-review", "weekly_upsert")
     body = "## 26\\~27(주말)\n\n## 25(금)\n\t- 매매 없음\n"
 
     merged = module.upsert(body, "- 주간 투자 반성\n\t- 첫 기록\n", "26~27")
@@ -3830,7 +3704,7 @@ def test_weekly_upsert_inserts_when_no_prior_block_exists() -> None:
 
 def test_weekly_upsert_refuses_a_missing_weekend_heading() -> None:
     """헤딩이 없으면 조용히 맨 뒤에 붙이지 않고 거부한다."""
-    module = _load_weekly_upsert_module()
+    module = load_script("weekly-investment-review", "weekly_upsert")
 
     with pytest.raises(ValueError) as excinfo:
         module.upsert("## 18(금)\n\t- 매매 없음\n", "- 주간 투자 반성\n", "19~20")
@@ -3840,7 +3714,7 @@ def test_weekly_upsert_refuses_a_missing_weekend_heading() -> None:
 
 def test_weekly_upsert_cli_writes_nothing_when_it_refuses(tmp_path: Path) -> None:
     """거부 시 exit 2이고 --prepared-out은 만들어지지 않는다(반쯤 쓴 본문 금지)."""
-    module = _load_weekly_upsert_module()
+    module = load_script("weekly-investment-review", "weekly_upsert")
     existing = tmp_path / "body.md"
     existing.write_text("## 18(금)\n\t- 매매 없음\n", encoding="utf-8")
     proposed = tmp_path / "week.md"
@@ -3861,7 +3735,7 @@ def test_weekly_upsert_cli_writes_nothing_when_it_refuses(tmp_path: Path) -> Non
 
 def test_weekly_upsert_cli_reports_the_merge(tmp_path: Path, capsys) -> None:
     """성공 시 exit 0, 병합 본문 기록, 헤딩 수를 보고한다."""
-    module = _load_weekly_upsert_module()
+    module = load_script("weekly-investment-review", "weekly_upsert")
     existing = tmp_path / "body.md"
     existing.write_text(_WEEKLY_BODY, encoding="utf-8")
     proposed = tmp_path / "week.md"
@@ -3953,7 +3827,7 @@ def test_stock_info_splits_a_preferred_share_between_two_tickers(monkeypatch):
     """우선주는 시세만 자기 코드, 실적·컨센·뉴스·리포트는 본주 코드로 받는다."""
     from invagent.datafeed import stockeasy
 
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     payloads = {
         "005935": {"stock_info": {"name": "삼성전자우", "cur_prc": "196900"}},
         "005930": {
@@ -3984,7 +3858,7 @@ def test_stock_info_splits_a_preferred_share_between_two_tickers(monkeypatch):
 
 
 def test_stock_info_summary_keeps_the_preferred_price_and_the_common_fundamentals():
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     summary = module.build_summary(
         {"stock_code": "005935", "stock_name": "삼성전자우"},
         {"stock_info": {"name": "삼성전자", "cur_prc": "200000"},
@@ -4001,7 +3875,7 @@ def test_stock_info_summary_keeps_the_preferred_price_and_the_common_fundamental
 
 
 def test_stock_info_summary_is_unchanged_for_a_common_share():
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     summary = module.build_summary(
         {"stock_code": "005930", "stock_name": "삼성전자"},
         {"stock_info": {"name": "삼성전자", "cur_prc": "200000"}},
@@ -4016,7 +3890,7 @@ def test_stock_info_summary_is_unchanged_for_a_common_share():
 
 def test_stock_info_summary_keeps_after_hours_quotes_and_disclosures():
     """--json도 텍스트 출력과 같은 신규 필드를 싣는다 — 시간외가는 우선주면 자기 것이다."""
-    module = _load_stock_info_module()
+    module = load_script("analyze-stock", "fetch_stock_info")
     summary = module.build_summary(
         {"stock_code": "005935", "stock_name": "삼성전자우"},
         {"stock_info": {"cur_prc": "200000"}, "after_hours_quote": {"cur_prc": "+201000"}},
@@ -4068,16 +3942,6 @@ def test_daily_digest_marks_importance_inline_instead_of_a_headline_section() ->
     assert "`⭐`는 쓰지 않는다" in template, "템플릿에 ⭐ 금지 사유가 적혀 있지 않다"
 
 
-def _load_valuation_decision_module():
-    script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "valuation_decision.py"
-    spec = importlib.util.spec_from_file_location("valuation_decision", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 def _downside_blocked_payload() -> dict:
     """하단 목표가가 현재가보다 높은(하방 막힌) 입력. 두 분모의 차이가 드러나는 자리다."""
     return {
@@ -4102,7 +3966,7 @@ def test_reward_risk_denominator_is_separate_from_the_position_sizing_floor() ->
     「기본 원칙 4(2%룰)」의 분모로 남아야 한다. 손익비는 시나리오 하방 대비
     보상을 재는 값이므로 실행 손절선에 묶이면 기대수익의 재진술이 된다.
     """
-    module = _load_valuation_decision_module()
+    module = load_script("analyze-stock", "valuation_decision")
 
     result = module.decide(_downside_blocked_payload())
 
@@ -4120,18 +3984,8 @@ def test_reward_risk_denominator_is_separate_from_the_position_sizing_floor() ->
     )
 
 
-def _load_validate_inputs_module():
-    script_path = SKILLS_ROOT / "analyze-stock" / "scripts" / "validate_inputs.py"
-    spec = importlib.util.spec_from_file_location("validate_inputs", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_validate_inputs_rejects_valuation_shaped_input_naming_the_envelope(capsys, tmp_path):
-    module = _load_validate_inputs_module()
+    module = load_script("analyze-stock", "validate_inputs")
     valuation_shaped = {
         "asof": "2026-10-07",
         "current_price": 1217000,
@@ -4151,7 +4005,7 @@ def test_validate_inputs_rejects_valuation_shaped_input_naming_the_envelope(caps
 
 
 def test_analyze_stock_skill_envelope_example_validates():
-    module = _load_validate_inputs_module()
+    module = load_script("analyze-stock", "validate_inputs")
     skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
     match = re.search(r"\*\*입력 봉투\*\*.*?```json\n(.*?)```", skill, re.S)
     assert match, "SKILL.md 9단계에 「입력 봉투」 json 예시 블록이 없다"
@@ -4194,17 +4048,8 @@ EARNINGS_RAW_LG_PRELIM = """**[포워드]** 2026-10-07 07:24
 """
 
 
-def _load_extract_earnings_module():
-    script_path = SKILLS_ROOT / "daily-digest" / "scripts" / "extract_earnings.py"
-    spec = importlib.util.spec_from_file_location("extract_earnings", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_extract_earnings_parses_consolidated_preliminary_with_consensus() -> None:
-    module = _load_extract_earnings_module()
+    module = load_script("daily-digest", "extract_earnings")
 
     entries = module.parse_earnings(EARNINGS_RAW_LG_PRELIM)
 
@@ -4261,7 +4106,7 @@ EARNINGS_RAW_CONFIRMED = """**[포워드]** 2026-08-14 09:38
 
 
 def test_extract_earnings_takes_confirmed_reports_by_their_period() -> None:
-    module = _load_extract_earnings_module()
+    module = load_script("daily-digest", "extract_earnings")
 
     e1, bonne, punggang = module.parse_earnings(EARNINGS_RAW_CONFIRMED)
 
@@ -4279,7 +4124,7 @@ def test_extract_earnings_takes_confirmed_reports_by_their_period() -> None:
 
 
 def test_extract_earnings_prefers_consolidated_over_separate_for_the_same_quarter() -> None:
-    module = _load_extract_earnings_module()
+    module = load_script("daily-digest", "extract_earnings")
     separate = """**[포워드]** 2026-10-07 07:30
 📌 LG전자(시가총액 : 35.2조)
 📁 영업(잠정)실적(공정공시)
@@ -4338,7 +4183,7 @@ EARNINGS_RAW_CHANGE = """**[포워드]** 2026-09-01 07:40
 
 
 def test_extract_earnings_reads_both_shapes_of_the_30_percent_change_filing() -> None:
-    module = _load_extract_earnings_module()
+    module = load_script("daily-digest", "extract_earnings")
 
     quarterly, annual = module.parse_earnings(EARNINGS_RAW_CHANGE)
 
@@ -4357,7 +4202,7 @@ def test_extract_earnings_reads_both_shapes_of_the_30_percent_change_filing() ->
 
 
 def test_extract_earnings_sheet_cells_for_a_stock_with_consensus() -> None:
-    module = _load_extract_earnings_module()
+    module = load_script("daily-digest", "extract_earnings")
     entry = module.parse_earnings(EARNINGS_RAW_LG_PRELIM)[0]
 
     cells = module.sheet_cells(entry)
@@ -4413,7 +4258,7 @@ EARNINGS_RAW_NO_CONSENSUS = """**[포워드]** 2026-09-01 07:40
 
 
 def test_extract_earnings_sheet_cells_without_consensus_leave_only_a_note() -> None:
-    module = _load_extract_earnings_module()
+    module = load_script("daily-digest", "extract_earnings")
     sewon, bonne = module.parse_earnings(EARNINGS_RAW_NO_CONSENSUS)
 
     sewon_cells = module.sheet_cells(sewon)
@@ -4432,7 +4277,7 @@ def test_extract_earnings_sheet_cells_without_consensus_leave_only_a_note() -> N
 
 
 def test_extract_earnings_spells_out_amounts_when_a_loss_is_involved() -> None:
-    module = _load_extract_earnings_module()
+    module = load_script("daily-digest", "extract_earnings")
     raw = """**[포워드]** 2026-07-30 07:24
 🔵 삼성SDI(시가총액 : 20.1조)
 📁 연결재무제표기준영업(잠정)실적(공정공시)
@@ -4462,7 +4307,7 @@ def _fs_row(year: int, month: int, revenue_eok: int, op_eok: int, quarter: int |
 
 
 def test_extract_earnings_derives_the_fourth_quarter_from_an_annual_change_filing() -> None:
-    module = _load_extract_earnings_module()
+    module = load_script("daily-digest", "extract_earnings")
     annual = module.parse_earnings(EARNINGS_RAW_CHANGE)[1]  # 양지사, 2026-03-05, 연간 495억/-64억
     financials = {
         "consolidated": [
@@ -4487,7 +4332,7 @@ def test_extract_earnings_derives_the_fourth_quarter_from_an_annual_change_filin
 
 
 def test_extract_earnings_derives_by_fiscal_year_end_and_skips_when_a_quarter_is_missing() -> None:
-    module = _load_extract_earnings_module()
+    module = load_script("daily-digest", "extract_earnings")
     raw = """**[포워드]** 2026-06-19 08:13
 📌 동원금속(시가총액 : 841억)
 📁 매출액또는손익구조30%(대규모법인은15%)이상변경
@@ -4530,7 +4375,7 @@ def test_extract_earnings_main_prints_sheet_rows_and_fetches_only_for_annual_fil
 ) -> None:
     from invagent.datafeed import cache, http
 
-    module = _load_extract_earnings_module()
+    module = load_script("daily-digest", "extract_earnings")
     monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path / "cache")
     monkeypatch.setenv("STOCKEASY_COOKIE", "session=x")
     seen: list[str] = []
@@ -4573,7 +4418,7 @@ def test_extract_earnings_main_prints_sheet_rows_and_fetches_only_for_annual_fil
 
 
 def test_extract_earnings_keeps_table_rows_aligned_when_a_value_is_blank() -> None:
-    module = _load_extract_earnings_module()
+    module = load_script("daily-digest", "extract_earnings")
     raw = """**[포워드]** 2026-08-14 09:38
 📌 다원시스(시가총액 : 3,000억)
 📁 반기보고서 (2026.06)

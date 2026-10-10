@@ -1,8 +1,31 @@
-"""테스트 전체 공통 픽스처."""
+"""테스트 전체 공통 픽스처와 스킬 스크립트 로더."""
+
+import importlib.util
+import sys
+from pathlib import Path
+from types import ModuleType
 
 import pytest
 
 from invagent.datafeed import ratelimit
+
+SKILLS_ROOT = Path(__file__).resolve().parents[1] / ".agents" / "skills"
+
+
+def load_script(skill: str, name: str) -> ModuleType:
+    """`.agents/skills/<skill>/scripts/<name>.py`를 새 모듈로 읽어 돌려준다.
+
+    스킬 스크립트는 패키지가 아니라 경로로 실행되므로 테스트도 경로로 읽는다. 모듈을
+    `sys.modules`에 먼저 올리는 것은 `from __future__ import annotations` 아래의 dataclass가
+    자기 모듈을 찾아 타입을 해석하기 때문이다.
+    """
+    path = SKILLS_ROOT / skill / "scripts" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None, path
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture(autouse=True)
