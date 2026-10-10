@@ -678,9 +678,23 @@ and user-facing CLI examples where applicable.
 Preserve unrelated work in a dirty worktree. Do not commit `.env`, API credentials,
 Telegram sessions, generated outputs, or agent-local settings — `.gitignore` already
 excludes `output/`, `.env*` (except `.env.example`), `docs/superpowers/`,
-`.claude/settings.local.json`, and `.claude/RESUME.md`, so new working files belong
+`.claude/settings.local.json`, `.claude/RESUME.md`, and `.scratch/`, so new working files belong
 under a path that is already covered rather than in a fresh tracked directory.
 Treat `context/` as local working data unless it is intentionally curated for the
 repository;
 `context/my_rules.md`, `context/interested_stocks.md`, and
 `context/ticker_overrides.md` are curated and tracked.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as local markdown under `.scratch/<feature>/` (gitignored). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five triage roles, recorded as a `Status:` line in each issue file. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one root `GLOSSARY.md` plus `docs/adr/`, created lazily. See `docs/agents/domain.md`.

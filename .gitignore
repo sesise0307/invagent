@@ -29,3 +29,4 @@ output/
 # Agent-local (previously ignored only via machine-global git config)
 .claude/settings.local.json
 .claude/RESUME.md
+.scratch/
