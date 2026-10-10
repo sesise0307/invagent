@@ -12,7 +12,8 @@
    쿠키가 없거나 만료되면 **가격 전용 판정(와인스타인 원본 버전)으로 강등**하고 그 사실을
    출력에 남긴다. 판정 자체는 계속되므로 종료 코드는 0이다.
 
-티커 해석·쿠키 로딩·재무 행 선택은 `invagent.datafeed`(`tickers`·`stockeasy`)를 쓴다.
+티커 해석은 `invagent.datafeed.tickers`, info-tab 수집·쿠키 힌트·재무 행 선택은
+`invagent.datafeed.stockinfo`를 쓴다.
 같은 규칙을 두 곳에 두면 갈라진다.
 
 의존성: stdlib + 저장소 패키지(`invagent.datafeed`). 네트워크는 전부 `datafeed.http`를 거친다.
@@ -28,7 +29,7 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-from invagent.datafeed import cache as http_cache, naver, series, stockeasy, tickers
+from invagent.datafeed import cache as http_cache, naver, series, stockinfo, tickers
 from invagent.datafeed import daily
 from invagent.datafeed.naver import parse_sise
 from invagent.datafeed.naver import parse_date as _parse_date
@@ -415,11 +416,14 @@ def _yoy(rows_by_key: dict, year: int, quarter: int) -> float | None:
     return (cur - prev) / prev * 100
 
 
-def op_growth(financials: dict | None, primary: str) -> dict:
+def op_growth(actual: dict | None, estimate: dict | None = None) -> dict:
     """최근 확정 분기와 다음 추정 분기의 영업이익 증가율(YoY)을 비교한다.
 
     리포트 p.23의 업종 판정과 같은 방식이다 — 직전 발표치 증가율보다 다음 추정치 증가율이
     낮으면 "하락", 높으면 "상승". 어닝 서프라이즈는 쓰지 않는다 (p.18).
+
+    `actual`·`estimate`는 `StockInfo.quarterly("operating_income")`과 그 추정판이 돌려주는
+    `{(연도, 분기): 영업이익}`이다. `actual`이 None이면 실적 축을 받지 못한 것이다.
     """
     result = {
         "available": False,
@@ -428,27 +432,18 @@ def op_growth(financials: dict | None, primary: str) -> dict:
         "next": None,
         "note": None,
     }
-    if not financials:
+    if actual is None:
         result["note"] = "영업이익 데이터 없음"
         return result
 
-    actual, estimate = stockeasy.fs_rows(financials, primary, yearly=False)
-    values = {}
-    for row in actual:
-        oi, year, quarter = row.get("operating_income"), row.get("year"), row.get("quarter")
-        if oi is not None and year and quarter:
-            values[(year, quarter)] = oi
+    values = dict(actual)
     if not values:
         result["note"] = "확정 분기 영업이익 없음"
         return result
 
     latest_key = max(values)
     # 추정은 확정보다 뒤 분기만 쓴다. 같은 분기가 확정·추정 양쪽에 있으면 확정이 이긴다.
-    est_values = {}
-    for row in estimate:
-        oi, year, quarter = row.get("operating_income"), row.get("year"), row.get("quarter")
-        if oi is not None and year and quarter and (year, quarter) > latest_key:
-            est_values[(year, quarter)] = oi
+    est_values = {key: oi for key, oi in (estimate or {}).items() if key > latest_key}
     merged = {**values, **est_values}
 
     latest_yoy = _yoy(merged, *latest_key)
@@ -599,8 +594,8 @@ def classify(price: dict, cyclical: dict, growth: dict, close: float) -> dict:
     }
 
 
-def analyze(bars: list[dict], financials: dict | None, primary: str) -> dict:
-    """일봉과 재무를 받아 판정 결과 dict를 만든다 (네트워크 없음 — 테스트 대상)."""
+def analyze(bars: list[dict], op_actual: dict | None = None, op_estimate: dict | None = None) -> dict:
+    """일봉과 분기 영업이익(확정·추정)을 받아 판정 결과 dict를 만든다 (네트워크 없음 — 테스트 대상)."""
     closes = [b["close"] for b in bars]
     ma = sma(closes, MA_DAYS)
     ma_ref = sma(closes, MA_REF_DAYS)
@@ -646,7 +641,7 @@ def analyze(bars: list[dict], financials: dict | None, primary: str) -> dict:
         "pivot_lows": pivot_lows[-2:],
     }
     cyclical = cyclical_levels(bars, pivot_highs, pivot_lows)
-    growth = op_growth(financials, primary)
+    growth = op_growth(op_actual, op_estimate)
     verdict = classify(price, cyclical, growth, closes[-1])
     return {
         "price": price,
@@ -809,35 +804,25 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     sources = [fetched.label]
-    financials, primary, name = None, "C", stock.get("stock_name") or ticker
+    op_actual, op_estimate, name = None, None, stock.get("stock_name") or ticker
     if not args.no_fundamental:
-        # 우선주는 분기 실적이 따로 없다 — 영업이익 축만 본주 코드로 받는다. 일봉·이동평균은
-        # 위에서 이미 우선주 자기 시세로 받았고, 괴리율이 따로 움직이므로 그대로 둔다.
-        fs_ticker, is_preferred = tickers.fundamentals_code(ticker)
-        cookie = stockeasy.load_cookie()
-        info, ie = stockeasy.fetch_stock_json(
-            stockeasy.ENDPOINTS["info_tab"].format(code=fs_ticker),
-            referer=f"{stockeasy.PAGE_BASE}/{fs_ticker}",
-            cookie=cookie,
-        )
-        if info:
-            financials = info.get("financials")
-            primary = info.get("primary_fs_type") or "C"
-            # 우선주면 info_tab이 본주 이름을 들고 온다 — 표시 이름은 우선주 그대로 두고
-            # 그 이름은 출처 꼬리표에만 쓴다.
-            fetched_name = (info.get("stock_info") or {}).get("name")
-            if is_preferred:
-                label = f"{fetched_name}({fs_ticker})" if fetched_name else fs_ticker
-                sources.append(f"우선주 실적은 본주 {label}")
-            else:
-                name = fetched_name or name
-            sources.append("StockEasy info-tab")
-        else:
-            hint = "쿠키 만료·무효" if cookie else f"{stockeasy.COOKIE_ENV} 미설정"
-            reason = f"{ie or '빈 응답'}" + (f" ({hint})" if ie == "HTTP 401" or not cookie else "")
-            print(f"[누락] info_tab — {reason} · 가격 전용 판정으로 진행", file=sys.stderr)
+        # 우선주는 분기 실적이 따로 없다 — 영업이익 축만 본주 코드로 받는다(`.fundamentals`만
+        # 읽으므로 우선주 자기 info-tab은 부르지 않는다). 일봉·이동평균은 위에서 이미 우선주 자기
+        # 시세로 받았고, 괴리율이 따로 움직이므로 그대로 둔다.
+        info = stockinfo.fetch(ticker)
+        fundamentals = info.fundamentals
+        # 응답은 왔는데 재무 블록이 비었으면 "영업이익 데이터 없음"으로 남긴다 (예전 문구 그대로).
+        if fundamentals and fundamentals.get("financials"):
+            op_actual = info.quarterly("operating_income")
+            op_estimate = info.quarterly("operating_income", estimates=True)
+        # 우선주면 표시 이름은 우선주 그대로 두고 본주 이름은 출처 꼬리표(`sources`)에만 쓴다.
+        if fundamentals and not info.is_preferred:
+            name = (fundamentals.get("stock_info") or {}).get("name") or name
+        sources.extend(info.sources)
+        for gap in info.gaps:
+            print(f"[누락] info_tab — {gap} · 가격 전용 판정으로 진행", file=sys.stderr)
 
-    result = analyze(bars, financials, primary)
+    result = analyze(bars, op_actual, op_estimate)
     if args.project:
         result["projection"] = project(bars)
 

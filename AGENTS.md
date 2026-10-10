@@ -32,7 +32,12 @@ Commission's official KRX daily prices on data.go.kr, keyed by `DATA_GO_KR_SERVI
 `output/`, `.env` values), `series` (`sma`), `tickers` (override-first ticker
 resolution — then Naver's `ac.stock.naver.com` search, with StockEasy `stock-search` only when
 Naver fails, so StockEasy's request budget goes to values only it serves — plus the
-preferred-to-common mapping below) and `snapshot` (portfolio
+preferred-to-common mapping below), `stockinfo` (the `info-tab` pair — the share's own payload
+for the 시세 축 and the 본주's for the 실적 축, each fetched on first read so a common share costs one
+request and a fundamentals-only reader of a preferred never fetches the preferred's own; it owns the
+401/cookie gap text, the 「우선주 실적은 본주 …」 source line and the confirmed/estimate quarterly and
+yearly series on the primary statement — `stage_scan` reads it, the other `info-tab` scripts move over
+next) and `snapshot` (portfolio
 snapshot tables). `daily.fetch_daily_bars` takes the regular-session bars from `fsc` first — KRX's
 official OHLCV, three years in one request, 10,000 requests a day — and, because that data is
 published after 13:00 on the next business day, fills only the weekdays after its last bar from the
@@ -115,7 +120,7 @@ The collection code itself lives in the `invagent.datafeed` package, not in a
 skill: `stockeasy` (both the `/stockdata/api/v1/**` stock endpoints and the
 `.../market/**` ones, plus the cookie and stock resolution), `naver` (daily
 OHLCV), `daily` (judgement bars), `http` (the one request-plus-cache path), `cache`, `env`, `series`,
-`tickers` and `snapshot`. Skill scripts import it normally, so no script reaches
+`tickers`, `stockinfo` (the `info-tab` pair) and `snapshot`. Skill scripts import it normally, so no script reaches
 into another skill's directory through `sys.path` any more.
 
 Quote, multiples, per-broker target-price history, consensus estimates, EPS

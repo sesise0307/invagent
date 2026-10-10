@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import json
 import math
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -49,8 +51,9 @@ TOP_FLAT = _wave(10_000, 0.25, 250) + _wave(10_000 * 1.0025**249, 0.0, 150)
 BOTTOM_FLAT = _wave(40_000, -0.25, 250) + _wave(40_000 * 0.9975**249, 0.0, 150)
 
 
-def _analyze(closes: list[float], financials=None, primary: str = "C") -> dict:
-    return stage_scan.analyze(_bars(closes), financials, primary)
+def _analyze(closes: list[float], op_income=None) -> dict:
+    """`op_income`은 `_op_income`이 만든 (확정, 추정) 분기 영업이익 쌍이다."""
+    return stage_scan.analyze(_bars(closes), *(op_income or (None, None)))
 
 
 # --- 가격 축 기본 4단계 -----------------------------------------------------
@@ -138,7 +141,7 @@ def _wicked_v() -> list[dict]:
 
 def test_cyclical_levels_come_from_closes_not_intraday_wicks() -> None:
     bars = _wicked_v()
-    result = stage_scan.analyze(bars, None, "C")
+    result = stage_scan.analyze(bars)
 
     assert result["cyclical"]["low"]["price"] == 10_000
     assert result["cyclical"]["low"]["date"] == bars[100]["date"]
@@ -150,7 +153,7 @@ def test_box_range_spans_closes_not_intraday_extremes() -> None:
     bars = _wicked_v()
     bars[220]["high"] = 30_000   # 박스 60일 안(종가 12,700)의 위·아래 꼬리
     bars[220]["low"] = 5_000
-    result = stage_scan.analyze(bars, None, "C")
+    result = stage_scan.analyze(bars)
 
     # 최근 60봉 = i=191..250, 종가 13,570 → 11,800
     assert result["box"]["top"] == 13_570
@@ -159,7 +162,7 @@ def test_box_range_spans_closes_not_intraday_extremes() -> None:
 
 def test_band_position_measures_against_closes_not_intraday_extremes() -> None:
     bars = _wicked_v()
-    result = stage_scan.analyze(bars, None, "C")
+    result = stage_scan.analyze(bars)
 
     # 최근 250봉 = i=1..250. 종가 최고 19,900(i=1) · 최저 10,000(i=100) · 현재 11,800
     assert result["price"]["band_ratio"] == pytest.approx(1_800 / 9_900)
@@ -264,7 +267,7 @@ def test_price_stage_four_with_rising_op_growth_is_weak_stage_four() -> None:
 
 
 def test_missing_op_growth_degrades_to_price_only_without_error() -> None:
-    result = _analyze(UPTREND, financials=None)
+    result = _analyze(UPTREND, op_income=None)
 
     assert result["verdict"]["stage"] == 2
     assert result["verdict"]["weak"] is False
@@ -275,20 +278,20 @@ def test_missing_op_growth_degrades_to_price_only_without_error() -> None:
 # --- 영업이익 증가율 계산 ---------------------------------------------------
 
 
-def _financials(actual: list[tuple[int, int, float]], estimate: list[tuple[int, int, float]]) -> dict:
-    def rows(items):
-        return [{"year": y, "quarter": q, "operating_income": v} for y, q, v in items]
-
-    return {"consolidated": rows(actual), "consolidatedEstimate": rows(estimate)}
+def _op_income(
+    actual: list[tuple[int, int, float]], estimate: list[tuple[int, int, float]]
+) -> tuple[dict, dict]:
+    """`StockInfo.quarterly("operating_income")`와 그 추정판이 돌려주는 모양의 쌍."""
+    return {(y, q): v for y, q, v in actual}, {(y, q): v for y, q, v in estimate}
 
 
 def test_op_growth_compares_latest_actual_with_next_estimate() -> None:
     # 2026.2Q 확정 +100% vs 2026.3Q 추정 +20% → 하락 (리포트 p.23 계산법)
-    fin = _financials(
+    fin = _op_income(
         actual=[(2025, 2, 100.0), (2025, 3, 100.0), (2026, 1, 90.0), (2026, 2, 200.0)],
         estimate=[(2026, 2, 190.0), (2026, 3, 120.0)],
     )
-    growth = stage_scan.op_growth(fin, "C")
+    growth = stage_scan.op_growth(*fin)
 
     assert growth["available"] is True
     assert growth["latest"]["period"] == "2026.2Q"
@@ -300,8 +303,8 @@ def test_op_growth_compares_latest_actual_with_next_estimate() -> None:
 
 def test_op_growth_says_whether_the_latest_quarter_beat_the_same_quarter_last_year() -> None:
     """경로 C의 실적 게이트 — 최근 확정 분기 영업이익이 전년 동기보다 컸는가. 추정치는 보지 않는다."""
-    up = stage_scan.op_growth(_financials(actual=[(2025, 2, 100.0), (2026, 2, 101.0)], estimate=[]), "C")
-    down = stage_scan.op_growth(_financials(actual=[(2025, 2, 100.0), (2026, 2, 99.0)], estimate=[]), "C")
+    up = stage_scan.op_growth(*_op_income(actual=[(2025, 2, 100.0), (2026, 2, 101.0)], estimate=[]))
+    down = stage_scan.op_growth(*_op_income(actual=[(2025, 2, 100.0), (2026, 2, 99.0)], estimate=[]))
 
     assert up["latest"]["increased"] is True
     assert down["latest"]["increased"] is False
@@ -312,24 +315,24 @@ def test_a_narrowing_loss_counts_as_an_increase_for_the_accumulation_gate() -> N
 
     증가율(%)은 전년 기준이 0 이하라 계산하지 않지만, 증가 여부는 금액 비교라 판정할 수 있다.
     """
-    growth = stage_scan.op_growth(_financials(actual=[(2024, 1, -2038.0), (2025, 1, -1402.0)], estimate=[]), "C")
+    growth = stage_scan.op_growth(*_op_income(actual=[(2024, 1, -2038.0), (2025, 1, -1402.0)], estimate=[]))
 
     assert growth["latest"]["yoy"] is None
     assert growth["latest"]["increased"] is True
 
 
 def test_the_accumulation_gate_is_unknown_without_last_years_quarter() -> None:
-    growth = stage_scan.op_growth(_financials(actual=[(2026, 1, 90.0), (2026, 2, 200.0)], estimate=[]), "C")
+    growth = stage_scan.op_growth(*_op_income(actual=[(2026, 1, 90.0), (2026, 2, 200.0)], estimate=[]))
 
     assert growth["latest"]["increased"] is None
 
 
 def test_op_growth_is_unavailable_when_prior_year_was_a_loss() -> None:
-    fin = _financials(
+    fin = _op_income(
         actual=[(2025, 2, -50.0), (2026, 2, 200.0)],
         estimate=[(2026, 3, 120.0)],
     )
-    growth = stage_scan.op_growth(fin, "C")
+    growth = stage_scan.op_growth(*fin)
 
     assert growth["available"] is False
     assert growth["direction"] == "판정 불가"
@@ -428,7 +431,7 @@ def test_twenty_week_line_is_reported_for_the_stock_itself():
     없어 모델이 150일선으로 대신 읽거나 눈대중했다.
     """
     rising = [100.0 + i for i in range(400)]
-    price = stage_scan.analyze(_bars(rising), None, "C")["price"]
+    price = stage_scan.analyze(_bars(rising))["price"]
 
     assert price["ma20w"] is not None
     assert price["ma20w_slope"] == "상승"
@@ -459,7 +462,7 @@ def test_long_bull_candle_days_are_reported_with_their_close():
     """진입가를 장대 양봉 위에 잡지 않으려면 그 날짜와 종가를 알아야 한다."""
     closes = [100.0] * 200 + [100.0, 109.0, 110.0, 111.0]   # +9.0% 하루
     bars = _bars(closes)
-    price = stage_scan.analyze(bars, None, "C")["price"]
+    price = stage_scan.analyze(bars)["price"]
 
     assert len(price["long_bull"]) == 1
     day = price["long_bull"][0]
@@ -470,14 +473,14 @@ def test_long_bull_candle_days_are_reported_with_their_close():
 
 def test_long_bull_candle_ignores_moves_below_the_threshold_and_drops():
     """+7.9%는 장대 양봉이 아니고, -9%는 양봉이 아니다."""
-    price = stage_scan.analyze(_bars([100.0] * 200 + [100.0, 107.9, 98.0, 99.0]), None, "C")["price"]
+    price = stage_scan.analyze(_bars([100.0] * 200 + [100.0, 107.9, 98.0, 99.0]))["price"]
     assert price["long_bull"] == []
 
 
 def test_long_bull_candle_only_looks_at_the_recent_window():
     """반년 전 장대 양봉은 오늘의 진입가를 구속하지 않는다."""
     closes = [100.0, 109.0] + [109.0 + i * 0.01 for i in range(220)]
-    price = stage_scan.analyze(_bars(closes), None, "C")["price"]
+    price = stage_scan.analyze(_bars(closes))["price"]
     assert price["long_bull"] == []
 
 
@@ -501,8 +504,8 @@ def test_equal_pivots_are_not_lower_highs_and_lows(highs, lows):
 
 
 def test_equal_growth_is_flat_and_not_weak():
-    financials = _financials([(2025, 2, 100), (2025, 3, 100), (2026, 2, 200)], [(2026, 3, 200)])
-    growth = stage_scan.op_growth(financials, "C")
+    financials = _op_income([(2025, 2, 100), (2025, 3, 100), (2026, 2, 200)], [(2026, 3, 200)])
+    growth = stage_scan.op_growth(*financials)
     assert growth["direction"] == "평탄"
     verdict = stage_scan.classify(_price("위", "상승", "높아짐", "상단", 12000), {}, growth, 12000)
     assert not verdict["weak"]
@@ -512,9 +515,7 @@ def test_equal_growth_is_flat_and_not_weak():
 
 @pytest.mark.parametrize("estimate", [[], [(2026, 4, 120)]])
 def test_missing_immediate_next_quarter_cannot_raise_confidence(estimate):
-    growth = stage_scan.op_growth(
-        _financials([(2025, 2, 100), (2025, 4, 100), (2026, 2, 200)], estimate), "C"
-    )
+    growth = stage_scan.op_growth(*_op_income([(2025, 2, 100), (2025, 4, 100), (2026, 2, 200)], estimate))
     assert not growth["available"]
     assert growth["next"] is None
     verdict = stage_scan.classify(_price("위", "상승", "높아짐", "상단", 12000), {}, growth, 12000)
@@ -523,9 +524,7 @@ def test_missing_immediate_next_quarter_cannot_raise_confidence(estimate):
 
 
 def test_next_quarter_rolls_over_year():
-    growth = stage_scan.op_growth(
-        _financials([(2025, 1, 100), (2025, 4, 100), (2026, 4, 200)], [(2027, 1, 300)]), "C"
-    )
+    growth = stage_scan.op_growth(*_op_income([(2025, 1, 100), (2025, 4, 100), (2026, 4, 200)], [(2027, 1, 300)]))
     assert growth["next"]["period"] == "2027.1Q"
 
 
@@ -537,7 +536,7 @@ def test_twenty_week_slope_output_uses_one_week(capsys):
 
 
 def test_output_names_the_accumulation_earnings_gate(capsys):
-    fin = _financials(actual=[(2024, 1, -2038.0), (2025, 1, -1402.0)], estimate=[])
+    fin = _op_income(actual=[(2024, 1, -2038.0), (2025, 1, -1402.0)], estimate=[])
     stage_scan.print_result("test", "000000", _analyze(UPTREND, fin), [])
 
     assert "전년 동기 대비 증가 (경로 C 실적 게이트 통과)" in capsys.readouterr().out
@@ -553,9 +552,9 @@ def test_projection_contact_is_not_a_stage_change(capsys):
     assert "N거래일 뒤" in output
 
 
-def test_main_fetches_the_fundamentals_of_a_preferred_shares_common_stock(monkeypatch, capsys):
+def test_main_fetches_the_fundamentals_of_a_preferred_shares_common_stock(monkeypatch, capsys, tmp_path):
     """우선주는 실적이 따로 없다 — info_tab은 본주 코드로, 일봉은 우선주 코드로 부른다."""
-    from invagent.datafeed import daily, stockeasy, tickers
+    from invagent.datafeed import cache, daily, http, stockeasy, tickers
 
     monkeypatch.setattr(
         tickers,
@@ -571,22 +570,52 @@ def test_main_fetches_the_fundamentals_of_a_preferred_shares_common_stock(monkey
 
     monkeypatch.setattr(daily, "fetch_daily_bars", fake_bars)
 
-    info_paths: list[str] = []
+    info_urls: list[str] = []
 
-    def fake_info(path, params=None, referer=stockeasy.PAGE_BASE, cookie=None):
-        info_paths.append(path)
+    def fake_read(url, headers, timeout):
+        info_urls.append(url)
         # 본주 코드로 부르면 본주 이름이 돌아온다 — 표시 이름은 우선주로 남아야 한다.
-        return {"financials": None, "primary_fs_type": "C", "stock_info": {"name": "삼성전자"}}, None
+        return json.dumps(
+            {"financials": None, "primary_fs_type": "C", "stock_info": {"name": "삼성전자"}}
+        ).encode()
 
-    monkeypatch.setattr(stockeasy, "fetch_stock_json", fake_info)
+    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(http, "read_url", fake_read)
     monkeypatch.setattr(stockeasy, "load_cookie", lambda: "x")
 
     assert stage_scan.main(["삼성전자우"]) == 0
     assert price_codes == ["005935"], "일봉은 우선주 자기 시세다"
-    assert info_paths == ["/stock-info/info-tab/005930"], "실적은 본주 코드로 받는다"
+    assert info_urls == [stockeasy.API_BASE + "/stock-info/info-tab/005930"], (
+        "실적은 본주 코드로만 받는다 — 우선주 자기 info-tab은 부르지 않는다"
+    )
     out = capsys.readouterr().out
     assert "본주 삼성전자(005930)" in out, "출처에 본주를 밝힌다"
     assert "삼성전자우(005935)" in out, "표시 이름은 우선주 그대로다"
+
+
+def test_main_reports_an_info_tab_401_and_judges_on_price_alone(monkeypatch, capsys, tmp_path):
+    """info-tab 실패는 판정을 막지 않는다 — 사유와 쿠키 힌트를 찍고 가격 전용으로 간다."""
+    from invagent.datafeed import cache, daily, http, stockeasy, tickers
+
+    monkeypatch.setattr(
+        tickers,
+        "resolve_stock",
+        lambda q, overrides=None: ({"stock_code": "353200", "stock_name": "대덕전자"}, None, 0),
+    )
+    monkeypatch.setattr(
+        daily, "fetch_daily_bars", lambda code, days, asof=None: Bars(_bars([100.0 + i for i in range(400)]))
+    )
+
+    def refuse(url, headers, timeout):
+        raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(http, "read_url", refuse)
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: None)
+
+    assert stage_scan.main(["353200"]) == 0
+    err = capsys.readouterr().err
+    assert "[누락] info_tab — HTTP 401 (STOCKEASY_COOKIE 미설정) · 가격 전용 판정으로 진행" in err
 
 
 def test_main_labels_a_naver_fallback_because_its_close_may_be_after_hours(monkeypatch, capsys):
