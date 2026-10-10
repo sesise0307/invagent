@@ -51,6 +51,19 @@ def load_cookie() -> str | None:
     return env_value(COOKIE_ENV)
 
 
+def gap_reason(err: str | None, cookie: str | None) -> str:
+    """로그인 엔드포인트 실패 사유. 401이거나 쿠키가 없으면 원인을 괄호로 붙인다.
+
+    401은 쿠키 문제다 — 쿠키가 있으면 만료·무효, 없으면 환경변수 미설정. 스크립트는 이 문구를
+    그대로 찍고 따로 힌트를 만들지 않는다.
+    """
+    hint = "쿠키 만료·무효" if cookie else f"{COOKIE_ENV} 미설정"
+    reason = err or "빈 응답"
+    if err == "HTTP 401" or not cookie:
+        reason += f" ({hint})"
+    return reason
+
+
 def fetch_stock_json(
     path: str,
     params: dict | None = None,
@@ -114,11 +127,11 @@ def select_hit(hits: list[dict], query: str):
     return None, f"종목명 후보 다수 — {candidates}", 2
 
 
-def fs_rows(financials: dict, primary: str, yearly: bool) -> tuple[list, list]:
+def _fs_rows(financials: dict, primary: str, yearly: bool) -> tuple[list, list]:
     """primary_fs_type(C/S)에 맞는 (확정, 추정) 리스트.
 
-    `info-tab` 페이로드의 모양을 아는 함수라 수집 계층에 산다 — 예전에는 스킬 스크립트의
-    private 심볼(`_fs_rows`)이었는데 다른 스킬이 그것을 넘어와 부르고 있었다.
+    `info-tab` 페이로드의 모양을 아는 함수라 수집 계층에 산다. 스크립트는 이것을 부르지 않고
+    `stockinfo.StockInfo`의 `rows`·`quarterly`·`yearly`로 읽는다.
     """
     prefix = "consolidated" if primary != "S" else "separate"
     if yearly:

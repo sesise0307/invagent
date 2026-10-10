@@ -198,3 +198,48 @@ def test_a_preferred_shares_series_come_from_the_parent(monkeypatch, cookie) -> 
 
     assert stockinfo.fetch("005935").quarterly("operating_income") == {(2026, 1): 100}
     assert calls == [_info_url("005930")]
+
+
+def test_rows_return_whole_rows_of_the_primary_statement(monkeypatch, cookie) -> None:
+    """한 기간의 여러 값(매출·영업이익·EPS…)을 함께 찍는 표는 시계열 하나가 아니라 행이 필요하다."""
+    _serve(monkeypatch, {"005930": _financials_payload("S")})
+
+    info = stockinfo.fetch("005930")
+
+    assert info.primary_fs_type == "S"
+    assert info.rows() == [{"year": 2026, "quarter": 1, "operating_income": 7}]
+    assert info.rows(estimates=True) == [{"year": 2026, "quarter": 2, "operating_income": 8}]
+    assert info.rows(yearly=True) == [{"year": 2025, "operating_income": 30}]
+    assert info.rows(yearly=True, estimates=True) == []
+
+
+def test_rows_are_empty_and_the_statement_defaults_to_consolidated_without_fundamentals(
+    monkeypatch, cookie
+) -> None:
+    _refuse_401(monkeypatch)
+
+    info = stockinfo.fetch("005930")
+
+    assert info.rows() == []
+    assert info.primary_fs_type == "C"
+
+
+def test_name_is_the_shares_own_name_once_its_payload_is_in(monkeypatch, cookie) -> None:
+    calls = _serve(
+        monkeypatch,
+        {
+            "005930": {"stock_info": {"name": "삼성전자"}},
+            "005935": {"stock_info": {"name": "삼성전자우"}},
+        },
+    )
+
+    common = stockinfo.fetch("005930")
+    common.fundamentals
+    preferred = stockinfo.fetch("005935")
+    preferred.fundamentals
+
+    assert common.name == "삼성전자"
+    assert preferred.name is None, "본주 이름을 우선주 이름으로 내지 않는다 — 자기 시세 축을 받기 전엔 모른다"
+    assert len(calls) == 1, "본주 info-tab은 캐시에서 다시 쓴다"
+    preferred.price
+    assert preferred.name == "삼성전자우"

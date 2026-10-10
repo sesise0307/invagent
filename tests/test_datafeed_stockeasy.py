@@ -1,6 +1,5 @@
 """`invagent.datafeed.stockeasy` — StockEasy 종목·시장 API."""
 
-
 from invagent.datafeed import cache, http, stockeasy
 
 
@@ -76,13 +75,8 @@ def test_an_ambiguous_name_exits_two_and_names_the_candidates(monkeypatch) -> No
     assert "가나전자(000001, KOSPI)" in err
 
 
-def test_fs_rows_follows_the_primary_statement_type() -> None:
-    financials = {
-        "consolidated": [{"year": 2026}],
-        "consolidatedEstimate": [{"year": 2027}],
-        "separate": [{"year": 2025}],
-        "separateEstimate": [],
-    }
-
-    assert stockeasy.fs_rows(financials, "C", yearly=False) == ([{"year": 2026}], [{"year": 2027}])
-    assert stockeasy.fs_rows(financials, "S", yearly=False) == ([{"year": 2025}], [])
+def test_gap_reason_names_the_cookie_only_when_it_is_the_likely_cause() -> None:
+    assert stockeasy.gap_reason("HTTP 401", "session=abc") == "HTTP 401 (쿠키 만료·무효)"
+    assert stockeasy.gap_reason("HTTP 401", None) == "HTTP 401 (STOCKEASY_COOKIE 미설정)"
+    assert stockeasy.gap_reason("HTTP 503", "session=abc") == "HTTP 503"
+    assert stockeasy.gap_reason(None, "session=abc") == "빈 응답"

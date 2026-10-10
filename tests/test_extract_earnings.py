@@ -302,17 +302,14 @@ def _fs_row(year: int, month: int, revenue_eok: int, op_eok: int, quarter: int |
 def test_extract_earnings_derives_the_fourth_quarter_from_an_annual_change_filing() -> None:
     module = load_script("daily-digest", "extract_earnings")
     annual = module.parse_earnings(EARNINGS_RAW_CHANGE)[1]  # 양지사, 2026-03-05, 연간 495억/-64억
-    financials = {
-        "consolidated": [
-            _fs_row(2025, 9, 120, -20, 3),
-            _fs_row(2025, 6, 125, -15, 2),
-            _fs_row(2025, 3, 130, -10, 1),
-            _fs_row(2024, 12, 140, 5, 4),
-        ],
-        "consolidatedYearly": [_fs_row(2024, 12, 520, 12)],
-    }
+    quarters = [
+        _fs_row(2025, 9, 120, -20, 3),
+        _fs_row(2025, 6, 125, -15, 2),
+        _fs_row(2025, 3, 130, -10, 1),
+        _fs_row(2024, 12, 140, 5, 4),
+    ]
 
-    entry = module.derive_quarter(annual, financials, "C")
+    entry = module.derive_quarter(annual, quarters, [_fs_row(2024, 12, 520, 12)])
 
     # 12월 결산이 3월에 낸 연간 공시 → 2025년 4분기. 연간에서 1~3분기 합을 뺀다.
     assert entry["tab"] == "4q25"
@@ -347,18 +344,14 @@ def test_extract_earnings_derives_by_fiscal_year_end_and_skips_when_a_quarter_is
     ]
     yearly = [_fs_row(2025, 3, 6000, 300)]  # 3월 결산
 
-    entry = module.derive_quarter(
-        annual, {"consolidated": quarters, "consolidatedYearly": yearly}, "C"
-    )
+    entry = module.derive_quarter(annual, quarters, yearly)
     # 6월에 낸 3월 결산 연간 공시 → 2026.03으로 끝난 분기 = 1q26.
     assert entry["tab"] == "1q26"
     assert entry["op"]["actual"] == 357 - (74 + 85 + 131)
     # 연간형에 붙은 봇 태그는 연간 기준인지 분기 기준인지 알 수 없어 옮기지 않는다.
     assert "영업이익률" not in module.sheet_cells(entry)["note"]
 
-    missing = module.derive_quarter(
-        annual, {"consolidated": quarters[:2], "consolidatedYearly": yearly}, "C"
-    )
+    missing = module.derive_quarter(annual, quarters[:2], yearly)
     assert missing["tab"] is None
     assert "2025.06" in missing["skip_reason"]
 

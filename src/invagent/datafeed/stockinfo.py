@@ -52,7 +52,30 @@ class StockInfo:
         payload = self._payloads.get(self.parent_code)
         return ((payload or {}).get("stock_info") or {}).get("name")
 
+    @property
+    def name(self) -> str | None:
+        """종목 자기 이름 — 자기 `info-tab`을 이미 받았을 때만. 보통주는 실적 축이 곧 자기 것이다.
+
+        우선주는 시세 축을 받기 전엔 None이다. 본주 이름을 우선주 이름으로 내지 않으며, 이 속성이
+        요청을 일으키지도 않는다.
+        """
+        payload = self._payloads.get(self.ticker)
+        return ((payload or {}).get("stock_info") or {}).get("name")
+
     # --- 실적 시계열 ---------------------------------------------------------
+
+    @property
+    def primary_fs_type(self) -> str:
+        """실적 축의 주 재무제표 — `C`(연결) 또는 `S`(별도). 모르면 연결."""
+        return (self.fundamentals or {}).get("primary_fs_type") or "C"
+
+    def rows(self, *, yearly: bool = False, estimates: bool = False) -> list[dict]:
+        """실적 축 주 재무제표의 행 그대로 — 한 기간의 여러 값을 함께 쓰는 표용. 기본은 분기 확정."""
+        financials = (self.fundamentals or {}).get("financials")
+        if not financials:
+            return []
+        actual, estimate = stockeasy._fs_rows(financials, self.primary_fs_type, yearly=yearly)
+        return estimate if estimates else actual
 
     def quarterly(self, field: str, *, estimates: bool = False) -> dict[tuple[int, int], float]:
         """실적 축 주 재무제표(C/S)의 분기 `{(연도, 분기): 값}`. 기본은 확정, `estimates`면 추정."""
@@ -63,14 +86,8 @@ class StockInfo:
         return self._series(field, yearly=True, estimates=estimates)
 
     def _series(self, field: str, *, yearly: bool, estimates: bool) -> dict:
-        payload = self.fundamentals or {}
-        financials = payload.get("financials")
-        if not financials:
-            return {}
-        primary = payload.get("primary_fs_type") or "C"
-        actual, estimate = stockeasy.fs_rows(financials, primary, yearly=yearly)
         values = {}
-        for row in estimate if estimates else actual:
+        for row in self.rows(yearly=yearly, estimates=estimates):
             value, year = row.get(field), row.get("year")
             quarter = None if yearly else row.get("quarter")
             if value is None or not year or (not yearly and not quarter):
@@ -94,17 +111,10 @@ class StockInfo:
         payload = payload or None
         self._payloads[code] = payload
         if payload is None:
-            self.gaps.append(self._gap_reason(err))
+            self.gaps.append(stockeasy.gap_reason(err, self._cookie))
         else:
             self._note_source(code, payload)
         return payload
-
-    def _gap_reason(self, err: str | None) -> str:
-        hint = "쿠키 만료·무효" if self._cookie else f"{stockeasy.COOKIE_ENV} 미설정"
-        reason = err or "빈 응답"
-        if err == "HTTP 401" or not self._cookie:
-            reason += f" ({hint})"
-        return reason
 
     def _note_source(self, code: str, payload: dict) -> None:
         if self.is_preferred and code == self.parent_code:

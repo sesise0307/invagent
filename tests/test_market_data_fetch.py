@@ -18,7 +18,7 @@ def test_market_data_fetch_prints_a_quote(
     )
     monkeypatch.setattr(datafeed_stockeasy, "load_cookie", lambda: "session=abc")
     monkeypatch.setattr(
-        module.stockeasy,
+        datafeed_stockeasy,
         "fetch_stock_json",
         lambda *a, **k: ({"stock_info": {"cur_prc": "-70000", "flu_rt": "-1.5"}}, None),
     )
@@ -26,6 +26,21 @@ def test_market_data_fetch_prints_a_quote(
     assert module.main(["quote", "삼성전자"]) == 0
     out = capsys.readouterr().out
     assert "005930" in out and "70,000" in out
+
+
+def test_market_data_fetch_quote_names_the_cookie_on_a_401(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """사유 문구는 `stockinfo`가 만든다 — 스크립트가 쿠키 힌트를 따로 들고 있지 않는다."""
+    module = load_script("market-data", "fetch")
+    monkeypatch.setattr(
+        module.tickers, "resolve_stock", lambda q: ({"stock_code": "005930"}, None, 0)
+    )
+    monkeypatch.setattr(datafeed_stockeasy, "load_cookie", lambda: None)
+    monkeypatch.setattr(datafeed_stockeasy, "fetch_stock_json", lambda *a, **k: (None, "HTTP 401"))
+
+    assert module.main(["quote", "삼성전자"]) == 1
+    assert "ERROR: 시세 수집 실패 — HTTP 401 (STOCKEASY_COOKIE 미설정)" in capsys.readouterr().err
 
 
 def test_market_data_fetch_reports_a_failure_without_raising(

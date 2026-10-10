@@ -12,7 +12,7 @@ import json
 import sys
 from datetime import date
 
-from invagent.datafeed import cache as http_cache, daily, naver, stockeasy, tickers
+from invagent.datafeed import cache as http_cache, daily, naver, stockeasy, stockinfo, tickers
 
 C_MIN_EPS_YOY_PCT = 25.0
 A_YEARS = 3
@@ -37,13 +37,8 @@ def _pct_change(new: float, old: float) -> float:
     return (new - old) / abs(old) * 100
 
 
-def _check_c(financials: dict, primary: str) -> dict:
-    confirmed, _ = stockeasy.fs_rows(financials, primary, yearly=False)
-    rows = {
-        (r.get("year"), r.get("quarter")): r.get("eps")
-        for r in confirmed
-        if r.get("value_type") == "A"
-    }
+def _check_c(rows: dict[tuple[int, int], float]) -> dict:
+    """`rows`는 확정 분기 EPS `{(연도, 분기): 값}` — `StockInfo.quarterly("eps")`."""
     if not rows:
         return {"mark": "unknown", "detail": "확정 분기 EPS 없음"}
     year, quarter = max(rows)
@@ -60,9 +55,9 @@ def _check_c(financials: dict, primary: str) -> dict:
     return {"mark": mark, "detail": f"{label} EPS 전년 동기 대비 {growth:+.1f}% ({ago:,.0f} → {now:,.0f}원)"}
 
 
-def _check_a(financials: dict, primary: str) -> dict:
-    confirmed, _ = stockeasy.fs_rows(financials, primary, yearly=True)
-    by_year = {r.get("year"): r.get("eps") for r in confirmed if r.get("value_type") == "A"}
+def _check_a(yearly: dict[tuple[int, None], float]) -> dict:
+    """`yearly`는 확정 연간 EPS `{(연도, None): 값}` — `StockInfo.yearly("eps")`."""
+    by_year = {year: eps for (year, _), eps in yearly.items()}
     years = sorted(by_year)[-(A_YEARS + 1):]
     if len(years) < A_YEARS + 1 or any(by_year[y] is None for y in years):
         return {"mark": "unknown", "detail": f"확정 연간 EPS {A_YEARS + 1}개년 미만"}
@@ -188,32 +183,29 @@ def evaluate(
     info: dict | None,
     big_picture: dict | None,
     trend: list[dict],
-    fundamentals: dict | None = None,
+    *,
+    quarterly_eps: dict | None = None,
+    yearly_eps: dict | None = None,
+    common_rs: float | None = None,
     market: str | None = None,
     bars: daily.Bars | None = None,
 ) -> dict:
-    """info-tab 페이로드·빅픽처·투자자별 매매동향·판정 일봉 → 항목별 `{mark, detail}`과 `score`.
+    """시세 축 info-tab·빅픽처·투자자별 매매동향·실적 축 EPS·판정 일봉 → 항목별 `{mark, detail}`과 `score`.
 
     mark는 `pass`·`fail`·`warn`(경계, 점수 미산입)·`unknown`(미수집) 중 하나다.
-    우선주는 실적이 따로 없으므로 C·A만 `fundamentals`(본주 info-tab)에서 읽고, 가격·RS·수급은
-    우선주 자기 `info`로 잰다. `market`은 info-tab이 없을 때 다른 출처에서 받은 상장 시장이다.
+    `info`는 시세 축(종목 자기 info-tab)이고 RS·유통주식·상장 시장을 여기서 읽는다. C·A는 실적 축의
+    확정 EPS(`quarterly_eps`·`yearly_eps`, 우선주면 본주 것)로 잰다. `common_rs`는 우선주일 때 본주 RS로,
+    참고로만 적는다. `market`은 info-tab이 없을 때 다른 출처에서 받은 상장 시장이다.
     N·S는 `bars`(`daily.fetch_daily_bars`, 분할 수정·정규장 종가)로 잰다 — info-tab `chart`는 원주가라
     분할 전 고점이 남아 N을 거짓 실패시킨다. 우선주면 우선주 자기 일봉이다.
     """
     info = info or {}
-    fs_info = fundamentals or info
-    financials = fs_info.get("financials") or {}
-    primary = fs_info.get("primary_fs_type") or "C"
     result = {
-        "C": _check_c(financials, primary),
-        "A": _check_a(financials, primary),
+        "C": _check_c(quarterly_eps or {}),
+        "A": _check_a(yearly_eps or {}),
         "N": _check_n(bars),
         "S": _check_s(bars, info.get("stock_info") or {}),
-        "L": _check_l(
-            info.get("rs_data") or {},
-            info.get("rs_line_chart") or {},
-            ((fundamentals or {}).get("rs_data") or {}).get("rs"),
-        ),
+        "L": _check_l(info.get("rs_data") or {}, info.get("rs_line_chart") or {}, common_rs),
         "I": _check_i(trend),
         "M": _check_m(big_picture, (info.get("stock_info") or {}).get("market") or market),
     }
@@ -227,20 +219,6 @@ def evaluate(
 
 
 MARK_ICON = {"pass": "✅", "fail": "❌", "warn": "⚠️", "unknown": "❓"}
-
-
-def _fetch_info(code: str, cookie: str | None) -> dict | None:
-    info, err = stockeasy.fetch_stock_json(
-        stockeasy.ENDPOINTS["info_tab"].format(code=code),
-        referer=f"{stockeasy.PAGE_BASE}/{code}",
-        cookie=cookie,
-    )
-    if info:
-        return info
-    hint = "쿠키 만료·무효" if cookie else f"{stockeasy.COOKIE_ENV} 미설정"
-    reason = f"{err or '빈 응답'}" + (f" ({hint})" if err == "HTTP 401" or not cookie else "")
-    print(f"[누락] info_tab {code} — {reason}", file=sys.stderr)
-    return None
 
 
 def print_result(name: str, code: str, result: dict, sources: list[str]) -> None:
@@ -273,20 +251,17 @@ def main(argv: list[str] | None = None) -> int:
     ticker = stock["stock_code"]
     name = stock.get("stock_name") or ticker
 
-    cookie = stockeasy.load_cookie()
-    info = _fetch_info(ticker, cookie)
-    sources = []
-    if info:
-        sources.append("StockEasy info-tab")
-        name = (info.get("stock_info") or {}).get("name") or name
-    # 우선주는 실적이 따로 없다 — C·A만 본주로 잰다. 가격·RS·수급은 우선주 자기 것.
-    fs_ticker, is_preferred = tickers.fundamentals_code(ticker)
-    fundamentals = None
-    if is_preferred:
-        fundamentals = _fetch_info(fs_ticker, cookie)
-        if fundamentals:
-            parent = (fundamentals.get("stock_info") or {}).get("name")
-            sources.append(f"우선주 실적은 본주 {parent}({fs_ticker})" if parent else f"우선주 실적은 본주 {fs_ticker}")
+    # 우선주는 실적이 따로 없다 — C·A만 본주(실적 축)로 잰다. 가격·RS·수급은 우선주 자기 것(시세 축).
+    stock_info = stockinfo.fetch(ticker)
+    info = stock_info.price
+    name = stock_info.name or name
+    quarterly_eps, yearly_eps = stock_info.quarterly("eps"), stock_info.yearly("eps")
+    common_rs = None
+    if stock_info.is_preferred:
+        common_rs = ((stock_info.fundamentals or {}).get("rs_data") or {}).get("rs")
+    for gap in stock_info.gaps:
+        print(f"[누락] info_tab — {gap}", file=sys.stderr)
+    sources = list(stock_info.sources)
 
     # 종목명·상장 시장은 info-tab에서 읽는다. 막혔으면 네이버에서 받는다 — 시장을 모르면 M을
     # 엉뚱한 시장으로 채점하게 되고, 이름을 모르면 티커만 찍힌다.
@@ -318,7 +293,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         sources.append("StockEasy 빅픽처")
 
-    result = evaluate(info, big_picture, trend, fundamentals=fundamentals, market=market, bars=bars)
+    result = evaluate(
+        info, big_picture, trend,
+        quarterly_eps=quarterly_eps, yearly_eps=yearly_eps, common_rs=common_rs, market=market, bars=bars,
+    )
     if args.json:
         print(json.dumps({"stock_code": ticker, "stock_name": name, "fetched_at": date.today().isoformat(),
                           "sources": sources, **result}, ensure_ascii=False))

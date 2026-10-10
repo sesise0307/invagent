@@ -26,43 +26,39 @@ def _info(quarters=(), years=(), **extra) -> dict:
 
 
 def test_c_passes_when_latest_quarter_eps_is_up_25_percent_on_a_year_ago() -> None:
-    info = _info(quarters=[_quarter(2025, 2, 1000), _quarter(2026, 1, 900), _quarter(2026, 2, 1250)])
+    eps = {(2025, 2): 1000, (2026, 1): 900, (2026, 2): 1250}
 
-    c = canslim.evaluate(info, None, [])["C"]
+    c = canslim.evaluate(_info(), None, [], quarterly_eps=eps)["C"]
 
     assert c["mark"] == "pass"
     assert "2026.2Q" in c["detail"] and "+25.0%" in c["detail"]
 
 
 def test_c_fails_just_under_25_percent() -> None:
-    info = _info(quarters=[_quarter(2025, 2, 1000), _quarter(2026, 2, 1249)])
+    eps = {(2025, 2): 1000, (2026, 2): 1249}
 
-    assert canslim.evaluate(info, None, [])["C"]["mark"] == "fail"
-
-
-def _year(year: int, eps: float | None) -> dict:
-    return {"year": year, "month": 12, "value_type": "A", "eps": eps}
+    assert canslim.evaluate(_info(), None, [], quarterly_eps=eps)["C"]["mark"] == "fail"
 
 
 def test_a_passes_on_three_consecutive_annual_eps_increases() -> None:
-    info = _info(years=[_year(2022, 100), _year(2023, 120), _year(2024, 150), _year(2025, 200)])
+    eps = {(2022, None): 100, (2023, None): 120, (2024, None): 150, (2025, None): 200}
 
-    a = canslim.evaluate(info, None, [])["A"]
+    a = canslim.evaluate(_info(), None, [], yearly_eps=eps)["A"]
 
     assert a["mark"] == "pass"
     assert "2022→2025" in a["detail"] and "+26.0%" in a["detail"]  # 3년 CAGR (200/100)^(1/3)-1
 
 
 def test_a_fails_when_any_of_the_three_years_dipped() -> None:
-    info = _info(years=[_year(2022, 100), _year(2023, 90), _year(2024, 150), _year(2025, 200)])
+    eps = {(2022, None): 100, (2023, None): 90, (2024, None): 150, (2025, None): 200}
 
-    assert canslim.evaluate(info, None, [])["A"]["mark"] == "fail"
+    assert canslim.evaluate(_info(), None, [], yearly_eps=eps)["A"]["mark"] == "fail"
 
 
 def test_a_is_unknown_with_fewer_than_four_confirmed_years() -> None:
-    info = _info(years=[_year(2023, 120), _year(2024, 150), _year(2025, 200)])
+    eps = {(2023, None): 120, (2024, None): 150, (2025, None): 200}
 
-    assert canslim.evaluate(info, None, [])["A"]["mark"] == "unknown"
+    assert canslim.evaluate(_info(), None, [], yearly_eps=eps)["A"]["mark"] == "unknown"
 
 
 def _chart(closes, volumes=None) -> dict:
@@ -193,25 +189,20 @@ def test_m_marks_an_uptrend_under_pressure_as_a_warning_not_a_pass() -> None:
 
 
 def test_score_counts_only_passes_and_lists_warnings_and_gaps_apart() -> None:
-    info = _info(
-        quarters=[_quarter(2025, 2, 100), _quarter(2026, 2, 200)],   # C pass
-        rs_data={"rs": 90},                                         # L pass
-        stock_info={"market": "KOSPI"},
-    )
-    big_picture = {"kospi": {"status": "uptrend_under_pressure"}}   # M warn
+    info = _info(rs_data={"rs": 90}, stock_info={"market": "KOSPI"})   # L pass
+    eps = {(2025, 2): 100, (2026, 2): 200}                              # C pass
+    big_picture = {"kospi": {"status": "uptrend_under_pressure"}}       # M warn
 
-    result = canslim.evaluate(info, big_picture, _trend([-1] * 20))  # I fail
+    result = canslim.evaluate(info, big_picture, _trend([-1] * 20), quarterly_eps=eps)  # I fail
 
     assert result["score"] == {"passed": 2, "total": 7, "warn": ["M"], "unknown": ["A", "N", "S"]}
 
 
-def test_preferred_share_takes_earnings_from_the_common_share_and_price_from_its_own() -> None:
-    own = _info(rs_data={"rs": 85})        # 우선주: 확정 실적 없음
-    common = _info(quarters=[_quarter(2025, 2, 100), _quarter(2026, 2, 200)], rs_data={"rs": 10})
+def test_preferred_share_scores_rs_on_its_own_price_axis_not_the_common_shares() -> None:
+    own = _info(rs_data={"rs": 85})
 
-    result = canslim.evaluate(own, None, [], fundamentals=common, bars=_bars([100] * 300))
+    result = canslim.evaluate(own, None, [], common_rs=10, bars=_bars([100] * 300))
 
-    assert result["C"]["mark"] == "pass"
     assert result["L"]["mark"] == "pass"   # RS는 우선주 자기 값
     assert result["N"]["mark"] == "pass"
 
@@ -323,10 +314,7 @@ def test_cli_does_not_ask_naver_for_the_market_when_info_tab_has_it(fake_network
 
 
 def test_preferred_share_without_its_own_rs_shows_the_common_rs_as_reference_only() -> None:
-    own = _info()
-    common = _info(rs_data={"rs": 91.7})
-
-    l = canslim.evaluate(own, None, [], fundamentals=common)["L"]
+    l = canslim.evaluate(_info(), None, [], common_rs=91.7)["L"]
 
     assert l["mark"] == "unknown"
     assert "본주 RS 91.7 (참고)" in l["detail"]

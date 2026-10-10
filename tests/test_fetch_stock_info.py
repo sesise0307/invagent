@@ -191,15 +191,15 @@ def _patch_stock_info_fetch(
     """
     calls = {}
 
-    def fake_fetch(path, params=None, referer=module.PAGE_BASE, cookie=None):
+    def fake_fetch(path, params=None, referer=None, cookie=None):
         calls[path] = {"params": params, "cookie": cookie}
-        if path == module.ENDPOINTS["search"]:
+        if path == datafeed_stockeasy.ENDPOINTS["search"]:
             return (search if search is not None else []), None
         if path.startswith("/stock-info/info-tab/"):
             return STOCK_INFO_PAYLOAD, None
         if path.startswith("/news/by-stock-code/"):
             return NEWS_PAYLOAD, None
-        if path == module.ENDPOINTS["reports"]:
+        if path == datafeed_stockeasy.ENDPOINTS["reports"]:
             if reports_error:
                 return None, reports_error
             return REPORTS_PAYLOAD, None
@@ -247,15 +247,6 @@ def test_stock_info_never_caches_a_failure(monkeypatch: pytest.MonkeyPatch) -> N
     assert (payload, err) == ({"ok": 1}, None)
 
 
-def test_stock_info_endpoints_point_at_stockdata_api() -> None:
-    """종목 데이터는 /stockdata/api/v1 경로에서 받는다."""
-    module = load_script("analyze-stock", "fetch_stock_info")
-
-    assert module.API_BASE == "https://stockeasy.intellio.kr/stockdata/api/v1"
-    assert set(module.ENDPOINTS) == {"search", "info_tab", "analysis_tab", "news", "reports"}
-    assert module.COOKIE_ENV == "STOCKEASY_COOKIE"
-
-
 def test_stock_info_sends_cookie_to_info_tab_and_news(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -296,8 +287,8 @@ def test_stock_info_info_tab_401_points_at_cookie(
     """info-tab이 401이면 원인은 쿠키다 — 사유를 stderr에 특정해 준다."""
     module = load_script("analyze-stock", "fetch_stock_info")
 
-    def fake_fetch(path, params=None, referer=module.PAGE_BASE, cookie=None):
-        if path == module.ENDPOINTS["search"]:
+    def fake_fetch(path, params=None, referer=None, cookie=None):
+        if path == datafeed_stockeasy.ENDPOINTS["search"]:
             return [{"stock_code": "064290", "stock_name": "인텍플러스", "market": "KR"}], None
         return None, "HTTP 401"
 
@@ -306,7 +297,7 @@ def test_stock_info_info_tab_401_points_at_cookie(
 
     assert module.main(["064290"]) == 1
     err = capsys.readouterr().err
-    assert "STOCKEASY_COOKIE 만료·무효" in err
+    assert "ERROR: StockEasy 종목정보 호출 실패 — info_tab=HTTP 401 (쿠키 만료·무효)" in err
 
 
 def test_stock_info_price_fields_strip_direction_sign() -> None:
@@ -375,7 +366,7 @@ def test_stock_info_renders_report_summaries_with_cookie(
     assert "파일: 20260703_인텍플러스_064290" in out  # 로컬 PDF 중복 판정용
     assert "본문:" not in out  # --detail-chars 0이면 본문 생략
     # 쿠키는 세 엔드포인트 모두에 붙고, 리포트에는 date_from으로 기준일이 넘어간다
-    reports_call = calls[module.ENDPOINTS["reports"]]
+    reports_call = calls[datafeed_stockeasy.ENDPOINTS["reports"]]
     assert reports_call["cookie"] == "session=abc"
     assert reports_call["params"]["date_from"] == "2026-08-01"
     assert calls["/stock-info/info-tab/064290"]["cookie"] == "session=abc"
@@ -404,7 +395,7 @@ def test_stock_info_missing_cookie_only_skips_reports(
     assert module.main(["064290"]) == 0
 
     captured = capsys.readouterr()
-    assert "[리포트 요약] 미수집 — STOCKEASY_COOKIE 미설정" in captured.out
+    assert "[리포트 요약] 미수집 — 요청 안 함 (STOCKEASY_COOKIE 미설정)" in captured.out
     assert "[시세] 30,850원" in captured.out
     assert "STOCKEASY_COOKIE 미설정" in captured.err
 
@@ -416,7 +407,7 @@ def test_stock_info_expired_cookie_hints_refresh(
     _patch_stock_info_fetch(module, monkeypatch, reports_error="HTTP 401")
 
     assert module.main(["064290"]) == 0
-    assert "쿠키 만료" in capsys.readouterr().out
+    assert "[리포트 요약] 미수집 — HTTP 401 (쿠키 만료·무효)" in capsys.readouterr().out
 
 
 def test_stock_info_cookie_read_from_env_file(
@@ -425,8 +416,7 @@ def test_stock_info_cookie_read_from_env_file(
     """저장소는 dotenv를 쓰지 않으므로 수집 계층이 .env를 직접 훑는다."""
     from invagent.datafeed import env
 
-    module = load_script("analyze-stock", "fetch_stock_info")
-    monkeypatch.delenv(module.COOKIE_ENV, raising=False)
+    monkeypatch.delenv(datafeed_stockeasy.COOKIE_ENV, raising=False)
 
     nested = tmp_path / "src" / "invagent" / "datafeed"
     nested.mkdir(parents=True)
@@ -438,7 +428,7 @@ def test_stock_info_cookie_read_from_env_file(
 
     assert datafeed_stockeasy.load_cookie() == "session=from-env-file"
 
-    monkeypatch.setenv(module.COOKIE_ENV, "session=from-environ")
+    monkeypatch.setenv(datafeed_stockeasy.COOKIE_ENV, "session=from-environ")
     assert datafeed_stockeasy.load_cookie() == "session=from-environ"
 
 
@@ -465,7 +455,7 @@ def test_stock_info_shows_after_hours_quotes_apart_from_the_regular_close(
     }
     fake = datafeed_stockeasy.fetch_stock_json
 
-    def with_after_hours(path, params=None, referer=module.PAGE_BASE, cookie=None):
+    def with_after_hours(path, params=None, referer=None, cookie=None):
         if path.startswith("/stock-info/info-tab/"):
             return payload, None
         return fake(path, params, referer=referer, cookie=cookie)
@@ -530,7 +520,7 @@ def test_stock_info_lists_disclosures_from_the_analysis_tab(
     calls = _patch_stock_info_fetch(module, monkeypatch)
     fake = datafeed_stockeasy.fetch_stock_json
 
-    def with_disclosures(path, params=None, referer=module.PAGE_BASE, cookie=None):
+    def with_disclosures(path, params=None, referer=None, cookie=None):
         if path == "/stock-info/analysis-tab/064290":
             calls[path] = {"params": params, "cookie": cookie}
             return ANALYSIS_TAB_PAYLOAD, None
@@ -610,71 +600,38 @@ def test_stock_info_splits_a_preferred_share_between_two_tickers(monkeypatch):
 
     monkeypatch.setattr(stockeasy, "fetch_stock_json", fake_fetch)
 
-    info, news, reports, own, analysis, errors = module.collect_stock_payloads(
-        "005935", news_limit=5, summaries=0, since=None, cookie="x", disclosures=5
+    payloads = module.collect_stock_payloads(
+        "005935", news_limit=5, summaries=0, since=None, disclosures=5
     )
 
     assert "/stock-info/info-tab/005930" in paths, "실적은 본주 코드로 받는다"
     assert "/stock-info/info-tab/005935" in paths, "시세는 우선주 코드로 따로 받는다"
     assert "/news/by-stock-code/005930" in paths, "뉴스는 본주 코드로 받는다"
     assert "/stock-info/analysis-tab/005930" in paths, "공시는 회사 것이라 본주 코드로 받는다"
-    assert info["stock_info"]["name"] == "삼성전자", "info는 본주 페이로드다"
-    assert own["stock_info"]["cur_prc"] == "196900", "own은 우선주 페이로드다"
+    assert payloads.fundamentals["stock_info"]["name"] == "삼성전자", "실적 축은 본주 페이로드다"
+    assert payloads.price["stock_info"]["cur_prc"] == "196900", "시세 축은 우선주 페이로드다"
+    assert payloads.errors == {}
 
 
-def test_stock_info_summary_keeps_the_preferred_price_and_the_common_fundamentals():
-    module = load_script("analyze-stock", "fetch_stock_info")
-    summary = module.build_summary(
-        {"stock_code": "005935", "stock_name": "삼성전자우"},
-        {"stock_info": {"name": "삼성전자", "cur_prc": "200000"},
-         "financials": {"quarterly": [1]}, "primary_fs_type": "C"},
-        None,
-        None,
-        own_info={"stock_info": {"name": "삼성전자우", "cur_prc": "196900"}},
-    )
+def test_stock_info_json_keeps_the_preferred_price_and_the_common_fundamentals(monkeypatch, capsys):
+    out, _ = _run_golden(monkeypatch, capsys, ["005935", "--json"], PREFERRED_TABS, "005930")
+    summary = json.loads(out)
 
-    assert summary["stock_info"]["cur_prc"] == "196900", "시세는 우선주 것이다"
-    assert summary["financials"] == {"quarterly": [1]}, "실적은 본주 것이다"
+    assert summary["stock_info"]["cur_prc"] == "-61000", "시세는 우선주 것이다"
+    assert summary["after_hours_quote"]["cur_prc"] == "+61200", "시간외가도 우선주 것이다"
+    assert summary["financials"] == PREFERRED_PARENT_PAYLOAD["financials"], "실적은 본주 것이다"
     assert summary["preferred_of"] == "005930"
-    assert summary["preferred_discount_pct"] == pytest.approx(-1.55, abs=0.01)
+    assert summary["preferred_discount_pct"] == pytest.approx(-23.75, abs=0.01)
+    assert [d["rcept_no"] for d in summary["disclosures"]] == ["20260818800754", "20260714000123"]
 
 
-def test_stock_info_summary_is_unchanged_for_a_common_share():
-    module = load_script("analyze-stock", "fetch_stock_info")
-    summary = module.build_summary(
-        {"stock_code": "005930", "stock_name": "삼성전자"},
-        {"stock_info": {"name": "삼성전자", "cur_prc": "200000"}},
-        None,
-        None,
-    )
+def test_stock_info_json_has_no_preferred_fields_for_a_common_share(monkeypatch, capsys):
+    out, _ = _run_golden(monkeypatch, capsys, ["064290", "--json"], COMMON_TABS, "064290")
+    summary = json.loads(out)
 
-    assert summary["stock_info"]["cur_prc"] == "200000"
+    assert summary["stock_info"]["cur_prc"] == "-30850"
     assert summary["preferred_of"] is None
     assert summary["preferred_discount_pct"] is None
-
-
-def test_stock_info_summary_keeps_after_hours_quotes_and_disclosures():
-    """--json도 텍스트 출력과 같은 신규 필드를 싣는다 — 시간외가는 우선주면 자기 것이다."""
-    module = load_script("analyze-stock", "fetch_stock_info")
-    summary = module.build_summary(
-        {"stock_code": "005935", "stock_name": "삼성전자우"},
-        {"stock_info": {"cur_prc": "200000"}, "after_hours_quote": {"cur_prc": "+201000"}},
-        None,
-        None,
-        own_info={
-            "stock_info": {"cur_prc": "150000"},
-            "after_hours_quote": {"cur_prc": "+151000"},
-            "nxt_quote": {"cur_prc": "+150500", "session": "after"},
-        },
-        analysis=ANALYSIS_TAB_PAYLOAD,
-    )
-
-    assert summary["after_hours_quote"]["cur_prc"] == "+151000"
-    assert summary["nxt_quote"]["cur_prc"] == "+150500"
-    assert [d["rcept_no"] for d in summary["disclosures"]] == [
-        "20260818800754",
-        "20260714000123",
-    ]
 
 
 # --- 골든 출력 ---------------------------------------------------------------

@@ -17,7 +17,7 @@ import argparse
 import json
 import sys
 
-from invagent.datafeed import daily, stockeasy, tickers
+from invagent.datafeed import daily, stockeasy, stockinfo, tickers
 
 
 def _resolve(query: str) -> tuple[str | None, int]:
@@ -44,21 +44,13 @@ def cmd_quote(args) -> int:
     if not ticker:
         return code
 
-    cookie = stockeasy.load_cookie()
-    if not cookie:
-        print(f"ERROR: {stockeasy.COOKIE_ENV} 미설정 — .env에 브라우저 Cookie 헤더가 필요하다", file=sys.stderr)
+    info = stockinfo.fetch(ticker)
+    price_axis = info.price
+    if not price_axis:
+        print(f"ERROR: 시세 수집 실패 — {'; '.join(info.gaps)}", file=sys.stderr)
         return 1
 
-    info, err = stockeasy.fetch_stock_json(
-        stockeasy.ENDPOINTS["info_tab"].format(code=ticker),
-        referer=f"{stockeasy.PAGE_BASE}/{ticker}",
-        cookie=cookie,
-    )
-    if err:
-        print(f"ERROR: 시세 수집 실패 — {err}", file=sys.stderr)
-        return 1
-
-    si = (info or {}).get("stock_info") or {}
+    si = price_axis.get("stock_info") or {}
     # API는 가격 필드에 등락 방향을 부호로 박는다. 가격은 절대값으로 읽는다.
     price = abs(float(str(si.get("cur_prc") or 0).replace(",", "") or 0))
     print(f"{ticker}\t{price:,.0f}원\t{si.get('flu_rt')}%")

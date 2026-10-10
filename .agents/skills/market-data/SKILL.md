@@ -34,7 +34,7 @@ StockEasy와 Naver가 함께 `<urlopen error [Errno 8] nodename nor servname pro
 | 종목 뉴스 | 같음 (`news/by-stock-code`) | 필요 |
 | 종목 DART 공시 목록 | 같음 (`stock-info/analysis-tab` — 2026-09 개편 페이지의 소식 탭, 공시·리포트·뉴스 각 최근 20건) | 필요 |
 | 시간외·NXT 체결가 (참고) | 같음 (`info-tab`의 `after_hours_quote`·`nxt_quote`) — `stock_info.cur_prc`와 차트 종가는 정규장가 그대로다. 판정에 쓰지 않는다 | 필요 |
-| `info-tab` 두 축(시세·실적) | `invagent.datafeed.stockinfo.fetch(ticker)` — `.price`는 종목 자기 것(시세 축), `.fundamentals`는 본주 것(실적 축). 처음 읽힐 때 받으므로 보통주는 요청 하나, 실적만 읽는 우선주도 본주 요청 하나다. 실패 사유(`gaps` — 401 쿠키 힌트·빈 응답)와 출처(`sources`), 주 재무제표(C/S) 분기·연간 확정/추정 시계열(`quarterly`·`yearly`)도 이 모듈이 만든다. 현재 `stage_scan`이 쓴다 | 필요 |
+| `info-tab` 두 축(시세·실적) | `invagent.datafeed.stockinfo.fetch(ticker)` — `.price`는 종목 자기 것(시세 축), `.fundamentals`는 본주 것(실적 축). 처음 읽힐 때 받으므로 보통주는 요청 하나, 실적만 읽는 우선주도 본주 요청 하나다. 실패 사유(`gaps` — 401 쿠키 힌트·빈 응답)와 출처(`sources`), 주 재무제표(C/S) 분기·연간 확정/추정 시계열(`quarterly`·`yearly`)과 행(`rows`), 종목 자기 이름(`name`)도 이 모듈이 만든다. `info-tab`을 읽는 스크립트(`stage_scan`·`canslim_scan`·`extract_earnings`·`fetch_stock_info`·`fetch.py quote`)는 모두 이것을 거친다 | 필요 |
 | 종목 RS(상대강도)·RS선 | 같음 (`info-tab`의 `rs_data`·`rs_line_chart`) → `analyze-stock/scripts/canslim_scan.py`. 업종 RS(`/rs/dashboard-data`)는 앱 토큰 없이는 HTTP 403이라 받지 않는다 | 필요 |
 | 종목 투자자별 매매동향(기관·외국인·개인 순매수량) | `invagent.datafeed.naver.fetch_investor_trend` — `m.stock.naver.com/api/stock/<code>/trend`, 최근 60거래일까지 | 불필요 |
 | 종목명·상장 시장(KOSPI·KOSDAQ) 대체 | `invagent.datafeed.naver.fetch_basic` — `m.stock.naver.com/api/stock/<code>/basic`. 정본은 `info-tab`의 `stock_info.market`이고, 그것이 막혔을 때만 쓴다 | 불필요 |
@@ -174,7 +174,7 @@ gitignore된 `.env`에 한 줄로, 따옴표로 감싸 둔다. 추적되는 파�
 | 뉴스·증권사 리포트 | **본주** | 기사·리포트가 본주 이름으로 나온다 |
 
 그래서 `fetch_stock_info`는 우선주 한 종목에 `info-tab`을 **두 번** 부른다 — 본주 것(실적·컨센)과
-우선주 자기 것(시세). 캐시가 받쳐 주므로 재실행 비용은 없다. 출력 첫 줄에 어느 축이 어디서 왔는지와
+우선주 자기 것(시세). 둘 다 `datafeed.stockinfo`가 받고, 뉴스·공시·리포트는 그 뒤에 차례로 받는다. 캐시가 받쳐 주므로 재실행 비용은 없다. 출력 첫 줄에 어느 축이 어디서 왔는지와
 괴리율을 밝힌다 (삼성전자우 2026-09-20: -23.8%). 실적 축만 읽는 `stage_scan`은
 `datafeed.stockinfo`를 거쳐 본주 `info-tab` 하나만 부른다.
 

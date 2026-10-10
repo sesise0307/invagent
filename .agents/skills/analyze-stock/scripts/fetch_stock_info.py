@@ -26,25 +26,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from math import isfinite
-from pathlib import Path
 
-from invagent.datafeed import cache as http_cache, ratelimit as datafeed_ratelimit, stockeasy, tickers
-
-# 엔드포인트·자격증명 축은 수집 계층이 소유한다. 여기서는 출력문과 SKILL.md가 쓰는
-# 이름만 그대로 다시 노출한다.
-API_BASE = stockeasy.API_BASE
-PAGE_BASE = stockeasy.PAGE_BASE
-REPORTS_PAGE = stockeasy.REPORTS_PAGE
-ENDPOINTS = stockeasy.ENDPOINTS
-TIMEOUT = stockeasy.TIMEOUT
-TICKER_RE = stockeasy.TICKER_RE
-COOKIE_ENV = stockeasy.COOKIE_ENV
+from invagent.datafeed import cache as http_cache, stockeasy, stockinfo, tickers
 
 # 추정치는 컨센서스이지 공시가 아니다. 표 헤더에 그대로 박아 보고서로 흘려보낸다.
 ESTIMATE_NOTE = "추정 — 컨센서스, DART 데이터 아님"
@@ -352,10 +340,11 @@ def _period(row: dict, yearly: bool) -> str:
     return f"{row.get('year')}.{row.get('quarter')}Q"
 
 
-def print_financials(financials: dict | None, primary: str, yearly: bool, actual_n: int) -> None:
-    if not financials:
-        return
-    actual, estimate = stockeasy.fs_rows(financials, primary, yearly)
+def print_financials(info: stockinfo.StockInfo, yearly: bool, actual_n: int) -> None:
+    """실적 축 주 재무제표의 확정·추정 행을 한 표로. 우선주면 본주 것이다."""
+    actual = info.rows(yearly=yearly)
+    estimate = info.rows(yearly=yearly, estimates=True)
+    primary = info.primary_fs_type
     if not actual and not estimate:
         return
     basis = "연결" if primary != "S" else "별도"
@@ -509,38 +498,59 @@ def news_coverage(news: dict | None, requested_limit: int, since: str | None) ->
     }
 
 
+@dataclass
+class StockPayloads:
+    """한 종목에 대해 받은 것 전부. 우선주 분기는 `info`(`StockInfo`)가 한 번 정한다.
+
+    `fundamentals`(실적 축)는 본주 `info-tab`, `price`(시세 축)는 종목 자기 `info-tab`이다. 보통주면 둘이
+    같은 응답이다. 뉴스·리포트·공시는 회사 단위라 본주 코드로 받는다.
+    """
+
+    info: stockinfo.StockInfo
+    news: dict | None = None
+    reports: dict | None = None
+    analysis: dict | None = None
+    errors: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def fundamentals(self) -> dict | None:
+        return self.info.fundamentals
+
+    @property
+    def price(self) -> dict | None:
+        """시세 축. 우선주 자기 `info-tab`이 실패하면 예전처럼 본주 것으로 대신한다(`errors`에 남는다)."""
+        return self.info.price or self.info.fundamentals
+
+
 def build_summary(
     stock: dict,
-    info: dict | None,
-    news: dict | None,
-    reports: dict | None = None,
+    payloads: StockPayloads,
     *,
     news_limit: int = 10,
     since: str | None = None,
-    own_info: dict | None = None,
-    analysis: dict | None = None,
 ) -> dict:
     """--json 출력용 압축 dict. 차트 계열은 버린다.
 
-    우선주면 `info`는 **본주** 페이로드(실적·컨센·목표주가)이고 `own_info`가 우선주 자기
-    페이로드(시세·52주·수급)다. 둘은 가격이 다르므로 섞지 않고 축별로 갈라 담는다.
+    시세·52주·수급·시간외가는 시세 축(`payloads.price`), 실적·컨센·목표주가는 실적 축
+    (`payloads.fundamentals`)에서 읽는다. 둘은 우선주면 가격이 다르므로 섞지 않는다.
     """
-    info = info or {}
-    quote = (own_info or info).get("stock_info")
+    info = payloads.fundamentals or {}
+    price = payloads.price or {}
+    quote = price.get("stock_info")
     parent_prc = unsigned((info.get("stock_info") or {}).get("cur_prc"))
-    own_prc = unsigned((quote or {}).get("cur_prc")) if own_info else None
+    own_prc = unsigned((quote or {}).get("cur_prc")) if payloads.info.is_preferred else None
     return {
         "stock_code": stock.get("stock_code"),
         "stock_name": stock.get("stock_name"),
         "fetched_at": datetime.now(timezone.utc).isoformat(),
-        "preferred_of": tickers.common_code(stock.get("stock_code") or ""),
+        "preferred_of": payloads.info.parent_code,
         "preferred_discount_pct": (
             (own_prc / parent_prc - 1) * 100 if own_prc and parent_prc else None
         ),
         "stock_info": quote,
         # 참고용 — 판정은 정규장 종가(`stock_info.cur_prc`)로만 한다.
-        "after_hours_quote": (own_info or info).get("after_hours_quote"),
-        "nxt_quote": (own_info or info).get("nxt_quote"),
+        "after_hours_quote": price.get("after_hours_quote"),
+        "nxt_quote": price.get("nxt_quote"),
         "primary_fs_type": info.get("primary_fs_type"),
         "sector_info": info.get("sector_info"),
         "rs_data": info.get("rs_data"),
@@ -552,10 +562,10 @@ def build_summary(
         ),
         "financials": info.get("financials"),
         "eps_changes": info.get("eps_changes"),
-        "news": (news or {}).get("items"),
-        "news_coverage": news_coverage(news, news_limit, since),
-        "reports": (reports or {}).get("items"),
-        "disclosures": (analysis or {}).get("disclosures"),
+        "news": (payloads.news or {}).get("items"),
+        "news_coverage": news_coverage(payloads.news, news_limit, since),
+        "reports": (payloads.reports or {}).get("items"),
+        "disclosures": (payloads.analysis or {}).get("disclosures"),
     }
 
 
@@ -565,66 +575,46 @@ def collect_stock_payloads(
     news_limit: int,
     summaries: int,
     since: str | None,
-    cookie: str | None,
     disclosures: int = 0,
-) -> tuple[dict | None, dict | None, dict | None, dict | None, dict | None, dict[str, str]]:
-    """식별이 끝난 종목의 독립 API를 동시에 수집한다.
+) -> StockPayloads:
+    """식별이 끝난 종목의 API를 차례로 받는다.
 
-    우선주는 실적이 따로 없고 리포트·뉴스도 본주 이름으로 나온다. 그래서 `info_tab`·`news`·
-    `reports`는 **본주 코드**로 부르고, 시세·52주·수급용으로 우선주 자기 `info_tab`을 하나 더
-    부른다(`own_info`). 본주가 아니면 그 호출은 아예 만들지 않는다. 공시(`analysis`)도 회사
-    단위라 본주 코드로 부른다.
+    StockEasy는 한 번에 한 요청만 받으므로(`ratelimit.HOST_LIMITS`) 동시에 부르지 않는다. `info-tab`
+    두 축은 `stockinfo`가 받는다 — 실적 축이 실패하면 나머지는 부르지 않는다(어차피 exit 1이다).
+    우선주는 실적이 따로 없고 리포트·뉴스·공시도 본주 이름으로 나오므로 그것들은 본주 코드로 부른다.
     """
-    fs_ticker, is_preferred = tickers.fundamentals_code(ticker)
-    referer = f"{PAGE_BASE}/{fs_ticker}"
-    jobs: dict[str, tuple[str, dict | None, str]] = {
-        "info_tab": (ENDPOINTS["info_tab"].format(code=fs_ticker), None, referer),
-    }
-    if is_preferred:
-        jobs["own_info"] = (
-            ENDPOINTS["info_tab"].format(code=ticker),
-            None,
-            f"{PAGE_BASE}/{ticker}",
-        )
+    info = stockinfo.fetch(ticker)
+    payloads = StockPayloads(info)
+    if info.fundamentals is None:
+        payloads.errors["info_tab"] = info.gaps[-1]
+        return payloads
+    if info.is_preferred and info.price is None:
+        payloads.errors["own_info"] = info.gaps[-1]
+
+    company = info.parent_code or ticker
+    referer = f"{stockeasy.PAGE_BASE}/{company}"
+    cookie = stockeasy.load_cookie()
+
+    def fetch(name: str, path: str, params: dict | None = None, job_referer: str = referer) -> dict | None:
+        payload, err = stockeasy.fetch_stock_json(path, params, referer=job_referer, cookie=cookie)
+        if err:
+            payloads.errors[name] = stockeasy.gap_reason(err, cookie) if err == "HTTP 401" else err
+        return payload
+
     if news_limit:
-        jobs["news"] = (ENDPOINTS["news"].format(code=fs_ticker), {"limit": news_limit}, referer)
+        payloads.news = fetch("news", stockeasy.ENDPOINTS["news"].format(code=company), {"limit": news_limit})
     if disclosures:
-        jobs["analysis"] = (ENDPOINTS["analysis_tab"].format(code=fs_ticker), None, referer)
-    errors: dict[str, str] = {}
+        payloads.analysis = fetch("analysis", stockeasy.ENDPOINTS["analysis_tab"].format(code=company))
     if summaries:
         if cookie:
-            params = {"stock_code": fs_ticker, "page": 1, "page_size": max(summaries, 10)}
+            params = {"stock_code": company, "page": 1, "page_size": max(summaries, 10)}
             if since:
                 params["date_from"] = since
-            jobs["reports"] = (ENDPOINTS["reports"], params, REPORTS_PAGE)
+            payloads.reports = fetch("reports", stockeasy.ENDPOINTS["reports"], params, stockeasy.REPORTS_PAGE)
         else:
-            errors["reports"] = f"{COOKIE_ENV} 미설정 — .env에 브라우저 Cookie 헤더를 넣어야 한다"
-
-    payloads: dict[str, dict | None] = {
-        "info_tab": None, "news": None, "reports": None, "own_info": None, "analysis": None
-    }
-
-    def fetch_job(job: tuple[str, dict | None, str]):
-        path, params, job_referer = job
-        return stockeasy.fetch_stock_json(path, params, referer=job_referer, cookie=cookie)
-
-    with ThreadPoolExecutor(max_workers=min(datafeed_ratelimit.MAX_CONCURRENT_PER_HOST, len(jobs))) as pool:
-        futures = {name: pool.submit(fetch_job, job) for name, job in jobs.items()}
-        for name, future in futures.items():
-            payload, err = future.result()
-            payloads[name] = payload
-            if err:
-                if name == "reports" and err == "HTTP 401":
-                    err += " (쿠키 만료·무효 — .env 갱신 필요)"
-                errors[name] = err
-    return (
-        payloads["info_tab"],
-        payloads["news"],
-        payloads["reports"],
-        payloads["own_info"],
-        payloads["analysis"],
-        errors,
-    )
+            # 쿠키 없이는 401이 뻔하다 — 요청 한도를 쓰지 않는다.
+            payloads.errors["reports"] = stockeasy.gap_reason("요청 안 함", cookie)
+    return payloads
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -659,48 +649,33 @@ def main(argv: list[str] | None = None) -> int:
         return code
 
     ticker = stock["stock_code"]
-    # 2026-08 이후 info-tab·news도 로그인 세션을 요구한다(비인증 호출은 HTTP 401).
-    # 쿠키는 한 번만 읽어 세 엔드포인트에 함께 넘긴다. 없으면 종전대로 비인증으로 시도한다.
-    cookie = stockeasy.load_cookie()
-
-    info, news, reports, own_info, analysis, errors = collect_stock_payloads(
+    payloads = collect_stock_payloads(
         ticker,
         news_limit=args.news,
         summaries=args.summaries,
         since=args.since,
-        cookie=cookie,
         disclosures=args.disclosures,
     )
+    errors = payloads.errors
 
+    info = payloads.fundamentals
     if not info:
         detail = ", ".join(f"{k}={v}" for k, v in errors.items()) or "빈 응답"
-        if errors.get("info_tab") == "HTTP 401":
-            detail += (
-                f" — 로그인 세션 필요. {COOKIE_ENV} "
-                + ("만료·무효" if cookie else "미설정")
-                + " (.env 갱신)"
-            )
         print(f"ERROR: StockEasy 종목정보 호출 실패 — {detail}", file=sys.stderr)
         return 1
 
-    # 우선주면 `info`는 본주 페이로드다 — 시세·52주·수급만 우선주 자기 것(`own_info`)을 쓴다.
+    # 실적 축(`info`)은 본주 것, 시세 축(`price`)은 종목 자기 것이다 — 보통주면 같은 응답이다.
+    price = payloads.price
     parent_si = info.get("stock_info") or {}
-    si = (own_info or info).get("stock_info") or {}
-    parent_code, is_preferred = tickers.fundamentals_code(ticker)
+    si = price.get("stock_info") or {}
+    is_preferred = payloads.info.is_preferred
     name = stock.get("stock_name") or si.get("name") or ticker
 
     if args.json:
         print(
             json.dumps(
                 build_summary(
-                    {**stock, "stock_name": name},
-                    info,
-                    news,
-                    reports,
-                    news_limit=args.news,
-                    since=args.since,
-                    own_info=own_info,
-                    analysis=analysis,
+                    {**stock, "stock_name": name}, payloads, news_limit=args.news, since=args.since
                 ),
                 ensure_ascii=False,
             )
@@ -711,17 +686,17 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         f"=== StockEasy 종목정보 — {name}({ticker}) {si.get('market') or ''} === "
-        f"조회 {date.today().isoformat()} · 출처 {PAGE_BASE}/{ticker}"
+        f"조회 {date.today().isoformat()} · 출처 {stockeasy.PAGE_BASE}/{ticker}"
     )
     if is_preferred:
         own_prc, parent_prc = unsigned(si.get("cur_prc")), unsigned(parent_si.get("cur_prc"))
         gap = f" · 괴리율 {(own_prc / parent_prc - 1) * 100:+.1f}%" if own_prc and parent_prc else ""
         print(
             f"[우선주] 시세·52주·수급은 {ticker} 자기 것 · 멀티플·컨센서스·목표주가·재무·뉴스·"
-            f"리포트는 본주 {parent_si.get('name') or ''}({parent_code}) 기준{gap}"
+            f"리포트는 본주 {parent_si.get('name') or ''}({payloads.info.parent_code}) 기준{gap}"
         )
     print_quote(si)
-    print_after_hours(own_info or info, unsigned(si.get("cur_prc")))
+    print_after_hours(price, unsigned(si.get("cur_prc")))
     print_multiples(parent_si if is_preferred else si)
     print_52w(si)
     print_flow(si)
@@ -734,22 +709,21 @@ def main(argv: list[str] | None = None) -> int:
         args.reports,
         args.since,
     )
-    primary = info.get("primary_fs_type") or "C"
-    print_financials(info.get("financials"), primary, yearly=True, actual_n=args.years)
-    print_financials(info.get("financials"), primary, yearly=False, actual_n=args.quarters)
+    print_financials(payloads.info, yearly=True, actual_n=args.years)
+    print_financials(payloads.info, yearly=False, actual_n=args.quarters)
     print_eps_changes(info.get("eps_changes"))
     if args.summaries:
-        if reports:
-            print_reports(reports, args.summaries, args.detail_chars)
+        if payloads.reports:
+            print_reports(payloads.reports, args.summaries, args.detail_chars)
         else:
             print(f"[리포트 요약] 미수집 — {errors.get('reports', '빈 응답')}")
     if args.disclosures:
-        if analysis:
-            print_disclosures(analysis, args.since, args.disclosures)
+        if payloads.analysis:
+            print_disclosures(payloads.analysis, args.since, args.disclosures)
         else:
             print(f"[공시] 미수집 — {errors.get('analysis', '빈 응답')}")
-    if news:
-        print_news(news, args.since)
+    if payloads.news:
+        print_news(payloads.news, args.since)
 
     for key, msg in errors.items():
         print(f"[누락] {key} — {msg}", file=sys.stderr)

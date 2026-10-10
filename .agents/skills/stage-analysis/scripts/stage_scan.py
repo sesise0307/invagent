@@ -815,9 +815,9 @@ def main(argv: list[str] | None = None) -> int:
         if fundamentals and fundamentals.get("financials"):
             op_actual = info.quarterly("operating_income")
             op_estimate = info.quarterly("operating_income", estimates=True)
-        # 우선주면 표시 이름은 우선주 그대로 두고 본주 이름은 출처 꼬리표(`sources`)에만 쓴다.
-        if fundamentals and not info.is_preferred:
-            name = (fundamentals.get("stock_info") or {}).get("name") or name
+        # 우선주면 `info.name`은 None이다(자기 시세 축을 받지 않았다) — 표시 이름은 우선주 그대로 두고
+        # 본주 이름은 출처 꼬리표(`sources`)에만 쓴다.
+        name = info.name or name
         sources.extend(info.sources)
         for gap in info.gaps:
             print(f"[누락] info_tab — {gap} · 가격 전용 판정으로 진행", file=sys.stderr)

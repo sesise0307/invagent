@@ -17,7 +17,7 @@ import re
 import sys
 from pathlib import Path
 
-from invagent.datafeed import stockeasy
+from invagent.datafeed import stockinfo
 
 MESSAGE_HEADER_RE = re.compile(r"^\*\*\[[^\]]*\]\*\* \d{4}-\d{2}-\d{2}", re.M)
 TITLE_RE = re.compile(r"^📁 (.+)$", re.M)
@@ -235,15 +235,14 @@ def _months_before(year: int, month: int, months: int) -> tuple[int, int]:
     return index // 12, index % 12 + 1
 
 
-def derive_quarter(entry: dict, financials: dict | None, primary: str) -> dict:
+def derive_quarter(entry: dict, actual: list[dict], yearly: list[dict]) -> dict:
     """연간형 30% 변동 공시 → 마지막 분기 값. 연간에서 같은 회계연도 앞 세 분기를 뺀다.
 
     결산월은 StockEasy 연간 행의 `month`로 정한다(3월 결산 등). 앞 세 분기 중 하나라도
-    없으면 계산하지 않고 `skip_reason`을 채워 돌려준다.
+    없으면 계산하지 않고 `skip_reason`을 채워 돌려준다. `actual`·`yearly`는 주 재무제표의 확정 분기·연간
+    행이다(`StockInfo.rows()`·`StockInfo.rows(yearly=True)`).
     """
     result = dict(entry)
-    actual, _ = stockeasy.fs_rows(financials or {}, primary, yearly=False)
-    yearly, _ = stockeasy.fs_rows(financials or {}, primary, yearly=True)
     fiscal_month = next((row.get("month") for row in yearly if row.get("month")), 12)
     disclosed_year, disclosed_month = (int(x) for x in entry["disclosed"].split("-")[:2])
     fiscal_year = disclosed_year if disclosed_month > fiscal_month else disclosed_year - 1
@@ -284,16 +283,12 @@ def derive_quarter(entry: dict, financials: dict | None, primary: str) -> dict:
     return result
 
 
-def _fetch_financials(code: str) -> tuple[dict | None, str, str | None]:
-    """StockEasy `info-tab`에서 (financials, primary_fs_type, 실패 사유)."""
-    info, err = stockeasy.fetch_stock_json(
-        stockeasy.ENDPOINTS["info_tab"].format(code=code),
-        referer=f"{stockeasy.PAGE_BASE}/{code}",
-        cookie=stockeasy.load_cookie(),
-    )
-    if err or not info:
-        return None, "C", f"StockEasy info-tab 실패 — {err}"
-    return info.get("financials"), info.get("primary_fs_type") or "C", None
+def _fetch_financials(code: str) -> tuple[list[dict], list[dict], str | None]:
+    """실적 축 `info-tab`에서 (확정 분기 행, 확정 연간 행, 실패 사유)."""
+    info = stockinfo.fetch(code)
+    if not info.fundamentals:
+        return [], [], f"StockEasy info-tab 실패 — {'; '.join(info.gaps)}"
+    return info.rows(), info.rows(yearly=True), None
 
 
 def build_rows(raw_text: str) -> dict:
@@ -304,10 +299,10 @@ def build_rows(raw_text: str) -> dict:
             if not entry["code"]:
                 entry = {**entry, "skip_reason": "종목코드가 없어 앞선 분기 실적을 받을 수 없음"}
             else:
-                financials, primary, err = _fetch_financials(entry["code"])
+                actual, yearly, err = _fetch_financials(entry["code"])
                 entry = (
                     {**entry, "skip_reason": err} if err
-                    else derive_quarter(entry, financials, primary)
+                    else derive_quarter(entry, actual, yearly)
                 )
         if entry["tab"] is None:
             skipped.append({

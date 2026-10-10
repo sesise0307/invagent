@@ -25,7 +25,7 @@ design notes to `docs/`.
 `src/invagent/datafeed/` is the only place that talks to a market data source.
 `http.get_json` is the single request path and every other module goes through it:
 `stockeasy` (the `/stockdata/api/v1/**` stock endpoints and the `.../market/**`
-ones, the `STOCKEASY_COOKIE` session, stock resolution, `fs_rows`), `fsc` (the Financial Services
+ones, the `STOCKEASY_COOKIE` session, stock resolution, `gap_reason` — the one 401/cookie hint text), `fsc` (the Financial Services
 Commission's official KRX daily prices on data.go.kr, keyed by `DATA_GO_KR_SERVICE_KEY`), `naver`
 (daily OHLCV), `daily` (the bars every price judgement reads — see below), `cache` (the shared response cache),
 `ratelimit` (per-host request spacing, retry and cool-down — see below), `env` (repository root,
@@ -35,9 +35,11 @@ Naver fails, so StockEasy's request budget goes to values only it serves — plu
 preferred-to-common mapping below), `stockinfo` (the `info-tab` pair — the share's own payload
 for the 시세 축 and the 본주's for the 실적 축, each fetched on first read so a common share costs one
 request and a fundamentals-only reader of a preferred never fetches the preferred's own; it owns the
-401/cookie gap text, the 「우선주 실적은 본주 …」 source line and the confirmed/estimate quarterly and
-yearly series on the primary statement — `stage_scan` reads it, the other `info-tab` scripts move over
-next) and `snapshot` (portfolio
+401/cookie gap text, the 「우선주 실적은 본주 …」 source line, the share's own `name`, and the
+confirmed/estimate quarterly and yearly series (`quarterly`/`yearly`) and whole rows (`rows`) on the
+primary statement — every script that reads `info-tab` (`stage_scan`, `canslim_scan`, `extract_earnings`,
+`fetch_stock_info`, `market-data/fetch.py quote`) reads it through this module and none calls the
+private `stockeasy._fs_rows`) and `snapshot` (portfolio
 snapshot tables). `daily.fetch_daily_bars` takes the regular-session bars from `fsc` first — KRX's
 official OHLCV, three years in one request, 10,000 requests a day — and, because that data is
 published after 13:00 on the next business day, fills only the weekdays after its last bar from the
@@ -125,8 +127,9 @@ into another skill's directory through `sys.path` any more.
 
 Quote, multiples, per-broker target-price history, consensus estimates, EPS
 consensus revisions, and stock news come from StockEasy through
-`.agents/skills/analyze-stock/scripts/fetch_stock_info.py`, which fetches through
-`invagent.datafeed.stockeasy` and prints a compact summary — the raw `info-tab`
+`.agents/skills/analyze-stock/scripts/fetch_stock_info.py`, which takes the `info-tab` pair from
+`invagent.datafeed.stockinfo`, then news, filings and broker reports from `invagent.datafeed.stockeasy`
+one after another — StockEasy serves one request at a time, so a thread pool bought nothing — and prints a compact summary — the raw `info-tab`
 payload is ~128 KB because it embeds three years of chart data. **All of those
 endpoints except `stock-search` require a login** (as of 2026-08 `info-tab` and
 `news/by-stock-code`, previously open, return HTTP 401 without a session), so the
@@ -176,7 +179,8 @@ The two axes never mix. `stage_scan` takes the operating-profit axis from the co
 share and leaves the price axis (daily bars, the 150-day and 20-week lines, the swings)
 on the preferred share's own quote, because the two trade at a discount that moves
 independently; the display name stays the preferred one and the parent is named in the
-source line. `fetch_stock_info` fetches `info-tab` **twice** for a preferred — the
+source line. `fetch_stock_info` fetches `info-tab` **twice** for a preferred (both through
+`stockinfo`, which makes the preferred split once for the whole script) — the
 common share's for financials, consensus, target prices, grades, news and broker
 reports, and the preferred's own for quote, 52-week band and flow — prints which axis
 came from where plus the discount, and computes consensus upside against the **common
