@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from invagent.datafeed.daily import Bars
 from tests.conftest import load_script
 
 
@@ -269,7 +270,7 @@ def _fake_feed(monkeypatch, bars: list[dict]) -> None:
         tickers, "resolve_stock",
         lambda q: ({"stock_code": "000001", "stock_name": "가나"}, None, 0),
     )
-    monkeypatch.setattr(daily, "fetch_daily_bars", lambda code, days, asof=None: (bars, None, None))
+    monkeypatch.setattr(daily, "fetch_daily_bars", lambda code, days, asof=None: Bars(bars))
 
 
 def test_cli_prints_the_state_with_its_watch_lines(monkeypatch, capsys):
@@ -353,7 +354,7 @@ def test_cli_labels_a_naver_fallback_because_its_close_may_be_after_hours(monkey
         lambda q: ({"stock_code": "000001", "stock_name": "가나"}, None, 0),
     )
     bars = _bars(_path(BASE + [(140, 112.0)]))
-    monkeypatch.setattr(daily, "fetch_daily_bars", lambda code, days, asof=None: (bars, None, note))
+    monkeypatch.setattr(daily, "fetch_daily_bars", lambda code, days, asof=None: Bars(bars, fallback=note))
 
     assert turn_scan.main(["가나"]) == 0
     assert note in capsys.readouterr().out

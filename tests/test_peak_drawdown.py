@@ -9,6 +9,7 @@ import pytest
 
 from invagent.core.archive import dated_path
 from invagent.datafeed import tickers as datafeed_tickers
+from invagent.datafeed.daily import Bars
 from tests.conftest import load_script
 
 # --- peak_drawdown.py (전고점 낙폭 · 계좌 MDD) --------------------------------
@@ -63,7 +64,7 @@ def test_peak_drawdown_band_survives_float_boundary() -> None:
     """90,000/100,000-1 = -9.999999999999998 — 표에 -10.0%로 찍히면 밴드도 걸려야 한다."""
     module = load_script("daily-digest", "peak_drawdown")
     result = module.peak_drawdown(
-        _bars([("20260601", 100_000.0), ("20260828", 90_000.0)])
+        Bars(_bars([("20260601", 100_000.0), ("20260828", 90_000.0)]))
     )
 
     assert f"{result['drawdown']:+.1f}%" == "-10.0%"
@@ -86,7 +87,7 @@ def test_peak_is_highest_close_in_window_with_its_date() -> None:
     old = [(f"2024{i:04d}", 999_000.0) for i in range(1, 3)]
     window = [("20260101", 80_000.0), ("20260615", 100_000.0), ("20260828", 70_000.0)]
 
-    result = module.peak_drawdown(_bars(old + window * 100)[-module.PEAK_WINDOW_DAYS:])
+    result = module.peak_drawdown(Bars(_bars(old + window * 100)))
 
     assert result["peak"] == 100_000.0
     assert result["peak_date"] == "20260615"
@@ -110,7 +111,7 @@ def test_peak_drawdown_unresolved_ticker_does_not_block_others(
     monkeypatch.setattr(
         module.daily,
         "fetch_daily_bars",
-        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 60_000.0)]), None, None),
+        lambda code, days, asof=None: Bars(_bars([("20260601", 100_000.0), ("20260828", 60_000.0)])),
     )
 
     results = module.analyze_holdings(module.parse_holdings(PEAK_SNAPSHOT), {})
@@ -136,8 +137,8 @@ def test_peak_drawdown_flags_holdings_measured_on_naver_fallback_bars(
     monkeypatch.setattr(
         daily,
         "fetch_daily_bars",
-        lambda code, days, asof=None: (
-            _bars([("20260601", 100_000.0), ("20260828", 60_000.0)]), None, note
+        lambda code, days, asof=None: Bars(
+            _bars([("20260601", 100_000.0), ("20260828", 60_000.0)]), fallback=note
         ),
     )
 
@@ -175,7 +176,7 @@ def test_peak_drawdown_fetch_failure_is_non_blocking(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(
         datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
     )
-    monkeypatch.setattr(module.daily, "fetch_daily_bars", lambda code, days, asof=None: ([], "HTTP 500", None))
+    monkeypatch.setattr(module.daily, "fetch_daily_bars", lambda code, days, asof=None: Bars([], "HTTP 500"))
 
     results = module.analyze_holdings(module.parse_holdings(PEAK_SNAPSHOT), {})
 
@@ -264,7 +265,7 @@ def test_render_lists_stock_approaches_per_axis(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(
         module.daily,
         "fetch_daily_bars",
-        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 91_000.0)]), None, None),
+        lambda code, days, asof=None: Bars(_bars([("20260601", 100_000.0), ("20260828", 91_000.0)])),
     )
     history = {"알파전자": [("2026-08-10", 77_348.0)]}  # 현재가 ₩70,000 → -9.5%
 
@@ -289,7 +290,7 @@ def test_render_omits_approach_line_when_nothing_is_close(
     monkeypatch.setattr(
         module.daily,
         "fetch_daily_bars",
-        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 99_000.0)]), None, None),
+        lambda code, days, asof=None: Bars(_bars([("20260601", 100_000.0), ("20260828", 99_000.0)])),
     )
 
     section = module.render(
@@ -394,7 +395,7 @@ def test_peak_drawdown_fetches_holdings_concurrently_keeping_order(
         time.sleep(0.05)
         with lock:
             live -= 1
-        return [{"date": "20260903", "close": 100.0}], None, None
+        return Bars([{"date": "20260903", "close": 100.0}])
 
     monkeypatch.setattr(module.daily, "fetch_daily_bars", slow_fetch)
 
@@ -419,7 +420,7 @@ def test_peak_drawdown_append_is_idempotent(
     monkeypatch.setattr(
         module.daily,
         "fetch_daily_bars",
-        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 90_000.0)]), None, None),
+        lambda code, days, asof=None: Bars(_bars([("20260601", 100_000.0), ("20260828", 90_000.0)])),
     )
     snapshot = tmp_path / "2026-08-28.md"
     snapshot.write_text(PEAK_SNAPSHOT, encoding="utf-8")
@@ -591,7 +592,7 @@ def test_render_names_both_axes_and_forbids_summing(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(
         module.daily,
         "fetch_daily_bars",
-        lambda code, days, asof=None: (_bars([("20260601", 100_000.0), ("20260828", 60_000.0)]), None, None),
+        lambda code, days, asof=None: Bars(_bars([("20260601", 100_000.0), ("20260828", 60_000.0)])),
     )
     # 52주 축은 -40%(⛔), 기록 축은 -12.5%(🟡) — 두 축이 두 밴드만큼 어긋나는 상황
     history = {"알파전자": [("2026-08-10", 80_000.0)], "베타파마": [("2026-08-10", 80_000.0)]}

@@ -128,17 +128,16 @@ def alert_label(band: float | None, approach: dict | None) -> str:
     return "—"
 
 
-def peak_drawdown(bars: list[dict]) -> dict:
-    """일봉 → 전고점·전고점 일자·현재 종가·낙폭."""
-    window = bars[-PEAK_WINDOW_DAYS:]
-    peak_bar = max(window, key=lambda b: b["close"])
-    last_close = window[-1]["close"]
+def peak_drawdown(bars: daily.Bars) -> dict:
+    """판정 일봉 → 전고점·전고점 일자·현재 종가·낙폭. 전고점은 최근 `PEAK_WINDOW_DAYS`봉의 종가 고점."""
+    peak_date, peak = bars.closing_high(PEAK_WINDOW_DAYS)
+    last_close = bars.rows[-1]["close"]
     return {
-        "peak": peak_bar["close"],
-        "peak_date": peak_bar["date"],
+        "peak": peak,
+        "peak_date": peak_date,
         "close": last_close,
-        "drawdown": (last_close / peak_bar["close"] - 1) * 100 if peak_bar["close"] else None,
-        "bars": len(window),
+        "drawdown": (last_close / peak - 1) * 100 if peak else None,
+        "bars": len(bars.rows[-PEAK_WINDOW_DAYS:]),
     }
 
 
@@ -180,10 +179,10 @@ def analyze_holdings(
 
         with ThreadPoolExecutor(max_workers=min(MAX_FETCH_WORKERS, len(pending))) as pool:
             fetched = list(pool.map(fetch, pending))
-        for entry, (bars, ferr, bar_note) in zip(pending, fetched):
-            entry["bar_note"] = bar_note
-            if not bars:
-                entry["error"] = f"시세 수집 실패 — {ferr or '응답 없음'}"
+        for entry, bars in zip(pending, fetched):
+            entry["bar_note"] = bars.fallback
+            if not bars.rows:
+                entry["error"] = f"시세 수집 실패 — {bars.error or '응답 없음'}"
                 continue
             entry.update(peak_drawdown(bars))
             entry["band"] = band_for(entry["drawdown"])

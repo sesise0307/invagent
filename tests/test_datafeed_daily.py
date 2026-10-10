@@ -69,7 +69,8 @@ def test_regular_session_close_comes_from_stockeasy_not_naver(monkeypatch) -> No
     monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
     monkeypatch.setattr(http, "read_url", fake_read())
 
-    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof=date(2026, 9, 28))
+    result = daily.fetch_daily_bars("353200", days=30, asof=date(2026, 9, 28))
+    bars, err, note = result.rows, result.error, result.fallback
 
     assert err is None and note is None
     assert [b["date"] for b in bars] == ["20260923", "20260928"]
@@ -95,7 +96,8 @@ def test_without_a_cookie_it_falls_back_to_naver_and_says_why(monkeypatch) -> No
     monkeypatch.setattr(stockeasy, "load_cookie", lambda: None)
     monkeypatch.setattr(http, "read_url", read)
 
-    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof=date(2026, 9, 28))
+    result = daily.fetch_daily_bars("353200", days=30, asof=date(2026, 9, 28))
+    bars, err, note = result.rows, result.error, result.fallback
 
     assert err is None
     assert bars[-1]["close"] == 121700.0
@@ -107,7 +109,8 @@ def test_a_failed_stockeasy_call_falls_back_to_naver_with_the_failure_named(monk
     monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=expired")
     monkeypatch.setattr(http, "read_url", fake_read(info_error=TimeoutError("timed out")))
 
-    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof=date(2026, 9, 28))
+    result = daily.fetch_daily_bars("353200", days=30, asof=date(2026, 9, 28))
+    bars, err, note = result.rows, result.error, result.fallback
 
     assert err is None
     assert bars[-1]["close"] == 121700.0
@@ -119,7 +122,8 @@ def test_an_info_tab_without_bars_in_the_window_falls_back_to_naver(monkeypatch)
     monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
     monkeypatch.setattr(http, "read_url", fake_read(info_tab={"stock_code": "353200", "chart": None}))
 
-    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof=date(2026, 9, 28))
+    result = daily.fetch_daily_bars("353200", days=30, asof=date(2026, 9, 28))
+    bars, err, note = result.rows, result.error, result.fallback
 
     assert bars[-1]["close"] == 121700.0
     assert note and "chart" in note
@@ -163,7 +167,8 @@ def test_bars_fetched_after_the_regular_close_are_reused_until_the_next_open(
     os.utime(cache.cache_path(url, authed=True), (stored, stored))
 
     monkeypatch.setattr(cache, "_now", lambda: _kst(2026, 10, 1, 18, 0))
-    bars, err, note = daily.fetch_daily_bars("353200", 30, asof="2026-09-30")
+    result = daily.fetch_daily_bars("353200", 30, asof="2026-09-30")
+    bars, err, note = result.rows, result.error, result.fallback
 
     assert note is None and bars[-1]["close"] == 123300.0
     assert (len(calls) == 2) is refetched
@@ -211,7 +216,8 @@ def test_official_bars_that_reach_the_last_weekday_need_no_stockeasy_call(monkey
     monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
     seen = recording(monkeypatch, fsc_body=official(("20260924", "118000"), ("20260925", "120000")))
 
-    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof=asof)
+    result = daily.fetch_daily_bars("353200", days=30, asof=asof)
+    bars, err, note = result.rows, result.error, result.fallback
 
     assert err is None and note is None
     assert [(b["date"], b["close"]) for b in bars] == [("20260924", 118000.0), ("20260925", 120000.0)]
@@ -224,7 +230,8 @@ def test_a_bar_not_yet_published_is_taken_from_stockeasy(monkeypatch) -> None:
     monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
     recording(monkeypatch, fsc_body=official(("20260923", "119000"), ("20260925", "120000")))
 
-    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+    result = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+    bars, err, note = result.rows, result.error, result.fallback
 
     assert err is None and note is None
     # 9/23은 공식 값이 그대로, 9/28만 StockEasy에서 붙는다.
@@ -241,7 +248,8 @@ def test_a_missing_bar_stockeasy_cannot_supply_comes_from_naver_and_is_labelled(
     monkeypatch.setattr(stockeasy, "load_cookie", lambda: None)
     recording(monkeypatch, fsc_body=official(("20260923", "119000"), ("20260925", "120000")))
 
-    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+    result = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+    bars, err, note = result.rows, result.error, result.fallback
 
     assert err is None
     assert [(b["date"], b["close"]) for b in bars] == [
@@ -258,9 +266,10 @@ def test_the_source_label_names_the_official_bars_and_the_stockeasy_tail(monkeyp
     monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
     recording(monkeypatch, fsc_body=official(("20260923", "119000"), ("20260925", "120000")))
 
-    bars, _, note = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+    result = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+    bars, err, note = result.rows, result.error, result.fallback
 
-    assert daily.source_label(bars, note) == "금융위 KRX 공식 일봉 ~20260925 + StockEasy 정규장 20260928"
+    assert result.label == "금융위 KRX 공식 일봉 ~20260925 + StockEasy 정규장 20260928"
 
 
 def test_todays_bar_before_the_regular_session_settles_comes_from_naver(monkeypatch) -> None:
@@ -270,7 +279,8 @@ def test_todays_bar_before_the_regular_session_settles_comes_from_naver(monkeypa
     monkeypatch.setattr(cache, "_now", lambda: _kst(2026, 9, 28, 14, 0))
     seen = recording(monkeypatch, fsc_body=official(("20260923", "119000"), ("20260925", "120000")))
 
-    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+    result = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+    bars, err, note = result.rows, result.error, result.fallback
 
     assert err is None and note is None
     assert [(b["date"], b["close"], b["source"]) for b in bars][-1] == ("20260928", 121700.0, "naver_intraday")
@@ -289,7 +299,8 @@ def test_before_the_official_bar_is_published_yesterday_stays_on_stockeasy(monke
     monkeypatch.setattr(cache, "_now", lambda: _kst(2026, 9, 28, 10, 0))
     recording(monkeypatch, info_tab=info_tab, fsc_body=official(("20260924", "118000")))
 
-    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+    result = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+    bars, err, note = result.rows, result.error, result.fallback
 
     assert err is None and note is None
     assert [(b["date"], b["close"], b["source"]) for b in bars] == [
@@ -306,9 +317,10 @@ def test_the_source_label_names_an_intraday_naver_bar(monkeypatch) -> None:
     monkeypatch.setattr(cache, "_now", lambda: _kst(2026, 9, 28, 14, 0))
     recording(monkeypatch, fsc_body=official(("20260923", "119000"), ("20260925", "120000")))
 
-    bars, _, note = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+    result = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+    bars, err, note = result.rows, result.error, result.fallback
 
-    assert daily.source_label(bars, note) == "금융위 KRX 공식 일봉 ~20260925 + 네이버 장중 20260928"
+    assert result.label == "금융위 KRX 공식 일봉 ~20260925 + 네이버 장중 20260928"
 
 
 def test_todays_bar_after_the_regular_session_settles_comes_from_stockeasy(monkeypatch) -> None:
@@ -318,7 +330,57 @@ def test_todays_bar_after_the_regular_session_settles_comes_from_stockeasy(monke
     monkeypatch.setattr(cache, "_now", lambda: _kst(2026, 9, 28, 15, 40))
     recording(monkeypatch, fsc_body=official(("20260923", "119000"), ("20260925", "120000")))
 
-    bars, err, note = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+    result = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+    bars, err, note = result.rows, result.error, result.fallback
 
     assert note is None
     assert (bars[-1]["date"], bars[-1]["close"], bars[-1]["source"]) == ("20260928", 123300.0, "stockeasy")
+
+
+REJECTED = json.dumps(
+    {
+        "OpenAPI_ServiceResponse": {
+            "cmmMsgHeader": {"errMsg": "SERVICE_KEY_IS_NOT_REGISTERED_ERROR", "returnReasonCode": "30"}
+        }
+    }
+)
+
+
+def test_a_failed_official_call_is_named_in_the_label(monkeypatch) -> None:
+    """키가 있는데 공식 일봉이 실패하면 StockEasy로 넘어가되, 그 실패를 출처 표기에서 숨기지 않는다."""
+    monkeypatch.setattr(fsc, "load_key", lambda: "k" * 64)
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
+    recording(monkeypatch, fsc_body=REJECTED)
+
+    result = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+
+    assert result.rows[-1]["close"] == 123300.0
+    assert result.label.startswith("공식 일봉 실패: ")
+    assert "SERVICE_KEY_IS_NOT_REGISTERED_ERROR" in result.label
+    assert result.label.endswith(" → StockEasy 일봉")
+
+
+def test_without_an_official_key_no_official_request_is_made_and_the_label_is_silent(monkeypatch) -> None:
+    """키가 없는 것은 실패가 아니다 — 금융위에 묻지 않고, 출처 표기에도 적지 않는다."""
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
+    seen = recording(monkeypatch, fsc_body=official(("20260925", "120000")))
+
+    result = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+
+    assert not any(url.startswith(fsc.PRICE_URL) for url in seen)
+    assert result.label == "StockEasy 일봉"
+
+
+def test_the_closing_high_is_the_highest_close_in_the_window() -> None:
+    """고점은 종가 기준이다 — 장중 고가가 더 높은 봉이 있어도 종가가 가장 높은 봉의 날짜와 종가."""
+    rows = [
+        {"date": "20260921", "high": 200.0, "close": 150.0},
+        {"date": "20260922", "high": 130.0, "close": 125.0},
+        {"date": "20260923", "high": 180.0, "close": 110.0},
+        {"date": "20260924", "high": 121.0, "close": 120.0},
+    ]
+    bars = daily.Bars(rows)
+
+    assert bars.closes == [150.0, 125.0, 110.0, 120.0]
+    assert bars.closing_high(3) == ("20260922", 125.0)
+    assert bars.closing_high(250) == ("20260921", 150.0)

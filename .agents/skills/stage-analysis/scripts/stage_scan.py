@@ -795,9 +795,10 @@ def main(argv: list[str] | None = None) -> int:
         return code
     ticker = stock["stock_code"]
 
-    bars, e, bar_note = daily.fetch_daily_bars(ticker, args.days)
-    if e or not bars:
-        print(f"ERROR: 시세 수집 실패 — {e or '빈 응답'} ({daily.source_label(bars, bar_note)}, {ticker})", file=sys.stderr)
+    fetched = daily.fetch_daily_bars(ticker, args.days)
+    bars = fetched.rows
+    if fetched.error or not bars:
+        print(f"ERROR: 시세 수집 실패 — {fetched.error or '빈 응답'} ({fetched.label}, {ticker})", file=sys.stderr)
         return 1
     if len(bars) < MA_DAYS + SLOPE_WINDOW:
         print(
@@ -807,7 +808,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    sources = [daily.source_label(bars, bar_note)]
+    sources = [fetched.label]
     financials, primary, name = None, "C", stock.get("stock_name") or ticker
     if not args.no_fundamental:
         # 우선주는 분기 실적이 따로 없다 — 영업이익 축만 본주 코드로 받는다. 일봉·이동평균은

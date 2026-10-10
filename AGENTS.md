@@ -44,7 +44,12 @@ after-hours price) — so StockEasy is called only for a not-yet-published past 
 for every stock's three-year history (sequential scans were cut off around the twelfth to fourteenth
 StockEasy request on 2026-10-05 and 10-06). A gap StockEasy cannot fill is filled from Naver and
 named, with its dates, in the fallback note; without the key, or when `fsc` fails, the old order
-applies — StockEasy's three years, then Naver. Every script prints that note: Naver's `siseJson`
+applies — StockEasy's three years, then Naver. Without the key `daily` never calls `fsc` and says
+nothing about it; a real `fsc` failure is not silent — it heads the label as
+`공식 일봉 실패: <사유> → …`. The call returns a `Bars` value (`rows`, `error`, `fallback`,
+`official_error`, plus `label`, `closes` and `closing_high(window)`), so no caller rebuilds the
+source label or the closing high itself; `fallback` stays a separate field because `peak_drawdown`
+groups holdings by it. Every script prints that label: Naver's `siseJson`
 close carries the after-hours price (대덕전자 from 2026-09-14 on, e.g. 9/14 95,600 vs a
 regular close of 97,000원, confirmed against the official bar on 2026-10-07), and rule triggers are
 judged on the regular close (user decision, 2026-09-28). KRX's raw prices are not adjusted for corporate actions, so `fsc` back-adjusts every bar before a split, consolidation or rights ex-date by the ratio implied by `vs` (the change against KRX's adjusted base price) and drops halted days with no trade — unadjusted, LS ELECTRIC's 2026-04-13 5:1 split put its 150-day line at 334,474원 and graded a stage-2 stock as stage 4 (2026-10-07). The endpoint is the `_V2` one; the older

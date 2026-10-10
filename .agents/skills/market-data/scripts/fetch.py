@@ -70,12 +70,13 @@ def cmd_bars(args) -> int:
     if not ticker:
         return code
 
-    bars, err, note = daily.fetch_daily_bars(ticker, args.days)
-    if err or not bars:
-        print(f"ERROR: 일봉 수집 실패 — {err or '빈 응답'}", file=sys.stderr)
+    fetched = daily.fetch_daily_bars(ticker, args.days)
+    bars = fetched.rows
+    if fetched.error or not bars:
+        print(f"ERROR: 일봉 수집 실패 — {fetched.error or '빈 응답'}", file=sys.stderr)
         return 1
 
-    print(f"{ticker}\t{len(bars)}봉\t{bars[0]['date']} ~ {bars[-1]['date']}\t{daily.source_label(bars, note)}")
+    print(f"{ticker}\t{len(bars)}봉\t{bars[0]['date']} ~ {bars[-1]['date']}\t{fetched.label}")
     for bar in bars[-args.tail:]:
         print(f"{bar['date']}\t{bar['close']:,.0f}\t{bar['volume']:,.0f}")
     return 0

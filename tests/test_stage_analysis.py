@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from invagent.datafeed.daily import Bars
 from tests.conftest import load_script
 
 
@@ -566,7 +567,7 @@ def test_main_fetches_the_fundamentals_of_a_preferred_shares_common_stock(monkey
 
     def fake_bars(code, days, asof=None):
         price_codes.append(code)
-        return _bars([100.0 + i for i in range(400)]), None, None
+        return Bars(_bars([100.0 + i for i in range(400)]))
 
     monkeypatch.setattr(daily, "fetch_daily_bars", fake_bars)
 
@@ -601,7 +602,7 @@ def test_main_labels_a_naver_fallback_because_its_close_may_be_after_hours(monke
     monkeypatch.setattr(
         daily,
         "fetch_daily_bars",
-        lambda code, days, asof=None: (_bars([100.0 + i for i in range(400)]), None, note),
+        lambda code, days, asof=None: Bars(_bars([100.0 + i for i in range(400)]), fallback=note),
     )
 
     assert stage_scan.main(["353200", "--no-fundamental"]) == 0
@@ -620,7 +621,7 @@ def test_main_names_stockeasy_as_the_bar_source_when_it_served_the_bars(monkeypa
     monkeypatch.setattr(
         daily,
         "fetch_daily_bars",
-        lambda code, days, asof=None: (_bars([100.0 + i for i in range(400)]), None, None),
+        lambda code, days, asof=None: Bars(_bars([100.0 + i for i in range(400)])),
     )
 
     assert stage_scan.main(["353200", "--no-fundamental"]) == 0
@@ -637,7 +638,7 @@ def test_main_names_the_official_bars_when_they_served_the_history(monkeypatch, 
         lambda q, overrides=None: ({"stock_code": "353200", "stock_name": "대덕전자"}, None, 0),
     )
     bars = daily.tagged(_bars([100.0 + i for i in range(400)]), daily.OFFICIAL)
-    monkeypatch.setattr(daily, "fetch_daily_bars", lambda code, days, asof=None: (bars, None, None))
+    monkeypatch.setattr(daily, "fetch_daily_bars", lambda code, days, asof=None: Bars(bars))
 
     assert stage_scan.main(["353200", "--no-fundamental"]) == 0
     header = capsys.readouterr().out.splitlines()[0]

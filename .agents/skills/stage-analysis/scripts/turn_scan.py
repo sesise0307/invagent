@@ -374,10 +374,10 @@ def main(argv: list[str] | None = None) -> int:
     ticker = stock["stock_code"]
     name = stock.get("stock_name") or ticker
 
-    bars, e, bar_note = daily.fetch_daily_bars(ticker, args.days)
-    source = daily.source_label(bars, bar_note)
-    if e or not bars:
-        print(f"ERROR: 시세 수집 실패 — {e or '빈 응답'} ({source}, {ticker})", file=sys.stderr)
+    fetched = daily.fetch_daily_bars(ticker, args.days)
+    bars, source = fetched.rows, fetched.label
+    if fetched.error or not bars:
+        print(f"ERROR: 시세 수집 실패 — {fetched.error or '빈 응답'} ({source}, {ticker})", file=sys.stderr)
         return 1
     if len(bars) < MIN_BARS:
         print(
