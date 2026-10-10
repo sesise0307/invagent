@@ -37,14 +37,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
-import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from invagent.core.archive import archive_root, dated_files
+from invagent.core.files import atomic_write
 from invagent.datafeed import cache as http_cache, daily
 from invagent.datafeed.snapshot import CASH_SECTOR, parse_balance, parse_holdings, split_row, to_float
 from invagent.datafeed.tickers import TICKER_RE, load_overrides, resolve_code
@@ -335,18 +334,7 @@ def load_state(path: Path | None) -> dict:
 
 def save_state(path: Path, state: dict) -> None:
     """MDD 상태를 같은 디렉토리의 임시 파일을 거쳐 원자적으로 저장한다."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = (json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
-    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp_name, path)
-    finally:
-        if os.path.exists(temp_name):
-            os.unlink(temp_name)
+    atomic_write(path, json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 
 
 def update_mdd_state(

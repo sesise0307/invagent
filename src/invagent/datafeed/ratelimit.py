@@ -9,9 +9,7 @@ StockEasy는 짧은 시간에 요청이 몰리면 연결을 끊거나 거절한�
 from __future__ import annotations
 
 import json
-import os
 import random
-import tempfile
 import time
 import urllib.error
 
@@ -19,6 +17,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from invagent.core.files import atomic_write
 from invagent.datafeed.env import repo_root
 
 try:
@@ -154,11 +153,8 @@ def start_cooldown(host: str, seconds: float, reason: str = "") -> None:
     path = _cooldown_path(host)
     now = _now()
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd, raw_tmp = tempfile.mkstemp(prefix=f".{host}.", suffix=".tmp", dir=path.parent)
-        with os.fdopen(fd, "w") as handle:
-            json.dump({"until": now + seconds, "started": now, "reason": reason}, handle, ensure_ascii=False)
-        Path(raw_tmp).replace(path)
+        state = {"until": now + seconds, "started": now, "reason": reason}
+        atomic_write(path, json.dumps(state, ensure_ascii=False))
     except OSError:
         pass
 

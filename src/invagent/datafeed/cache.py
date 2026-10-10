@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import tempfile
 import time
 from contextlib import contextmanager
 from datetime import datetime, time as clock, timedelta
@@ -40,6 +39,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 from zoneinfo import ZoneInfo
 
+from invagent.core.files import atomic_write
 from invagent.datafeed.env import repo_root
 
 try:
@@ -193,21 +193,7 @@ def store(url: str, body: bytes, *, authed: bool) -> None:
         purge()
     path = cache_path(url, authed=authed)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # 같은 키를 여러 프로세스가 저장해도 임시 파일 이름이 겹치지 않는다.
-        fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.stem}.", suffix=".tmp", dir=path.parent)
-        tmp = Path(raw_tmp)
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(body)
-                handle.flush()
-                os.fsync(handle.fileno())
-            tmp.replace(path)
-        finally:
-            try:
-                tmp.unlink()
-            except FileNotFoundError:
-                pass
+        atomic_write(path, body)
     except OSError:
         pass
 

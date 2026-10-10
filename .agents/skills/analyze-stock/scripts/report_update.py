@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Prepare a safe rolling-report update; refuse stale or conflicting sources."""
 from __future__ import annotations
-import argparse, hashlib, json, os, tempfile, sys
+import argparse, hashlib, json, sys
 from pathlib import Path
+from invagent.core.files import atomic_write
 
 def apply_update(source: Path, target: Path, update: Path, expected_sha256: str | None = None) -> dict:
     raw=source.read_bytes(); digest=hashlib.sha256(raw).hexdigest()
@@ -10,10 +11,7 @@ def apply_update(source: Path, target: Path, update: Path, expected_sha256: str 
     if target.exists() and target.resolve()!=source.resolve(): raise FileExistsError(f"target exists: {target}")
     text=raw.decode("utf-8"); addition=update.read_text(encoding="utf-8").strip()
     merged=text.rstrip()+"\n\n"+addition+"\n"
-    target.parent.mkdir(parents=True,exist_ok=True); fd,tmp=tempfile.mkstemp(prefix=target.name+".",dir=target.parent); os.close(fd)
-    try: Path(tmp).write_text(merged,encoding="utf-8"); os.replace(tmp,target)
-    finally:
-        if os.path.exists(tmp): os.unlink(tmp)
+    atomic_write(target,merged)
     return {"source_sha256":digest,"target":str(target),"bytes":len(merged.encode())}
 
 def main(argv=None):

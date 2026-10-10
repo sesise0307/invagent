@@ -45,24 +45,6 @@ def build_headers(
     return headers
 
 
-def get_bytes(
-    url: str, *, authed: bool, headers: dict[str, str] | None = None, timeout: int = TIMEOUT
-) -> tuple[bytes | None, str | None]:
-    """본문 바이트를 캐시 경유로 받는다. 실패하면 `(None, 사유)`."""
-    request_headers = headers if headers is not None else build_headers()
-
-    def fetcher() -> bytes:
-        return ratelimit.call_with_retry(_host(url), lambda: read_url(url, request_headers, timeout))
-
-    try:
-        body, _ = cache.get_or_fetch(url, authed=authed, fetcher=fetcher)
-    except urllib.error.HTTPError as e:
-        return None, f"HTTP {e.code}"
-    except Exception as e:  # 네트워크 오류 등
-        return None, str(e)[:80]
-    return body, None
-
-
 def get_json(
     url: str,
     *,

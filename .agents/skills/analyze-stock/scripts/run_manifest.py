@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """Write an atomic, auditable manifest for a multi-step stock preparation run."""
 from __future__ import annotations
-import argparse, json, os, tempfile, time
+import argparse, json, time
 from datetime import datetime, timezone
 from pathlib import Path
+from invagent.core.files import atomic_write
 
 def write_manifest(path: Path, run_id: str, steps: list[dict]) -> None:
     payload={"schema_version":1,"run_id":run_id,"finished_at":datetime.now(timezone.utc).isoformat(),"steps":steps}
-    path.parent.mkdir(parents=True,exist_ok=True)
-    fd,tmp=tempfile.mkstemp(prefix=path.name+".",dir=path.parent); os.close(fd)
-    try: Path(tmp).write_text(json.dumps(payload,ensure_ascii=False,indent=2)+"\n",encoding="utf-8"); os.replace(tmp,path)
-    finally:
-        if os.path.exists(tmp): os.unlink(tmp)
+    atomic_write(path,json.dumps(payload,ensure_ascii=False,indent=2)+"\n")
 
 def main(argv=None):
     p=argparse.ArgumentParser(); p.add_argument("path",type=Path); p.add_argument("--run-id",required=True); p.add_argument("--step",action="append",default=[],help="name=status[:elapsed_ms]"); a=p.parse_args(argv)
