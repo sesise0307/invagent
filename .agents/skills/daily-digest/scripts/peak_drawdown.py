@@ -45,8 +45,8 @@ from pathlib import Path
 from invagent.core.archive import archive_root, dated_files
 from invagent.core.files import atomic_write
 from invagent.datafeed import cache as http_cache, daily
-from invagent.datafeed.snapshot import CASH_SECTOR, parse_balance, parse_holdings, split_row, to_float
-from invagent.datafeed.tickers import TICKER_RE, load_overrides, resolve_code
+from invagent.datafeed.snapshot import parse_balance, parse_holdings, to_float
+from invagent.datafeed.tickers import load_overrides, resolve_code
 
 # --- 판정 임계값 -----------------------------------------------------------
 # 전고점 창과 밴드는 이 스킬의 운영 기준이다. 바꾸려면 SKILL.md의 밴드→룰 매핑도 함께 고친다.
@@ -344,15 +344,19 @@ def update_mdd_state(
     *,
     review_completed: bool = False,
     resume_authorized: bool = False,
-) -> dict:
-    """최초 MDD 발동일과 매수 중단 상태를 유지한다.
+) -> tuple[dict, bool]:
+    """최초 MDD 발동일과 매수 중단 상태를 유지하고, 저장할지를 함께 돌려준다.
 
     -10% 해제 조건은 규칙에 없으므로 자동 해제하지 않는다. 재개는 사용자 입력으로만 기록한다.
     -15%는 최초 발동일부터 거래일 5개와 복기 완료를 각각 기록하되 재개를 추론하지 않는다.
+
+    `asof`보다 뒤 날짜에 쓰인 상태는 과거 날짜 재실행(replay)이므로 물려받지 않고 빈 상태에서
+    계산하며, 그 결과는 저장하지 않는다 — 더 최신 상태를 과거 판정으로 덮어쓰면 안 된다.
+    저장은 상태가 바뀌었고 replay가 아닐 때만 한다.
     """
-    previous_asof = previous.get("account_mdd", {}).get("asof")
-    if previous_asof and previous_asof > asof:
-        return json.loads(json.dumps(previous))
+    replay = previous.get("account_mdd", {}).get("asof", "") > asof
+    if replay:
+        previous = {"schema_version": 1, "account_mdd": {}}
     state = json.loads(json.dumps(previous))
     state["schema_version"] = 1
     item = state.setdefault("account_mdd", {})
@@ -387,7 +391,7 @@ def update_mdd_state(
     item["pause_active"] = bool(item.get("first_10_breach_date") and not item["resume_authorized"])
     item["release_policy"] = "manual_user_resume_required"
     item["asof"] = asof
-    return state
+    return state, state != previous and not replay
 
 
 def load_session_dates(path: Path | None, asof: str) -> list[str]:
@@ -602,7 +606,10 @@ def render(
 
 
 def append_section(path: Path, section: str) -> None:
-    """스냅샷 끝에 섹션을 쓴다. 같은 제목 + 과거 제목 섹션을 모두 걷어내고 쓴다(멱등)."""
+    """스냅샷 끝에 섹션을 쓴다. 같은 제목 + 과거 제목 섹션을 모두 걷어내고 쓴다(멱등).
+
+    임시 파일을 거쳐 원자적으로 바꾸므로 쓰기가 실패해도 원본 스냅샷은 그대로 남는다.
+    """
     text = path.read_text(encoding="utf-8")
     for title in (SECTION_TITLE, *LEGACY_SECTION_TITLES):
         while True:
@@ -614,7 +621,7 @@ def append_section(path: Path, section: str) -> None:
                 (i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines)
             )
             text = "\n".join(lines[:start] + lines[end:])
-    path.write_text(text.rstrip("\n") + "\n\n" + section, encoding="utf-8")
+    atomic_write(path, text.rstrip("\n") + "\n\n" + section)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -648,19 +655,15 @@ def main(argv: list[str] | None = None) -> int:
     account = account_mdd(snapshot_dir, parse_balance(text), args.snapshot.stem)
     try:
         state_path = args.state_file or snapshot_dir / ".peak_drawdown_state.json"
-        previous_state = load_state(state_path)
-        # Historical replays must not inherit a state written for a later day.
-        if previous_state.get("account_mdd", {}).get("asof", "") > args.snapshot.stem:
-            previous_state = {"schema_version": 1, "account_mdd": {}}
-        state = update_mdd_state(
+        state, should_save = update_mdd_state(
             account,
-            previous_state,
+            load_state(state_path),
             args.snapshot.stem,
             load_session_dates(args.sessions, args.snapshot.stem),
             review_completed=args.review_completed,
             resume_authorized=args.resume_authorized,
         )
-        if state != previous_state and args.snapshot.stem >= previous_state.get("account_mdd", {}).get("asof", args.snapshot.stem):
+        if should_save:
             save_state(state_path, state)
     except (OSError, ValueError, json.JSONDecodeError) as e:
         print(f"ERROR: MDD 상태 처리 실패 — {e}", file=sys.stderr)

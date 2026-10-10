@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,8 @@ from invagent.core.archive import dated_path
 from invagent.datafeed import tickers as datafeed_tickers
 from invagent.datafeed.daily import Bars
 from tests.conftest import load_script
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # --- peak_drawdown.py (전고점 낙폭 · 계좌 MDD) --------------------------------
 
@@ -450,11 +453,26 @@ def test_peak_drawdown_exits_1_on_unparsable_snapshot(
 
 
 def test_peak_drawdown_thresholds_match_documented_bands() -> None:
+    """밴드·창·마진은 운영 선택이다 — 상수만 바꾸고 SKILL.md 1-3-1단계가 옛 값이면 브리핑이 어긋난다."""
     module = load_script("daily-digest", "peak_drawdown")
+    skill = (REPO_ROOT / ".agents" / "skills" / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
+    section = skill.split("### 1-3-1단계")[1].split("\n### ")[0]
 
-    assert module.PEAK_WINDOW_DAYS == 250
-    assert module.DRAWDOWN_BANDS == (-10.0, -15.0, -20.0, -30.0)
-    assert module.ACCOUNT_MDD_BANDS == (-10.0, -15.0)
+    window = re.search(r"최근 (\d+)거래일 최고 종가", section)
+    assert window, "52주 축 고점 창이 1-3-1단계 표에 없다"
+    assert int(window.group(1)) == module.PEAK_WINDOW_DAYS
+
+    band_rows = re.findall(r"^\| (-\d+(?:\.\d+)?)% \|", section, flags=re.MULTILINE)
+    assert tuple(float(b) for b in band_rows) == module.DRAWDOWN_BANDS
+
+    account = re.search(r"잔고 고점 대비 ((?:-\d+% / )*-\d+%) 발동선", section)
+    assert account, "계좌 MDD 밴드가 1-3-1단계에 없다"
+    assert tuple(float(b) for b in re.findall(r"-\d+", account.group(1))) == module.ACCOUNT_MDD_BANDS
+
+    for name in ("DRAWDOWN_WARN_MARGIN_PP", "ACCOUNT_MDD_WARN_MARGIN_PP"):
+        margin = re.search(rf"`{name}`\(기본 (\d+(?:\.\d+)?)%p", section)
+        assert margin, f"{name}의 기본값이 1-3-1단계에 없다"
+        assert float(margin.group(1)) == getattr(module, name), name
 
 
 # --- 계좌 기록 고점 축 --------------------------------------------------------
@@ -635,3 +653,77 @@ def test_append_section_removes_legacy_title(tmp_path: Path) -> None:
     assert module.LEGACY_SECTION_TITLES[0] not in text
     assert "-45.3%" not in text  # 옛 섹션 본문까지 걷어낸다
     assert "매매규칙 6(-15% 손절)" in text  # 다른 섹션은 보존
+
+
+# --- MDD 상태 재생·저장 규칙 ----------------------------------------------------
+
+_HEALTHY_ACCOUNT = {"band": None, "first_breaches": {}}
+
+
+def test_mdd_state_written_for_a_later_day_is_ignored_and_not_saved() -> None:
+    """과거 날짜 재실행은 그보다 뒤 날짜의 상태를 물려받지도, 덮어쓰지도 않는다."""
+    module = load_script("daily-digest", "peak_drawdown")
+    later = {
+        "schema_version": 1,
+        "account_mdd": {"asof": "2026-09-10", "first_10_breach_date": "2026-09-05", "resume_authorized": False},
+    }
+
+    state, should_save = module.update_mdd_state(_HEALTHY_ACCOUNT, later, "2026-08-28", [])
+
+    assert should_save is False
+    assert state["account_mdd"]["asof"] == "2026-08-28"
+    assert "first_10_breach_date" not in state["account_mdd"]
+    assert state["account_mdd"]["pause_active"] is False
+
+
+def test_unchanged_mdd_state_is_not_saved() -> None:
+    """같은 날 재실행이 같은 상태를 만들면 파일을 다시 쓰지 않는다."""
+    module = load_script("daily-digest", "peak_drawdown")
+    first, _ = module.update_mdd_state(_HEALTHY_ACCOUNT, {"schema_version": 1, "account_mdd": {}}, "2026-08-28", [])
+
+    again, should_save = module.update_mdd_state(_HEALTHY_ACCOUNT, first, "2026-08-28", [])
+
+    assert again == first
+    assert should_save is False
+
+
+def test_changed_same_day_mdd_state_is_saved() -> None:
+    """같은 날 -10%를 처음 밟으면 최초 발동일이 기록되고 저장된다."""
+    module = load_script("daily-digest", "peak_drawdown")
+    previous, _ = module.update_mdd_state(_HEALTHY_ACCOUNT, {"schema_version": 1, "account_mdd": {}}, "2026-08-28", [])
+
+    state, should_save = module.update_mdd_state({"band": -10.0, "first_breaches": {}}, previous, "2026-08-28", [])
+
+    assert should_save is True
+    assert state["account_mdd"]["first_10_breach_date"] == "2026-08-28"
+    assert state["account_mdd"]["pause_active"] is True
+
+
+def test_fresh_mdd_state_is_saved_on_first_run() -> None:
+    module = load_script("daily-digest", "peak_drawdown")
+
+    _, should_save = module.update_mdd_state(_HEALTHY_ACCOUNT, {"schema_version": 1, "account_mdd": {}}, "2026-08-28", [])
+
+    assert should_save is True
+
+
+def test_append_section_failed_write_leaves_snapshot_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """쓰기가 중간에 실패해도 스냅샷 원본은 그대로다 — 반쯤 쓰인 파일이 남지 않는다."""
+    from invagent.core import files
+
+    module = load_script("daily-digest", "peak_drawdown")
+    snapshot = tmp_path / "2026-08-28.md"
+    snapshot.write_text(PEAK_SNAPSHOT, encoding="utf-8")
+
+    def broken_replace(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(files.os, "replace", broken_replace)
+
+    with pytest.raises(OSError):
+        module.append_section(snapshot, f"{module.SECTION_TITLE}\n\n- 새 내용\n")
+
+    assert snapshot.read_text(encoding="utf-8") == PEAK_SNAPSHOT
+    assert [p.name for p in tmp_path.iterdir()] == [snapshot.name]
