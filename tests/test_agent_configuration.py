@@ -287,7 +287,8 @@ def test_analyze_stock_inheritance_keeps_one_line_change_log() -> None:
     template = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
 
     assert "누적 파일 1개만 유지" in skill
-    assert "파일명을 목표 경로로 변경" in skill
+    assert "--inherit --expected-sha256" in skill
+    assert "report_update.py" not in skill
     assert "복사본을 만들지 않는다" in skill
     assert "불변 스냅샷" not in skill
 

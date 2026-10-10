@@ -21,12 +21,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import sys
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
+from invagent.core.files import atomic_write
 from invagent.datafeed.env import output_dir
 from invagent.datafeed.text import nfc, norm as _key
 
@@ -56,6 +58,10 @@ class Report:
     date: str
     tokens: list[str]
     stock_report: bool = False
+
+    @property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.path.read_bytes()).hexdigest()
 
     @property
     def size_kb(self) -> int:
@@ -168,6 +174,7 @@ def render(result: Lookup, output_root: Path) -> str:
         else:
             lines.append("- 같은 경로 여부: no → 승계 파일명을 목표 경로로 먼저 변경한 뒤 같은 파일에 증분을 추가하라. 복사본을 만들지 마라.")
         lines.append(f"- 증분 기준일(`--since`): {inherit.date}")
+        lines.append(f"- 승계본 sha256(`--expected-sha256`): {inherit.sha256}")
 
     if result.previous:
         names = ", ".join(f"`{nfc(r.path.name)}`" for r in result.previous)
@@ -189,15 +196,76 @@ def render(result: Lookup, output_root: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
+class InheritError(Exception):
+    """승계 이동을 거절한다. 원본은 그대로 남는다."""
+
+
+def inherit(result: Lookup, expected_sha256: str) -> bool:
+    """승계본을 오늘 목표 경로로 옮긴다. 옮겼으면 True, 이미 목표 경로였으면 False.
+
+    원본 해시가 읽은 시점과 다르거나 목표 경로에 다른 파일이 있으면 원본을 건드리지 않고 거절한다.
+    목표는 `atomic_write`로 같은 바이트를 쓴 뒤 원본을 지운다 — 반쯤 쓴 목표는 남지 않는다.
+    """
+    if result.inherit is None:
+        raise InheritError(f"승계 대상이 없다 — `{result.stock}`은 신규 작성이다.")
+    source = result.inherit.path
+    payload = source.read_bytes()
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != expected_sha256:
+        raise InheritError(
+            f"읽은 뒤 승계본이 바뀌었다 — `{source}` sha256 {digest} ≠ 기대값 {expected_sha256}. "
+            "다시 읽고 새 해시로 실행하라."
+        )
+    if result.same_path:
+        return False
+    if result.target.exists():
+        raise InheritError(
+            f"목표 경로에 다른 파일이 이미 있다 — `{result.target}`. 덮지 않는다. "
+            "두 파일의 고유 내용을 먼저 병합하라."
+        )
+    atomic_write(result.target, payload)
+    try:
+        source.unlink()
+    except OSError as error:
+        raise InheritError(
+            f"목표 `{result.target}`는 썼지만 원본 `{source}`를 지우지 못했다 ({error}). "
+            "두 파일 내용은 같다 — 원본을 직접 지워라."
+        ) from error
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="같은 종목의 과거 분석 보고서 탐색")
     parser.add_argument("stock", help="종목명 (예: 율촌화학)")
     parser.add_argument("--today", metavar="YYYY-MM-DD", help="목표 파일명에 쓸 날짜 (기본 오늘)")
+    parser.add_argument(
+        "--inherit",
+        action="store_true",
+        help="승계본을 목표 경로로 옮긴다 (--expected-sha256 필수)",
+    )
+    parser.add_argument(
+        "--expected-sha256", metavar="HASH", help="읽은 시점의 승계본 sha256 (출력에 표시된 값)"
+    )
     args = parser.parse_args(argv)
+    if args.inherit and not args.expected_sha256:
+        parser.error("--inherit 에는 --expected-sha256 이 필요하다 (출력의 승계본 sha256 값)")
 
     today = args.today or date.today().isoformat()
     reports_dir = output_dir() / REPORTS_SUBDIR
     result = lookup(reports_dir, args.stock, today)
+    if args.inherit:
+        try:
+            moved = inherit(result, args.expected_sha256)
+        except InheritError as error:
+            sys.stderr.write(f"승계 이동 거절: {error}\n")
+            return 2
+        target = _rel(result.target, output_dir())
+        if moved:
+            source = _rel(result.inherit.path, output_dir())
+            sys.stdout.write(f"승계 이동 완료: `{source}` → `{target}`\n")
+        else:
+            sys.stdout.write(f"승계본이 이미 목표 경로다 — 이동 없음: `{target}`\n")
+        return 0
     sys.stdout.write(render(result, output_dir()))
     return 0
 

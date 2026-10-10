@@ -95,8 +95,13 @@ twelve-section order is re-laid out on its next inheritance run, because `output
 is gitignored and cannot be migrated in a commit. When a report for
 the same stock already exists, the skill inherits it instead of starting over.
 It reads the prior report, collects only what is newer than that report's date,
-renames that existing file to today's target path, and then edits the renamed
-file in place. Keep one rolling report per stock; do not create or retain a
+moves that existing file to today's target path with
+`find_prior_report.py "<종목명>" --inherit --expected-sha256 <hash>` — the hash is the
+`승계본 sha256` line of the script's plain run, taken when the report was read — and then
+edits the moved file in place. `--inherit` writes the target through `atomic_write` and
+only then removes the source; it refuses with exit 2 and leaves the source untouched when
+the source changed since it was read or a different file already sits at the target, and
+it is a no-op when the prior report is already at today's path. Keep one rolling report per stock; do not create or retain a
 separate dated snapshot. The body of the report holds only the current state —
 keeping superseded prose inline made every inheritance run pay to re-read older
 versions of facts it was about to overwrite. Change tracking lives in §11 개정 이력
@@ -109,8 +114,9 @@ new call. A prior report still carrying `### YYYY-MM-DD 업데이트` or
 `### {날짜} 기존 분석 (보존)` blocks is migrated on its next inheritance run — each
 block folds into its §11 line first, and only then leaves the body, so an interrupted
 migration loses nothing. Because `output/` is gitignored, that migration happens per
-report as it is next analysed rather than in a commit, and the rename must resolve the
-exact source and target and never overwrite an existing target.
+report as it is next analysed rather than in a commit, and the move goes through
+`--inherit`, never a hand `mv`, so it resolves the exact source and target and never
+overwrites an existing target.
 
 Every external data source is documented in one place — the `market-data` skill.
 It is the single reference for which endpoint serves which value, how the

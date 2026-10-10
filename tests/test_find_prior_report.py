@@ -142,3 +142,132 @@ def test_find_prior_report_main_reports_new_and_inherited(
     new_out = capsys.readouterr().out
     assert "승계 대상: 없음 (신규 작성)" in new_out
     assert "reports/종목/ㅋ/카카오_2026-09-01.md" in new_out
+
+
+def _sha(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_find_prior_report_output_exposes_source_sha256(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_script("analyze-stock", "find_prior_report")
+    reports = _build_reports_dir(tmp_path)
+    monkeypatch.setenv("INVAGENT_OUTPUT_DIR", str(tmp_path))
+    source = reports / "종목" / "ㅇ" / "율촌화학_2026-08-14.md"
+
+    assert module.main(["율촌화학", "--today", "2026-09-01"]) == 0
+
+    assert f"승계본 sha256(`--expected-sha256`): {_sha(source)}" in capsys.readouterr().out
+
+
+def test_find_prior_report_inherit_moves_prior_report_to_target(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_script("analyze-stock", "find_prior_report")
+    reports = _build_reports_dir(tmp_path)
+    monkeypatch.setenv("INVAGENT_OUTPUT_DIR", str(tmp_path))
+    source = reports / "종목" / "ㅇ" / "율촌화학_2026-08-14.md"
+    source.write_text("# 율촌화학\n\n본문 그대로\n", encoding="utf-8")
+    digest = _sha(source)
+
+    code = module.main(
+        ["율촌화학", "--today", "2026-09-01", "--inherit", "--expected-sha256", digest]
+    )
+
+    target = reports / "종목" / "ㅇ" / "율촌화학_2026-09-01.md"
+    assert code == 0
+    assert not source.exists()
+    assert target.read_text(encoding="utf-8") == "# 율촌화학\n\n본문 그대로\n"
+    assert sorted(p.name for p in target.parent.glob("율촌화학_*.md")) == [
+        "율촌화학_2026-07-02.md",  # 과거 중복 후보는 손대지 않는다
+        "율촌화학_2026-09-01.md",
+    ]
+    assert "reports/종목/ㅇ/율촌화학_2026-09-01.md" in capsys.readouterr().out
+
+
+def test_find_prior_report_inherit_refuses_stale_source(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_script("analyze-stock", "find_prior_report")
+    reports = _build_reports_dir(tmp_path)
+    monkeypatch.setenv("INVAGENT_OUTPUT_DIR", str(tmp_path))
+    source = reports / "종목" / "ㅇ" / "율촌화학_2026-08-14.md"
+    stale = _sha(source)
+    source.write_text("# 읽은 뒤 바뀐 본문\n", encoding="utf-8")
+
+    code = module.main(
+        ["율촌화학", "--today", "2026-09-01", "--inherit", "--expected-sha256", stale]
+    )
+
+    assert code == 2
+    assert source.read_text(encoding="utf-8") == "# 읽은 뒤 바뀐 본문\n"
+    assert not (reports / "종목" / "ㅇ" / "율촌화학_2026-09-01.md").exists()
+    assert "읽은 뒤 승계본이 바뀌었다" in capsys.readouterr().err
+
+
+def test_find_prior_report_inherit_refuses_existing_different_target(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """목표 경로에 다른 파일이 이미 있으면 덮지 않는다 — 두 파일 모두 그대로 남는다."""
+    module = load_script("analyze-stock", "find_prior_report")
+    reports = _build_reports_dir(tmp_path)
+    monkeypatch.setenv("INVAGENT_OUTPUT_DIR", str(tmp_path))
+    folder = reports / "종목" / "ㅇ"
+    source = folder / "율촌화학_2026-09-05.md"  # 목표일보다 늦은 날짜가 승계 대상이 된다
+    source.write_text("# 승계본\n", encoding="utf-8")
+    target = folder / "율촌화학_2026-09-01.md"
+    target.write_text("# 이미 있는 목표\n", encoding="utf-8")
+
+    code = module.main(
+        ["율촌화학", "--today", "2026-09-01", "--inherit", "--expected-sha256", _sha(source)]
+    )
+
+    assert code == 2
+    assert source.read_text(encoding="utf-8") == "# 승계본\n"
+    assert target.read_text(encoding="utf-8") == "# 이미 있는 목표\n"
+    assert "목표 경로에 다른 파일이 이미 있다" in capsys.readouterr().err
+
+
+def test_find_prior_report_inherit_same_path_is_noop(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_script("analyze-stock", "find_prior_report")
+    reports = _build_reports_dir(tmp_path)
+    monkeypatch.setenv("INVAGENT_OUTPUT_DIR", str(tmp_path))
+    source = reports / "종목" / "ㅇ" / "율촌화학_2026-08-14.md"
+    before = source.read_text(encoding="utf-8")
+
+    code = module.main(
+        ["율촌화학", "--today", "2026-08-14", "--inherit", "--expected-sha256", _sha(source)]
+    )
+
+    assert code == 0
+    assert source.read_text(encoding="utf-8") == before
+    assert "이미 목표 경로" in capsys.readouterr().out
+
+
+def test_find_prior_report_inherit_reports_unremovable_source(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """목표를 쓴 뒤 원본 삭제가 실패하면 성공으로 말하지 않고 남은 두 파일을 짚는다."""
+    module = load_script("analyze-stock", "find_prior_report")
+    reports = _build_reports_dir(tmp_path)
+    monkeypatch.setenv("INVAGENT_OUTPUT_DIR", str(tmp_path))
+    source = reports / "종목" / "ㅇ" / "율촌화학_2026-08-14.md"
+    digest = _sha(source)
+
+    def refuse(self: Path, missing_ok: bool = False) -> None:
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    code = module.main(
+        ["율촌화학", "--today", "2026-09-01", "--inherit", "--expected-sha256", digest]
+    )
+
+    assert code == 2
+    assert source.exists()
+    assert (reports / "종목" / "ㅇ" / "율촌화학_2026-09-01.md").read_bytes() == source.read_bytes()
+    assert "원본" in capsys.readouterr().err
