@@ -19,6 +19,8 @@ A_YEARS = 3
 N_HIGH_WINDOW = 250
 N_MAX_BELOW_HIGH_PCT = 15.0
 S_WINDOW = 50
+# 달력일. 250거래일(N 창)을 휴장일까지 넉넉히 덮는다.
+BARS_DAYS = 400
 S_MIN_UPDOWN_RATIO = 1.0
 L_MIN_RS = 80.0
 I_WINDOW = 20
@@ -74,24 +76,40 @@ def _check_a(financials: dict, primary: str) -> dict:
     return {"mark": "pass" if rising and eps[-1] > 0 else "fail", "detail": detail}
 
 
-def _check_n(bars: list[dict]) -> dict:
-    """신고가권 — 종가 기준. 장중 고가는 쓰지 않는다 (가격 판단은 종가만)."""
-    if not bars:
-        return {"mark": "unknown", "detail": "일봉 없음"}
-    window = bars[-N_HIGH_WINDOW:]
-    high = max(window, key=lambda b: b["close"])
-    close = bars[-1]["close"]
-    gap = _pct_change(close, high["close"])
+def _bars_missing(bars: daily.Bars | None) -> str | None:
+    if bars is None:
+        return "일봉 없음"
+    if not bars.rows:
+        return f"일봉 없음 — {bars.error}" if bars.error else "일봉 없음"
+    return None
+
+
+def _check_n(bars: daily.Bars | None) -> dict:
+    """신고가권 — 판정 일봉(분할 수정) 종가 기준. 장중 고가는 쓰지 않는다 (가격 판단은 종가만).
+
+    250거래일이 안 되면 52주 고점을 모른다 — 짧은 창의 고점으로 채점하지 않는다.
+    """
+    missing = _bars_missing(bars)
+    if missing:
+        return {"mark": "unknown", "detail": missing}
+    if len(bars.rows) < N_HIGH_WINDOW:
+        return {"mark": "unknown", "detail": f"일봉 {len(bars.rows)}거래일 — 52주 고점에 {N_HIGH_WINDOW}거래일 필요"}
+    high_date, high = bars.closing_high(N_HIGH_WINDOW)
+    close = bars.closes[-1]
+    gap = _pct_change(close, high)
     mark = "pass" if gap >= -N_MAX_BELOW_HIGH_PCT else "fail"
     return {
         "mark": mark,
-        "detail": f"종가 {close:,.0f}원 · 52주 종가 고점 {high['close']:,.0f}원({high['date']}) 대비 {gap:+.1f}%",
+        "detail": f"종가 {close:,.0f}원 · 52주 종가 고점 {high:,.0f}원({high_date}) 대비 {gap:+.1f}%",
     }
 
 
-def _check_s(bars: list[dict], stock_info: dict) -> dict:
+def _check_s(bars: daily.Bars | None, stock_info: dict) -> dict:
     """수급 — 최근 50거래일 상승일 거래량 ÷ 하락일 거래량이 1.0을 넘으면 매집 우위."""
-    window = bars[-(S_WINDOW + 1):]
+    missing = _bars_missing(bars)
+    if missing:
+        return {"mark": "unknown", "detail": missing}
+    window = bars.rows[-(S_WINDOW + 1):]
     if len(window) < 2:
         return {"mark": "unknown", "detail": "일봉 없음"}
     up = sum(b["volume"] for a, b in zip(window, window[1:]) if b["close"] > a["close"])
@@ -172,18 +190,20 @@ def evaluate(
     trend: list[dict],
     fundamentals: dict | None = None,
     market: str | None = None,
+    bars: daily.Bars | None = None,
 ) -> dict:
-    """info-tab 페이로드·빅픽처·투자자별 매매동향 → 항목별 `{mark, detail}`과 `score`.
+    """info-tab 페이로드·빅픽처·투자자별 매매동향·판정 일봉 → 항목별 `{mark, detail}`과 `score`.
 
     mark는 `pass`·`fail`·`warn`(경계, 점수 미산입)·`unknown`(미수집) 중 하나다.
     우선주는 실적이 따로 없으므로 C·A만 `fundamentals`(본주 info-tab)에서 읽고, 가격·RS·수급은
     우선주 자기 `info`로 잰다. `market`은 info-tab이 없을 때 다른 출처에서 받은 상장 시장이다.
+    N·S는 `bars`(`daily.fetch_daily_bars`, 분할 수정·정규장 종가)로 잰다 — info-tab `chart`는 원주가라
+    분할 전 고점이 남아 N을 거짓 실패시킨다. 우선주면 우선주 자기 일봉이다.
     """
     info = info or {}
     fs_info = fundamentals or info
     financials = fs_info.get("financials") or {}
     primary = fs_info.get("primary_fs_type") or "C"
-    bars = daily.chart_bars(info)
     result = {
         "C": _check_c(financials, primary),
         "A": _check_a(financials, primary),
@@ -286,13 +306,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[누락] 투자자별 매매동향 — {te}", file=sys.stderr)
     else:
         sources.append("네이버 투자자별 매매동향")
+    # N·S는 판정 일봉으로 잰다 — 우선주는 우선주 자기 시세(가격 축).
+    bars = daily.fetch_daily_bars(ticker, BARS_DAYS)
+    if bars.rows:
+        sources.append(bars.label)
+    else:
+        print(f"[누락] 판정 일봉 — {bars.error or '빈 응답'}", file=sys.stderr)
     big_picture, bpe = stockeasy.fetch_market_json("big_picture")
     if bpe:
         print(f"[누락] 빅픽처 — {bpe}", file=sys.stderr)
     else:
         sources.append("StockEasy 빅픽처")
 
-    result = evaluate(info, big_picture, trend, fundamentals=fundamentals, market=market)
+    result = evaluate(info, big_picture, trend, fundamentals=fundamentals, market=market, bars=bars)
     if args.json:
         print(json.dumps({"stock_code": ticker, "stock_name": name, "fetched_at": date.today().isoformat(),
                           "sources": sources, **result}, ensure_ascii=False))

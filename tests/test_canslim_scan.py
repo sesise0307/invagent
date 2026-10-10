@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from invagent.datafeed import daily
 from tests.conftest import load_script
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -76,33 +77,40 @@ def _chart(closes, volumes=None) -> dict:
     return {"schema": {"fields": ["timestamp", "open", "high", "low", "close", "volume"]}, "data": rows}
 
 
-def test_n_passes_within_15_percent_of_the_52_week_closing_high() -> None:
-    info = _info(chart=_chart([100] * 10 + [200] + [170] * 5))
+def _bars(closes, volumes=None, source=daily.OFFICIAL) -> daily.Bars:
+    """판정 일봉 대역. 날짜는 2025-01-01부터 하루씩."""
+    from datetime import date, timedelta
 
-    n = canslim.evaluate(info, None, [])["N"]
+    volumes = volumes or [1000] * len(closes)
+    rows = [
+        {"date": (date(2025, 1, 1) + timedelta(days=i)).strftime("%Y%m%d"),
+         "open": c, "high": c, "low": c, "close": c, "volume": v, "source": source}
+        for i, (c, v) in enumerate(zip(closes, volumes))
+    ]
+    return daily.Bars(rows=rows)
+
+
+def test_n_passes_within_15_percent_of_the_52_week_closing_high() -> None:
+    n = canslim.evaluate(_info(), None, [], bars=_bars([100] * 240 + [200] + [170] * 9))["N"]
 
     assert n["mark"] == "pass"
     assert "-15.0%" in n["detail"] and "200" in n["detail"]
 
 
 def test_n_fails_further_than_15_percent_below_the_high() -> None:
-    info = _info(chart=_chart([200] + [169] * 5))
-
-    assert canslim.evaluate(info, None, [])["N"]["mark"] == "fail"
+    assert canslim.evaluate(_info(), None, [], bars=_bars([200] + [169] * 249))["N"]["mark"] == "fail"
 
 
 def test_n_ignores_highs_older_than_250_sessions() -> None:
-    info = _info(chart=_chart([500] + [100] * 250))
-
-    assert canslim.evaluate(info, None, [])["N"]["mark"] == "pass"
+    assert canslim.evaluate(_info(), None, [], bars=_bars([500] + [100] * 250))["N"]["mark"] == "pass"
 
 
 def test_s_passes_when_up_day_volume_outweighs_down_day_volume_over_50_sessions() -> None:
     closes = [100, 101, 100] * 17          # 상승일 거래량 3000 vs 하락일 1000
     volumes = [1000, 3000, 1000] * 17
-    info = _info(chart=_chart(closes, volumes), stock_info={"flo_stk": 10_000_000, "dstr_rt": "62.5"})
+    info = _info(stock_info={"flo_stk": 10_000_000, "dstr_rt": "62.5"})
 
-    s = canslim.evaluate(info, None, [])["S"]
+    s = canslim.evaluate(info, None, [], bars=_bars(closes, volumes))["S"]
 
     assert s["mark"] == "pass"
     assert "3.00" in s["detail"]
@@ -112,9 +120,7 @@ def test_s_passes_when_up_day_volume_outweighs_down_day_volume_over_50_sessions(
 def test_s_fails_when_down_day_volume_dominates() -> None:
     closes = [100, 101, 100] * 17
     volumes = [1000, 1000, 3000] * 17
-    info = _info(chart=_chart(closes, volumes))
-
-    assert canslim.evaluate(info, None, [])["S"]["mark"] == "fail"
+    assert canslim.evaluate(_info(), None, [], bars=_bars(closes, volumes))["S"]["mark"] == "fail"
 
 
 def test_l_passes_at_rs_80_and_reports_the_rs_line_new_high() -> None:
@@ -200,10 +206,10 @@ def test_score_counts_only_passes_and_lists_warnings_and_gaps_apart() -> None:
 
 
 def test_preferred_share_takes_earnings_from_the_common_share_and_price_from_its_own() -> None:
-    own = _info(chart=_chart([100] * 5), rs_data={"rs": 85})        # 우선주: 확정 실적 없음
+    own = _info(rs_data={"rs": 85})        # 우선주: 확정 실적 없음
     common = _info(quarters=[_quarter(2025, 2, 100), _quarter(2026, 2, 200)], rs_data={"rs": 10})
 
-    result = canslim.evaluate(own, None, [], fundamentals=common)
+    result = canslim.evaluate(own, None, [], fundamentals=common, bars=_bars([100] * 300))
 
     assert result["C"]["mark"] == "pass"
     assert result["L"]["mark"] == "pass"   # RS는 우선주 자기 값
@@ -234,6 +240,7 @@ def fake_network(tmp_path, monkeypatch):
         raise AssertionError(f"unexpected url {url}")
 
     monkeypatch.setattr(http, "read_url", read_url)
+    monkeypatch.setattr(daily, "fetch_daily_bars", lambda code, days, asof=None: _bars([100] * 300))
     return routes, seen
 
 
@@ -249,7 +256,6 @@ def test_cli_prints_the_score_and_one_line_per_letter(fake_network, capsys) -> N
     routes, _ = fake_network
     routes["info-tab/005930"] = _info(
         quarters=[_quarter(2025, 2, 100), _quarter(2026, 2, 200)],
-        chart=_chart([100] * 5),
         rs_data={"rs": 91.7},
         stock_info={"name": "삼성전자", "market": "KOSPI"},
     )
@@ -266,7 +272,7 @@ def test_cli_prints_the_score_and_one_line_per_letter(fake_network, capsys) -> N
 
 def test_cli_scores_a_preferred_share_on_both_axes(fake_network, capsys) -> None:
     routes, seen = fake_network
-    routes["info-tab/005935"] = _info(chart=_chart([100] * 5), rs_data={"rs": 85},
+    routes["info-tab/005935"] = _info(rs_data={"rs": 85},
                                       stock_info={"name": "삼성전자우", "market": "KOSPI"})
     routes["info-tab/005930"] = _info(quarters=[_quarter(2025, 2, 100), _quarter(2026, 2, 200)],
                                       stock_info={"name": "삼성전자"})
@@ -297,7 +303,8 @@ def test_cli_keeps_going_when_info_tab_is_refused(fake_network, capsys) -> None:
 
     captured = capsys.readouterr()
     assert "[누락] info_tab" in captured.err
-    assert "점수 1/7" in captured.out and "❓ C" in captured.out
+    # 판정 일봉은 info-tab과 무관하다 — info-tab이 막혀도 N은 채점된다.
+    assert "점수 2/7" in captured.out and "❓ C" in captured.out and "✅ N" in captured.out
     assert "❌ M  KOSDAQ 조정장" in captured.out
     assert "덕산네오룩스(213420)" in captured.out
     source = next(ln for ln in captured.out.splitlines() if ln.startswith("출처:"))
@@ -317,7 +324,7 @@ def test_cli_does_not_ask_naver_for_the_market_when_info_tab_has_it(fake_network
 
 
 def test_preferred_share_without_its_own_rs_shows_the_common_rs_as_reference_only() -> None:
-    own = _info(chart=_chart([100] * 5))
+    own = _info()
     common = _info(rs_data={"rs": 91.7})
 
     l = canslim.evaluate(own, None, [], fundamentals=common)["L"]
@@ -352,3 +359,51 @@ def test_m_is_unknown_when_the_listing_market_is_unknown() -> None:
 
     assert m["mark"] == "unknown"
     assert "상장 시장 미상" in m["detail"]
+
+
+
+def test_n_scores_on_split_adjusted_bars_not_the_raw_chart() -> None:
+    """5:1 분할 전 원주가 고점(500)이 수정 일봉에선 100이다 — 원 차트로 재면 N이 거짓 실패한다."""
+    raw = _chart([500] * 100 + [100] * 200)
+    adjusted = _bars([100] * 300)
+
+    n = canslim.evaluate(_info(chart=raw), None, [], bars=adjusted)["N"]
+
+    assert n["mark"] == "pass"
+    assert "+0.0%" in n["detail"]
+
+
+def test_n_is_unknown_with_fewer_than_250_sessions() -> None:
+    n = canslim.evaluate(_info(), None, [], bars=_bars([100] * 249))["N"]
+
+    assert n["mark"] == "unknown"
+    assert "249" in n["detail"] and "250" in n["detail"]
+
+
+def test_n_and_s_are_unknown_with_the_error_when_bars_failed() -> None:
+    result = canslim.evaluate(_info(), None, [], bars=daily.Bars(error="HTTP 503"))
+
+    assert result["N"]["mark"] == result["S"]["mark"] == "unknown"
+    assert "HTTP 503" in result["N"]["detail"] and "HTTP 503" in result["S"]["detail"]
+
+
+def test_cli_names_the_bar_source_and_asks_for_400_days(fake_network, monkeypatch, capsys) -> None:
+    routes, _ = fake_network
+    routes["info-tab/005930"] = _info(stock_info={"name": "삼성전자", "market": "KOSPI"})
+    routes["/005930/trend"] = []
+    routes["big-picture"] = {}
+    asked = []
+
+    def fake_fetch(code, days, asof=None):
+        asked.append((code, days))
+        return _bars([100] * 300)
+
+    monkeypatch.setattr(daily, "fetch_daily_bars", fake_fetch)
+
+    assert canslim.main(["005930"]) == 0
+
+    out = capsys.readouterr().out
+    source = next(ln for ln in out.splitlines() if ln.startswith("출처:"))
+    assert "금융위 KRX 공식 일봉" in source
+    assert asked == [("005930", 400)]
+    assert "✅ N" in out

@@ -261,7 +261,9 @@ scores William O'Neil's CAN SLIM deterministically for §5 「📋 CAN SLIM 점�
 check it is **reference only** (user decision, 2026-10-05): the score changes nothing in step 10, and a
 test asserts `entry_policy.py` never reads it. C and A come from `info-tab` quarterly and annual EPS
 (from the common share for a preferred), N from the 250-session **closing** high, S from 50-session
-up/down volume, L from `info-tab`'s `rs_data.rs` — StockEasy's own relative-strength score, already in
+up/down volume (both on the split-adjusted judgement bars (`datafeed.daily.fetch_daily_bars`, 400 days, the
+preferred's own bars for a preferred), not the raw `info-tab` chart, whose pre-split highs gave false N misses; fewer
+than 250 sessions leaves N unknown and the bar label joins the `출처` line), L from `info-tab`'s `rs_data.rs` — StockEasy's own relative-strength score, already in
 the payload, so no new endpoint was needed — I from 20-session institutional net buying via
 `datafeed.naver.fetch_investor_trend` (Naver `m.stock.naver.com/api/stock/<code>/trend`, since StockEasy
 exposes no per-stock institutional flow), and M from the StockEasy big picture of the stock's own market,
