@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import os
+import re
 import urllib.error
 from pathlib import Path
 
@@ -672,3 +675,138 @@ def test_stock_info_summary_keeps_after_hours_quotes_and_disclosures():
         "20260818800754",
         "20260714000123",
     ]
+
+
+# --- 골든 출력 ---------------------------------------------------------------
+# 수집 경로를 고쳐도 사람이 읽는 출력과 --json은 한 글자도 바뀌지 않아야 한다. 기대값은
+# `tests/golden/`에 있고, 네트워크는 `datafeed.http.read_url` 한 곳에서 막는다.
+# 출력이 의도적으로 바뀌면 `INVAGENT_UPDATE_GOLDEN=1`로 다시 쓰고 diff를 검토한다.
+GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
+
+PREFERRED_OWN_PAYLOAD = {
+    "stock_code": "005935",
+    "stock_info": {
+        "name": "삼성전자우",
+        "market": "KOSPI",
+        "cur_prc": "-61000",
+        "pred_pre": "-500",
+        "flu_rt": "-0.81",
+        "mac": "500000",
+        "trde_qty": "1200000",
+        "per": "10.1",
+        "pbr": "1.1",
+        "250hgst": "+70000",
+        "250lwst": "-50000",
+        "250hgst_pric_dt": "20260701",
+        "250lwst_pric_dt": "20251101",
+        "250hgst_pric_pre_rt": "-12.86",
+        "250lwst_pric_pre_rt": "+22.00",
+        "for_exh_rt": "+70.1",
+        "dstr_rt": "95.0",
+    },
+    "after_hours_quote": {
+        "dt": "20260929", "cur_prc": "+61200", "pred_pre": "+200", "flu_rt": "+0.33",
+        "cntr_tm": "180000", "market": "krx", "session": "after",
+    },
+    "rs_data": {"rs": 60.0},
+}
+
+PREFERRED_PARENT_PAYLOAD = {
+    **STOCK_INFO_PAYLOAD,
+    "stock_code": "005930",
+    "stock_info": {**STOCK_INFO_PAYLOAD["stock_info"], "name": "삼성전자", "market": "KOSPI",
+                   "cur_prc": "+80000", "per": "12.5"},
+    "after_hours_quote": {"dt": "20260929", "cur_prc": "+80500", "cntr_tm": "180000", "session": "after"},
+    "financials": {
+        **STOCK_INFO_PAYLOAD["financials"],
+        "consolidatedYearly": [
+            {"year": 2025, "month": 12, "revenue": 3.0e14, "operating_income": 3.2e13,
+             "net_income": 3.4e13, "eps": 4950.0, "operating_margin": 10.7, "per": 11.0, "pbr": 1.2},
+        ],
+        "consolidatedYearlyEstimate": [
+            {"year": 2026, "month": 12, "revenue": 3.3e14, "operating_income": 4.1e13,
+             "net_income": 3.9e13, "eps": 5800.0, "operating_margin": 12.4, "per": None, "pbr": None},
+        ],
+    },
+}
+
+
+def _golden_network(monkeypatch: pytest.MonkeyPatch, info_tabs: dict[str, dict], parent: str) -> list[str]:
+    """URL로 응답을 고르는 가짜 `read_url`. 요청된 URL을 순서대로 기록한다."""
+    import urllib.parse
+
+    seen: list[str] = []
+    after_hours = {**STOCK_INFO_PAYLOAD, "after_hours_quote": {
+        "dt": "20260929", "cur_prc": "-31467", "cntr_tm": "195959", "market": "krx", "session": "after"}}
+
+    def read_url(url, headers, timeout):
+        seen.append(url)
+        path = urllib.parse.urlparse(url).path
+        for code, payload in info_tabs.items():
+            if path.endswith(f"/stock-info/info-tab/{code}"):
+                return json.dumps(after_hours if payload is STOCK_INFO_PAYLOAD else payload).encode()
+        if path.endswith(f"/news/by-stock-code/{parent}"):
+            return json.dumps(NEWS_PAYLOAD).encode()
+        if path.endswith(f"/stock-info/analysis-tab/{parent}"):
+            return json.dumps(ANALYSIS_TAB_PAYLOAD).encode()
+        if "securities-reports" in path or path.endswith("/reports"):
+            return json.dumps(REPORTS_PAYLOAD).encode()
+        raise AssertionError(f"예상 밖 요청: {url}")
+
+    monkeypatch.setattr(datafeed_http, "read_url", read_url)
+    monkeypatch.setenv("STOCKEASY_COOKIE", "session=golden")
+    return seen
+
+
+def _normalise(text: str) -> str:
+    from datetime import date
+
+    return text.replace(date.today().isoformat(), "<TODAY>")
+
+
+def _check_golden(name: str, actual: str) -> None:
+    path = GOLDEN_DIR / name
+    if os.environ.get("INVAGENT_UPDATE_GOLDEN") == "1":
+        GOLDEN_DIR.mkdir(exist_ok=True)
+        path.write_text(actual, encoding="utf-8")
+    assert actual == path.read_text(encoding="utf-8")
+
+
+def _run_golden(monkeypatch, capsys, argv, info_tabs, parent) -> tuple[str, str]:
+    module = load_script("analyze-stock", "fetch_stock_info")
+    _golden_network(monkeypatch, info_tabs, parent)
+    assert module.main(argv) == 0
+    captured = capsys.readouterr()
+    return captured.out, captured.err
+
+
+def _json_without_clock(out: str) -> str:
+    summary = json.loads(out)
+    assert re.match(r"\d{4}-\d{2}-\d{2}T", summary.pop("fetched_at"))
+    return json.dumps(summary, ensure_ascii=False, indent=1, sort_keys=False) + "\n"
+
+
+COMMON_TABS = {"064290": STOCK_INFO_PAYLOAD}
+PREFERRED_TABS = {"005935": PREFERRED_OWN_PAYLOAD, "005930": PREFERRED_PARENT_PAYLOAD}
+COMMON_ARGV = ["064290", "--since", "2026-07-01", "--detail-chars", "40", "--news", "5"]
+PREFERRED_ARGV = ["005935", "--summaries", "2"]
+
+
+def test_golden_text_output_for_a_common_share(monkeypatch, capsys) -> None:
+    out, err = _run_golden(monkeypatch, capsys, COMMON_ARGV, COMMON_TABS, "064290")
+    _check_golden("fetch_stock_info_common.txt", _normalise(out + "--- stderr ---\n" + err))
+
+
+def test_golden_json_output_for_a_common_share(monkeypatch, capsys) -> None:
+    out, err = _run_golden(monkeypatch, capsys, [*COMMON_ARGV, "--json"], COMMON_TABS, "064290")
+    _check_golden("fetch_stock_info_common.json", _json_without_clock(out) + "--- stderr ---\n" + err)
+
+
+def test_golden_text_output_for_a_preferred_share(monkeypatch, capsys) -> None:
+    out, err = _run_golden(monkeypatch, capsys, PREFERRED_ARGV, PREFERRED_TABS, "005930")
+    _check_golden("fetch_stock_info_preferred.txt", _normalise(out + "--- stderr ---\n" + err))
+
+
+def test_golden_json_output_for_a_preferred_share(monkeypatch, capsys) -> None:
+    out, err = _run_golden(monkeypatch, capsys, [*PREFERRED_ARGV, "--json"], PREFERRED_TABS, "005930")
+    _check_golden("fetch_stock_info_preferred.json", _json_without_clock(out) + "--- stderr ---\n" + err)

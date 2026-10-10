@@ -1,0 +1,262 @@
+{
+ "stock_code": "005935",
+ "stock_name": "삼성전자우",
+ "preferred_of": "005930",
+ "preferred_discount_pct": -23.750000000000004,
+ "stock_info": {
+  "name": "삼성전자우",
+  "market": "KOSPI",
+  "cur_prc": "-61000",
+  "pred_pre": "-500",
+  "flu_rt": "-0.81",
+  "mac": "500000",
+  "trde_qty": "1200000",
+  "per": "10.1",
+  "pbr": "1.1",
+  "250hgst": "+70000",
+  "250lwst": "-50000",
+  "250hgst_pric_dt": "20260701",
+  "250lwst_pric_dt": "20251101",
+  "250hgst_pric_pre_rt": "-12.86",
+  "250lwst_pric_pre_rt": "+22.00",
+  "for_exh_rt": "+70.1",
+  "dstr_rt": "95.0"
+ },
+ "after_hours_quote": {
+  "dt": "20260929",
+  "cur_prc": "+61200",
+  "pred_pre": "+200",
+  "flu_rt": "+0.33",
+  "cntr_tm": "180000",
+  "market": "krx",
+  "session": "after"
+ },
+ "nxt_quote": null,
+ "primary_fs_type": "C",
+ "sector_info": {
+  "major_name": "반도체",
+  "mid_name": "반도체장비"
+ },
+ "rs_data": {
+  "rs": 91.25,
+  "rs_1m": 1.78,
+  "rs_3m": 88.85,
+  "rs_6m": 92.05
+ },
+ "investment": {
+  "base_period": "2026.1Q",
+  "financial_type": "C",
+  "overall_grade": "B",
+  "growth": {
+   "category_name": "성장성",
+   "average_grade": "A",
+   "metrics": [
+    {
+     "name": "매출성장률",
+     "formatted_value": "-11.1%",
+     "grade": "D"
+    }
+   ]
+  }
+ },
+ "target_price_history": [
+  {
+   "report_date": "2026-07-03",
+   "securities_company": "메리츠증권",
+   "author": "김동관",
+   "investment_opinion": "Buy",
+   "target_price": 75000,
+   "target_price_change": "상향",
+   "current_price": 45800,
+   "upside_potential": 63.76,
+   "title": "넘치는 수주와 폭발적 실적 성장"
+  },
+  {
+   "report_date": "2026-04-22",
+   "securities_company": "메리츠증권",
+   "author": "김동관",
+   "investment_opinion": "Buy",
+   "target_price": 41000,
+   "target_price_change": "신규",
+   "current_price": 31450,
+   "upside_potential": 30.4,
+   "title": "4년만의 턴어라운드"
+  },
+  {
+   "report_date": "2026-05-28",
+   "securities_company": "NH투자증권",
+   "author": "심의섭",
+   "investment_opinion": "Not Rated",
+   "target_price": null,
+   "target_price_change": null,
+   "current_price": 40650,
+   "upside_potential": null,
+   "title": "호황기에 더욱 돋보이는 경쟁력"
+  }
+ ],
+ "consensus": {
+  "method": "latest_report_per_broker_then_numeric_target",
+  "coverage_brokers": 2,
+  "included_brokers": 1,
+  "included": [
+   {
+    "broker": "메리츠증권",
+    "report_date": "2026-07-03",
+    "target_price": 75000.0,
+    "target_price_change": "상향"
+   }
+  ],
+  "excluded_latest": [
+   {
+    "broker": "NH투자증권",
+    "report_date": "2026-05-28",
+    "opinion": "Not Rated",
+    "target_status": "NR/미제시"
+   }
+  ],
+  "average": 75000.0,
+  "minimum": 75000.0,
+  "maximum": 75000.0,
+  "upgrades": 1,
+  "downgrades": 0,
+  "upside_percent": -6.25
+ },
+ "financials": {
+  "consolidated": [
+   {
+    "year": 2026,
+    "quarter": 2,
+    "month": 6,
+    "revenue": 8960989867,
+    "operating_income": -5117444745,
+    "net_income": -6094354375,
+    "eps": -470.32,
+    "operating_margin": -57.11,
+    "per": null,
+    "pbr": null
+   }
+  ],
+  "consolidatedEstimate": [
+   {
+    "year": 2026,
+    "quarter": 4,
+    "month": 12,
+    "revenue": 49267000000,
+    "operating_income": 8533000000,
+    "net_income": 8400000000,
+    "eps": 578.81,
+    "operating_margin": 17.32,
+    "per": null,
+    "pbr": 7.66
+   }
+  ],
+  "consolidatedYearly": [
+   {
+    "year": 2025,
+    "month": 12,
+    "revenue": 300000000000000.0,
+    "operating_income": 32000000000000.0,
+    "net_income": 34000000000000.0,
+    "eps": 4950.0,
+    "operating_margin": 10.7,
+    "per": 11.0,
+    "pbr": 1.2
+   }
+  ],
+  "consolidatedYearlyEstimate": [
+   {
+    "year": 2026,
+    "month": 12,
+    "revenue": 330000000000000.0,
+    "operating_income": 41000000000000.0,
+    "net_income": 39000000000000.0,
+    "eps": 5800.0,
+    "operating_margin": 12.4,
+    "per": null,
+    "pbr": null
+   }
+  ]
+ },
+ "eps_changes": {
+  "count": 10,
+  "changes": [
+   {
+    "quarter": "2026Q4",
+    "change_date_str": "2026-08-12",
+    "value_old": 443.43,
+    "value_new": 427.55,
+    "change_rate": -3.58
+   }
+  ]
+ },
+ "news": [
+  {
+   "title": "TSMC, 첨단 패키징 외주 확대",
+   "link": "https://n.news.naver.com/mnews/article/277/0005803223",
+   "published_at": "2026-08-14T02:20:00Z",
+   "source": "아시아경제"
+  },
+  {
+   "title": "지난달 기사",
+   "link": "https://example.com/old",
+   "published_at": "2026-07-01T00:00:00Z",
+   "source": "예시"
+  }
+ ],
+ "news_coverage": {
+  "scope": "latest_n_items",
+  "requested_limit": 10,
+  "returned_count": 2,
+  "since": null,
+  "complete": true,
+  "label": "API 최근 2건"
+ },
+ "reports": [
+  {
+   "id": 1,
+   "report_date": "2026-07-03",
+   "securities_company": "메리츠증권",
+   "author": "김동관",
+   "investment_opinion": "Buy",
+   "target_price": 75000,
+   "target_price_change": "상향",
+   "title": "넘치는 수주와 폭발적 실적 성장",
+   "summary_points": [
+    {
+     "point": "CoWoS 검사 장비 본계약 임박"
+    },
+    {
+     "point": "생산능력 50% 확대 <b>계획</b>"
+    }
+   ],
+   "detail_content": {
+    "card_news_sections": [
+     {
+      "header": "3Q26 전망",
+      "content": "수주잔고 인식 본격화"
+     }
+    ]
+   },
+   "file_name": "20260703_인텍플러스_064290_기계·장비_기업리포트_Meritz.pdf"
+  }
+ ],
+ "disclosures": [
+  {
+   "id": 406219,
+   "rcept_no": "20260818800754",
+   "report_nm": "최대주주등소유주식변동신고서              ",
+   "rcept_dt": "2026-08-18",
+   "corp_name": "인텍플러스",
+   "disclosure_type": "common_table"
+  },
+  {
+   "id": 406100,
+   "rcept_no": "20260714000123",
+   "report_nm": "반기보고서 (2026.06)",
+   "rcept_dt": "2026-07-14",
+   "corp_name": "인텍플러스",
+   "disclosure_type": "interim_results"
+  }
+ ]
+}
+--- stderr ---
