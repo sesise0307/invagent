@@ -552,9 +552,9 @@ def test_projection_contact_is_not_a_stage_change(capsys):
     assert "N거래일 뒤" in output
 
 
-def test_main_fetches_the_fundamentals_of_a_preferred_shares_common_stock(monkeypatch, capsys, tmp_path):
+def test_main_fetches_the_fundamentals_of_a_preferred_shares_common_stock(monkeypatch, capsys):
     """우선주는 실적이 따로 없다 — info_tab은 본주 코드로, 일봉은 우선주 코드로 부른다."""
-    from invagent.datafeed import cache, daily, http, stockeasy, tickers
+    from invagent.datafeed import daily, http, stockeasy, tickers
 
     monkeypatch.setattr(
         tickers,
@@ -579,7 +579,6 @@ def test_main_fetches_the_fundamentals_of_a_preferred_shares_common_stock(monkey
             {"financials": None, "primary_fs_type": "C", "stock_info": {"name": "삼성전자"}}
         ).encode()
 
-    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
     monkeypatch.setattr(http, "read_url", fake_read)
     monkeypatch.setattr(stockeasy, "load_cookie", lambda: "x")
 
@@ -593,9 +592,9 @@ def test_main_fetches_the_fundamentals_of_a_preferred_shares_common_stock(monkey
     assert "삼성전자우(005935)" in out, "표시 이름은 우선주 그대로다"
 
 
-def test_main_reports_an_info_tab_401_and_judges_on_price_alone(monkeypatch, capsys, tmp_path):
+def test_main_reports_an_info_tab_401_and_judges_on_price_alone(monkeypatch, capsys):
     """info-tab 실패는 판정을 막지 않는다 — 사유와 쿠키 힌트를 찍고 가격 전용으로 간다."""
-    from invagent.datafeed import cache, daily, http, stockeasy, tickers
+    from invagent.datafeed import daily, http, stockeasy, tickers
 
     monkeypatch.setattr(
         tickers,
@@ -609,7 +608,6 @@ def test_main_reports_an_info_tab_401_and_judges_on_price_alone(monkeypatch, cap
     def refuse(url, headers, timeout):
         raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
 
-    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
     monkeypatch.setattr(http, "read_url", refuse)
     monkeypatch.setattr(stockeasy, "load_cookie", lambda: None)
 

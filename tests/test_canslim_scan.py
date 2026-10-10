@@ -220,13 +220,12 @@ import json
 
 import pytest
 
-from invagent.datafeed import cache, http
+from invagent.datafeed import http
 
 
 @pytest.fixture
-def fake_network(tmp_path, monkeypatch):
+def fake_network(monkeypatch):
     """URL 경로로 응답을 고르는 가짜 `read_url`. 불린 URL을 기록한다."""
-    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
     monkeypatch.setenv("STOCKEASY_COOKIE", "session=x")
     routes, seen = {}, []
 

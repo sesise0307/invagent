@@ -7,9 +7,11 @@ from types import ModuleType
 
 import pytest
 
-from invagent.datafeed import ratelimit
+from invagent.datafeed import cache, ratelimit
 
 SKILLS_ROOT = Path(__file__).resolve().parents[1] / ".agents" / "skills"
+# 테스트가 가리키기 전의 실제 캐시 위치. 기본 경로를 확인하는 테스트만 읽는다.
+REAL_CACHE_ROOT = cache.CACHE_ROOT
 
 
 def load_script(skill: str, name: str) -> ModuleType:
@@ -37,3 +39,13 @@ def _no_real_rate_limit_state(tmp_path_factory, monkeypatch):
     """
     monkeypatch.setattr(ratelimit, "STATE_ROOT", tmp_path_factory.mktemp("ratelimit"))
     monkeypatch.setattr(ratelimit, "_sleep", lambda seconds: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_http_cache(tmp_path_factory, monkeypatch):
+    """응답 캐시는 테스트마다 빈 임시 디렉터리를 쓴다.
+
+    가짜 `read_url` 응답이 실제 `output/.cache/http`에 쓰이면 다음 실제 실행이 그것을 받아 쓰고,
+    거꾸로 그곳에 남은 응답이 TTL 안에서 테스트의 가짜 응답을 가려 결과가 실행 시각에 따라 달라진다.
+    """
+    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path_factory.mktemp("http-cache"))

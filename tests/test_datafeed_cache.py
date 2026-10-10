@@ -1,11 +1,18 @@
 """`invagent.datafeed.cache` — 짧은 TTL HTTP 응답 캐시."""
 
 from invagent.datafeed import cache, env
+from tests.conftest import REAL_CACHE_ROOT
 
 
 def test_cache_root_sits_under_the_gitignored_output_dir() -> None:
     """`output/`만 gitignore된다. 캐시가 그 밖으로 나가면 저장소에 섞인다."""
-    assert cache.CACHE_ROOT == env.repo_root() / "output" / ".cache" / "http"
+    assert REAL_CACHE_ROOT == env.repo_root() / "output" / ".cache" / "http"
+
+
+def test_the_suite_never_writes_the_real_cache() -> None:
+    """가짜 응답이 실제 `output/.cache/http`에 남으면 다음 실제 실행이 그것을 시세로 읽는다."""
+    stored = cache.cache_path("https://example.invalid/x", authed=False)
+    assert REAL_CACHE_ROOT not in stored.parents
 
 
 def test_get_or_fetch_serves_the_second_call_from_the_cache(tmp_path, monkeypatch) -> None:

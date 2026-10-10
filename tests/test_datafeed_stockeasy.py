@@ -1,13 +1,7 @@
 """`invagent.datafeed.stockeasy` — StockEasy 종목·시장 API."""
 
-import pytest
 
 from invagent.datafeed import cache, http, stockeasy
-
-
-@pytest.fixture(autouse=True)
-def _isolated_cache(tmp_path, monkeypatch):
-    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
 
 
 def test_endpoints_sit_on_the_documented_api_hosts() -> None:

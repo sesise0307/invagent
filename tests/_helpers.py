@@ -12,4 +12,8 @@ def _load_http_cache_module():
 
     from invagent.datafeed import cache
 
-    return importlib.reload(cache)
+    # 다시 읽으면 `CACHE_ROOT`가 실제 경로로 돌아간다 — conftest가 가리킨 임시 디렉터리를 지킨다.
+    root = cache.CACHE_ROOT
+    module = importlib.reload(cache)
+    module.CACHE_ROOT = root
+    return module

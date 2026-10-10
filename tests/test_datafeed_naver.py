@@ -2,20 +2,13 @@
 
 from datetime import date
 
-import pytest
-
-from invagent.datafeed import cache, http, naver
+from invagent.datafeed import http, naver
 
 SAMPLE = (
     "[['날짜','시가','고가','저가','종가','거래량','외국인소진율'],"
     "['20260902',100,110,90,105,1000,50.0],"
     "['20260901',95,99,90,98,900,49.0]]"
 )
-
-
-@pytest.fixture(autouse=True)
-def _isolated_cache(tmp_path, monkeypatch):
-    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
 
 
 def test_parse_sise_drops_the_header_and_sorts_ascending() -> None:

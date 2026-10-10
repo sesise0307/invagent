@@ -207,12 +207,8 @@ def _patch_stock_info_fetch(
     return calls
 
 
-def test_stock_info_serves_a_repeat_call_from_the_cache(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_stock_info_serves_a_repeat_call_from_the_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     """한 번의 analyze-stock 실행이 info-tab(약 128KB)을 두 번 받던 경로를 없앤다."""
-    module = load_script("analyze-stock", "fetch_stock_info")
-    monkeypatch.setattr(module.http_cache, "CACHE_ROOT", tmp_path)
 
     calls: list[str] = []
 
@@ -230,10 +226,8 @@ def test_stock_info_serves_a_repeat_call_from_the_cache(
     assert len(calls) == 1, "두 번째 호출이 네트워크를 다시 탔다"
 
 
-def test_stock_info_never_caches_a_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stock_info_never_caches_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """일시적인 401·타임아웃이 TTL 동안 고착되면 쿠키를 고쳐도 계속 실패로 보인다."""
-    module = load_script("analyze-stock", "fetch_stock_info")
-    monkeypatch.setattr(module.http_cache, "CACHE_ROOT", tmp_path)
 
     state = {"fail": True}
 

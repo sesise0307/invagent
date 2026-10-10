@@ -5,12 +5,7 @@ import urllib.error
 
 import pytest
 
-from invagent.datafeed import cache, http, stockeasy, stockinfo
-
-
-@pytest.fixture(autouse=True)
-def _isolated_cache(tmp_path, monkeypatch):
-    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
+from invagent.datafeed import http, stockeasy, stockinfo
 
 
 @pytest.fixture

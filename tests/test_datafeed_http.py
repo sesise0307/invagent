@@ -3,14 +3,7 @@
 import json
 import urllib.error
 
-import pytest
-
 from invagent.datafeed import cache, http
-
-
-@pytest.fixture(autouse=True)
-def _isolated_cache(tmp_path, monkeypatch):
-    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
 
 
 def test_get_json_decodes_the_body(monkeypatch) -> None:

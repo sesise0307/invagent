@@ -181,7 +181,6 @@ def test_market_signal_no_cache_flag_refetches_every_endpoint(
 ) -> None:
     """`--no-cache`는 다른 스크립트처럼 캐시를 건너뛴다 — 직전 실행이 남긴 응답을 쓰지 않는다."""
     module = load_script("daily-digest", "fetch_market_signals")
-    monkeypatch.setattr(module.http_cache, "CACHE_ROOT", tmp_path)
     monkeypatch.setattr(module.http_cache, "_forced_off", False)
     monkeypatch.delenv("INVAGENT_HTTP_CACHE", raising=False)
 

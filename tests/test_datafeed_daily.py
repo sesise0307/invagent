@@ -30,11 +30,6 @@ NAVER_SISE = (
 
 
 @pytest.fixture(autouse=True)
-def _isolated_cache(tmp_path, monkeypatch):
-    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
-
-
-@pytest.fixture(autouse=True)
 def _no_official_key(monkeypatch):
     """기본은 금융위 키 없음 — 실제 `.env`에 키가 있어도 테스트는 그 값을 읽지 않는다."""
     monkeypatch.setattr(fsc, "load_key", lambda: None)

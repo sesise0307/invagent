@@ -2,9 +2,7 @@
 
 import json
 
-import pytest
-
-from invagent.datafeed import cache, http, naver, stockeasy, tickers
+from invagent.datafeed import http, naver, stockeasy, tickers
 
 OVERRIDE_FILE = """# 티커 오버라이드
 
@@ -88,13 +86,8 @@ NAVER_AC = {
 }
 
 
-@pytest.fixture
-def isolated_cache(tmp_path, monkeypatch):
-    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
-
-
 def test_a_name_resolves_through_naver_search_without_touching_stockeasy(
-    monkeypatch, isolated_cache
+    monkeypatch
 ) -> None:
     """StockEasy는 요청 제한이 잦다 — 이름 검색은 네이버로 끝나야 한다."""
     seen = []
@@ -124,13 +117,13 @@ def naver_only(body=NAVER_AC):
     return read
 
 
-def test_resolve_code_returns_the_searched_ticker(monkeypatch, isolated_cache) -> None:
+def test_resolve_code_returns_the_searched_ticker(monkeypatch) -> None:
     monkeypatch.setattr(http, "read_url", naver_only())
 
     assert tickers.resolve_code("대덕전자", {}) == ("353200", None)
 
 
-def test_resolve_code_reports_the_reason_when_nothing_matches(monkeypatch, isolated_cache) -> None:
+def test_resolve_code_reports_the_reason_when_nothing_matches(monkeypatch) -> None:
     monkeypatch.setattr(http, "read_url", naver_only({"query": "없는종목", "items": []}))
 
     code, err = tickers.resolve_code("없는종목", {})
@@ -138,7 +131,7 @@ def test_resolve_code_reports_the_reason_when_nothing_matches(monkeypatch, isola
     assert code is None and "검색 결과 없음" in err
 
 
-def test_an_ambiguous_name_lists_the_candidates(monkeypatch, isolated_cache) -> None:
+def test_an_ambiguous_name_lists_the_candidates(monkeypatch) -> None:
     monkeypatch.setattr(http, "read_url", naver_only())
 
     hit, err, code = tickers.resolve_stock("대덕", {})
@@ -146,7 +139,7 @@ def test_an_ambiguous_name_lists_the_candidates(monkeypatch, isolated_cache) -> 
     assert hit is None and code == 2 and "대덕전자1우(35320K" in err
 
 
-def test_stockeasy_search_answers_only_when_naver_fails(monkeypatch, isolated_cache) -> None:
+def test_stockeasy_search_answers_only_when_naver_fails(monkeypatch) -> None:
     def read(url, headers, timeout):
         if url.startswith(naver.SEARCH_URL):
             raise TimeoutError("timed out")
@@ -161,7 +154,7 @@ def test_stockeasy_search_answers_only_when_naver_fails(monkeypatch, isolated_ca
     assert tickers.resolve_code("대덕전자", {}) == ("353200", None)
 
 
-def test_a_ticker_query_needs_no_search(monkeypatch, isolated_cache) -> None:
+def test_a_ticker_query_needs_no_search(monkeypatch) -> None:
     def boom(url, headers, timeout):
         raise AssertionError("티커는 검색하지 않는다")
 

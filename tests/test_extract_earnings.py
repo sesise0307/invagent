@@ -366,10 +366,9 @@ def test_extract_earnings_derives_by_fiscal_year_end_and_skips_when_a_quarter_is
 def test_extract_earnings_main_prints_sheet_rows_and_fetches_only_for_annual_filings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from invagent.datafeed import cache, http
+    from invagent.datafeed import http
 
     module = load_script("daily-digest", "extract_earnings")
-    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path / "cache")
     monkeypatch.setenv("STOCKEASY_COOKIE", "session=x")
     seen: list[str] = []
     info_tab = {

@@ -12,15 +12,14 @@ from invagent.datafeed import http as datafeed_http
 from invagent.datafeed import naver as datafeed_naver
 from invagent.datafeed import stockeasy as datafeed_stockeasy
 from tests._helpers import _load_http_cache_module
-from tests.conftest import SKILLS_ROOT, load_script
+from tests.conftest import REAL_CACHE_ROOT, SKILLS_ROOT, load_script
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_http_cache_writes_under_the_ignored_output_dir() -> None:
     """`output/`만 gitignore다 — 한 칸 어긋나면 캐시 바이너리가 추적 대상 경로에 쌓인다."""
-    module = _load_http_cache_module()
-    assert module.CACHE_ROOT == REPO_ROOT / "output" / ".cache" / "http"
+    assert REAL_CACHE_ROOT == REPO_ROOT / "output" / ".cache" / "http"
 
 
 def test_http_cache_round_trips_within_the_ttl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -509,7 +509,8 @@ falls back to its kept response, with an `[캐시 대체] … N분 전` line on 
 because a stale body would hide an expired cookie. This throttles to the limit rather than evading
 it. The real limit is unpublished, so tune the constants from the refusals the next time they
 appear. `tests/conftest.py` points the lock files at a temporary directory and disables the waits
-for the whole suite.
+for the whole suite, and points `cache.CACHE_ROOT` at a fresh temporary directory for every test, so a faked
+response never lands in the real `output/.cache/http` and a real cached response never masks a fake one.
 
 The `weekly-investment-review` skill scores one week of trades and writes the verdict
 into the Notion journal's `## {dd}~{dd}(주말)` block. It grades each fill on three axes —

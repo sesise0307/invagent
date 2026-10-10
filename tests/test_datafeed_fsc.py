@@ -3,9 +3,8 @@
 import json
 from datetime import date
 
-import pytest
 
-from invagent.datafeed import cache, fsc, http
+from invagent.datafeed import fsc, http
 
 
 def item(
@@ -44,11 +43,6 @@ def response(*items) -> bytes:
             }
         }
     ).encode()
-
-
-@pytest.fixture(autouse=True)
-def _isolated_cache(tmp_path, monkeypatch):
-    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
 
 
 def test_bars_are_the_official_regular_session_prices_oldest_first(monkeypatch) -> None:
