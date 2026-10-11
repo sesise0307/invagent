@@ -65,3 +65,18 @@ def test_run_id_cannot_escape_the_folder(tmp_path: Path, monkeypatch: pytest.Mon
 
     with pytest.raises(SystemExit):
         module.main(["율촌화학", "--run-id", "../x", "--step", "6=ok"])
+
+
+@pytest.mark.parametrize("stock", ["../x", "a/b", "a\\b", "..", ".", "", "a\x00b"])
+def test_stock_name_cannot_escape_the_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], stock: str
+) -> None:
+    module = load_script("analyze-stock", "run_manifest")
+    monkeypatch.setenv("INVAGENT_OUTPUT_DIR", str(tmp_path))
+
+    with pytest.raises(SystemExit) as raised:
+        module.main([stock, "--run-id", "r1", "--date", "2026-10-10", "--step", "6=ok"])
+
+    assert raised.value.code == 2
+    assert "종목명" in capsys.readouterr().err
+    assert not any(p.is_file() for p in tmp_path.rglob("*"))

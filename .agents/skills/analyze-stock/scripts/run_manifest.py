@@ -22,6 +22,20 @@ from invagent.datafeed.text import nfc
 
 MANIFEST_SUBDIR = Path("reports") / "run-manifests"
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_UNSAFE_STOCK_CHARS = ("/", "\\", "\x00")
+
+
+def stock_name_error(stock: str) -> str | None:
+    """Why `stock` cannot be a filename component, or None when it is safe.
+
+    The name lands in the manifest filename, so a path separator, NUL, `.`/`..` or an
+    empty name could escape or collide with the manifest folder.
+    """
+    if stock.strip() in ("", ".", ".."):
+        return f"종목명이 비었거나 경로 성분이다: {stock!r}"
+    if any(char in stock for char in _UNSAFE_STOCK_CHARS):
+        return f"종목명에 경로 구분자나 NUL을 쓸 수 없다: {stock!r}"
+    return None
 
 
 def manifest_path(root: Path, stock: str, day: str, run_id: str) -> Path:
@@ -59,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
     a = p.parse_args(argv)
     if not _RUN_ID_RE.match(a.run_id):
         p.error(f"--run-id 는 영숫자와 . _ - 만 쓴다: {a.run_id!r}")
+    if (problem := stock_name_error(a.stock)) is not None:
+        p.error(problem)
     day = a.date or date.today().isoformat()
     steps = []
     for raw in a.step:
