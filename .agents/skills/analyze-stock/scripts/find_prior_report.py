@@ -22,13 +22,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import re
+import tempfile
 import sys
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from invagent.core.files import atomic_write
 from invagent.datafeed.env import output_dir
 from invagent.datafeed.text import nfc, norm as _key
 
@@ -203,11 +204,30 @@ class InheritError(Exception):
     """승계 이동을 거절한다. 원본은 그대로 남는다."""
 
 
+def _place_exclusive(target: Path, payload: bytes) -> None:
+    """`payload`를 `target`에 새로 놓는다. 이미 있으면 `FileExistsError` — 절대 덮지 않는다.
+
+    같은 폴더 임시 파일에 다 쓴 뒤 `os.link`로 건다. 하드링크는 목표가 있으면 실패하므로
+    존재 확인 뒤에 목표가 생겨도 덮이지 않고, 반쯤 쓴 목표도 남지 않는다.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(temp_name, target)
+    finally:
+        os.unlink(temp_name)
+
+
 def inherit(result: Lookup, expected_sha256: str) -> bool:
     """승계본을 오늘 목표 경로로 옮긴다. 옮겼으면 True, 이미 목표 경로였으면 False.
 
     원본 해시가 읽은 시점과 다르거나 목표 경로에 다른 파일이 있으면 원본을 건드리지 않고 거절한다.
-    목표는 `atomic_write`로 같은 바이트를 쓴 뒤 원본을 지운다 — 반쯤 쓴 목표는 남지 않는다.
+    목표는 `_place_exclusive`로 같은 바이트를 새로 놓은 뒤 원본을 지운다 — 반쯤 쓴 목표는 남지 않고,
+    확인 뒤에 목표가 생겨도 덮지 않는다.
     """
     if result.inherit is None:
         raise InheritError(f"승계 대상이 없다 — `{result.stock}`은 신규 작성이다.")
@@ -221,12 +241,16 @@ def inherit(result: Lookup, expected_sha256: str) -> bool:
         )
     if result.same_path:
         return False
+    conflict = InheritError(
+        f"목표 경로에 다른 파일이 이미 있다 — `{result.target}`. 덮지 않는다. "
+        "두 파일의 고유 내용을 먼저 병합하라."
+    )
     if result.target.exists():
-        raise InheritError(
-            f"목표 경로에 다른 파일이 이미 있다 — `{result.target}`. 덮지 않는다. "
-            "두 파일의 고유 내용을 먼저 병합하라."
-        )
-    atomic_write(result.target, payload)
+        raise conflict
+    try:
+        _place_exclusive(result.target, payload)
+    except FileExistsError:
+        raise conflict from None
     try:
         source.unlink()
     except OSError as error:

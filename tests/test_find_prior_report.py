@@ -271,3 +271,37 @@ def test_find_prior_report_inherit_reports_unremovable_source(
     assert source.exists()
     assert (reports / "종목" / "ㅇ" / "율촌화학_2026-09-01.md").read_bytes() == source.read_bytes()
     assert "원본" in capsys.readouterr().err
+
+
+def test_find_prior_report_inherit_never_clobbers_target_appearing_after_check(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """존재 확인과 배치 사이에 목표가 생겨도 덮지 않는다 — 두 파일 모두 그대로 남는다."""
+    module = load_script("analyze-stock", "find_prior_report")
+    reports = _build_reports_dir(tmp_path)
+    monkeypatch.setenv("INVAGENT_OUTPUT_DIR", str(tmp_path))
+    source = reports / "종목" / "ㅇ" / "율촌화학_2026-08-14.md"
+    before = source.read_text(encoding="utf-8")
+    target = reports / "종목" / "ㅇ" / "율촌화학_2026-09-01.md"
+    real_exists = Path.exists
+
+    def racing_exists(self: Path, *args, **kwargs) -> bool:
+        if self == target and not real_exists(target):
+            target.write_text("# 경합으로 생긴 목표\n", encoding="utf-8")
+            return False
+        return real_exists(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", racing_exists)
+    code = module.main(
+        ["율촌화학", "--today", "2026-09-01", "--inherit", "--expected-sha256", _sha(source)]
+    )
+
+    assert code == 2
+    assert target.read_text(encoding="utf-8") == "# 경합으로 생긴 목표\n"
+    assert source.read_text(encoding="utf-8") == before
+    assert "목표 경로에 다른 파일이 이미 있다" in capsys.readouterr().err
+    assert sorted(p.name for p in target.parent.iterdir()) == [
+        "율촌화학_2026-07-02.md",
+        "율촌화학_2026-08-14.md",
+        "율촌화학_2026-09-01.md",
+    ]
