@@ -12,7 +12,7 @@
     output/daily-digest/<YYYY>/<MM>/<YYYY-MM-DD>.md 일일 브리핑
 
 기본 경로는 저장소 루트의 `output/` 이며 INVAGENT_OUTPUT_DIR 로 덮어쓸 수 있다.
-표준 라이브러리만 사용한다.
+의존성: stdlib + 저장소 패키지(`invagent.core.archive`, `invagent.datafeed`의 `env`·`text`). 네트워크는 쓰지 않는다.
 """
 
 from __future__ import annotations

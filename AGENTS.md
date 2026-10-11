@@ -25,7 +25,7 @@ design notes to `docs/`.
 `src/invagent/datafeed/` is the only place that talks to a market data source.
 `http.get_json` is the single request path and every other module goes through it:
 `stockeasy` (the `/stockdata/api/v1/**` stock endpoints and the `.../market/**`
-ones, the `STOCKEASY_COOKIE` session, stock resolution, `gap_reason` — the one 401/cookie hint text), `fsc` (the Financial Services
+ones, the `STOCKEASY_COOKIE` session, stock resolution, `gap_reason` — the one 401/cookie hint text every caller quotes), `fsc` (the Financial Services
 Commission's official KRX daily prices on data.go.kr, keyed by `DATA_GO_KR_SERVICE_KEY`), `naver`
 (daily OHLCV), `daily` (the bars every price judgement reads — see below), `cache` (the shared response cache),
 `ratelimit` (per-host request spacing, retry and cool-down — see below), `env` (repository root,
@@ -34,12 +34,13 @@ resolution — then Naver's `ac.stock.naver.com` search, with StockEasy `stock-s
 Naver fails, so StockEasy's request budget goes to values only it serves — plus the
 preferred-to-common mapping below), `stockinfo` (the `info-tab` pair — the share's own payload
 for the 시세 축 and the 본주's for the 실적 축, each fetched on first read so a common share costs one
-request and a fundamentals-only reader of a preferred never fetches the preferred's own; it owns the
-401/cookie gap text, the 「우선주 실적은 본주 …」 source line, the share's own `name`, and the
+request and a fundamentals-only reader of a preferred never fetches the preferred's own; it collects
+each failed fetch into `gaps` with the text from `stockeasy.gap_reason`, and owns the
+「우선주 실적은 본주 …」 source line, the share's own `name`, and the
 confirmed/estimate quarterly and yearly series (`quarterly`/`yearly`) and whole rows (`rows`) on the
 primary statement — every script that reads `info-tab` (`stage_scan`, `canslim_scan`, `extract_earnings`,
-`fetch_stock_info`, `market-data/fetch.py quote`) reads it through this module and none calls the
-private `stockeasy._fs_rows`) and `snapshot` (portfolio
+`fetch_stock_info`, `market-data/fetch.py quote`) reads it through this module, so no script calls the
+private `stockeasy._fs_rows` — only `stockinfo` does) and `snapshot` (portfolio
 snapshot tables). `daily.fetch_daily_bars` takes the regular-session bars from `fsc` first — KRX's
 official OHLCV, three years in one request, 10,000 requests a day — and, because that data is
 published after 13:00 on the next business day, fills only the weekdays after its last bar from the

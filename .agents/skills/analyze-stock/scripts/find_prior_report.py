@@ -15,7 +15,8 @@
 초성 폴더 규칙은 로컬 PDF 아카이브와 같다 — `find_reports.chosung_dir()`을 재사용한다.
 
 기본 경로는 저장소 루트의 `output/` 이며 INVAGENT_OUTPUT_DIR 로 덮어쓸 수 있다.
-표준 라이브러리만 사용한다.
+의존성: stdlib + 저장소 패키지(`invagent.datafeed`의 `env`·`text`)와 같은 폴더의 `find_reports`.
+네트워크는 쓰지 않는다.
 """
 
 from __future__ import annotations

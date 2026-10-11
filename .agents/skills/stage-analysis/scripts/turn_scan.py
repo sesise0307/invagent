@@ -14,8 +14,9 @@
 
 근거 기법은 `references/turn_theory.md` (와이코프 매집 · Sperandeo 1-2-3 · 앵커드 VWAP).
 
-데이터 소스: StockEasy `info-tab` 정규장 일봉, 쿠키가 없거나 실패하면 네이버 `siseJson`으로 대체
-(`invagent.datafeed.daily` — 네이버 종가는 장 마감 후 시간외가가 섞일 수 있어 대체 시 꼬리표를 붙인다).
+데이터 소스: `invagent.datafeed.daily` 판정 일봉 — 금융위 KRX 공식 일봉 우선, 아직 공개 전인 최근 봉은
+StockEasy 정규장, 15:40 전 오늘 봉은 네이버 장중, 메우지 못한 봉은 네이버 대체(시간외가가 섞일 수 있다).
+네이버 봉에는 꼬리표가 붙는다.
 종료 코드: 0 정상 / 1 시세 수집 실패·일봉 부족 / 2 종목명 후보 다수.
 """
 

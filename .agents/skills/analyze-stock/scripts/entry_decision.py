@@ -133,6 +133,7 @@ def build_valuation_inputs(valuation: Any, tranche_plan: Any) -> dict[str, Any]:
 
 
 def check_context(context: Any) -> dict[str, Any]:
+    """context JSON을 검증해 그대로 돌려준다. 모르는 키·빠진 필수 키는 `EntryDecisionError`."""
     if not isinstance(context, dict):
         raise EntryDecisionError("context must be an object")
     unknown = sorted(set(context) - set(REQUIRED_CONTEXT) - set(OPTIONAL_CONTEXT))
@@ -170,6 +171,7 @@ def _read_json(path: str, label: str) -> Any:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI — 판정을 JSON으로 stdout에 쓴다. 입력 오류도 `ok: false` JSON으로 내고 exit 2."""
     parser = argparse.ArgumentParser(description="10단계 진입 판정 — 스캔·밸류·context를 entry_policy로 결합")
     parser.add_argument("ticker", help="5단계가 확정한 6자리 티커")
     parser.add_argument("--valuation", required=True, help="valuation_decision.py 입력 JSON 파일")

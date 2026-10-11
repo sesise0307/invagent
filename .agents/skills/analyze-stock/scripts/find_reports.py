@@ -9,7 +9,7 @@
     <root>/_산업분석/<섹터>/*.pdf         섹터 리포트 (파일명 매칭으로 보조 검색)
 
 기본 경로는 ~/1_Investment/리포트 이며 INVAGENT_REPORT_ARCHIVE 로 덮어쓸 수 있다.
-표준 라이브러리만 사용한다.
+의존성: stdlib + 저장소 패키지(`invagent.datafeed.text`). 네트워크는 쓰지 않는다.
 """
 
 from __future__ import annotations
