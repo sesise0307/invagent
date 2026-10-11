@@ -27,7 +27,8 @@ design notes to `docs/`.
 `stockeasy` (the `/stockdata/api/v1/**` stock endpoints and the `.../market/**`
 ones, the `STOCKEASY_COOKIE` session, stock resolution, `gap_reason` — the one 401/cookie hint text every caller quotes), `fsc` (the Financial Services
 Commission's official KRX daily prices on data.go.kr, keyed by `DATA_GO_KR_SERVICE_KEY`), `naver`
-(daily OHLCV), `daily` (the bars every price judgement reads — see below), `cache` (the shared response cache),
+(daily OHLCV, plus the USD/KRW daily Hana Bank closing quote that the briefing's `[환율]` line reads —
+StockEasy's market API carries no exchange rate), `daily` (the bars every price judgement reads — see below), `cache` (the shared response cache),
 `ratelimit` (per-host request spacing, retry and cool-down — see below), `env` (repository root,
 `output/`, `.env` values), `series` (`sma`), `tickers` (override-first ticker
 resolution — then Naver's `ac.stock.naver.com` search, with StockEasy `stock-search` only when

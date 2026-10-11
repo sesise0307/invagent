@@ -4,6 +4,8 @@
 쓴 파이썬 리터럴이다. 투자자별 매매동향(`m.stock.naver.com/api/stock/<code>/trend`)도 무인증
 JSON이고 한 번에 최근 60거래일까지 준다 — StockEasy에는 종목 기관 수급이 없어 이쪽이 출처다.
 종목명·상장 시장(`.../basic`)도 무인증이라 StockEasy `info-tab`이 막혔을 때 쓴다.
+원/달러 환율(`api.stock.naver.com/marketindex/exchange/FX_USDKRW/prices`)은 하나은행 고시 종가의
+일별 이력이다 — StockEasy 시장 API에는 환율이 없다. 한 페이지 60행이 상한이라 여러 페이지를 받는다.
 종목명 검색(`ac.stock.naver.com/ac`)은 이름 → 티커의 기본 경로다 — StockEasy 요청 한도를
 시세·실적처럼 StockEasy에만 있는 값에 남겨 두기 위해서다.
 인증 축이 없으므로 캐시 키는 항상 anon이다.
@@ -23,6 +25,9 @@ TREND_MAX_DAYS = 60
 BASIC_URL = "https://m.stock.naver.com/api/stock/{code}/basic"
 # 종목명 자동완성. StockEasy `stock-search`와 달리 로그인·요청 제한이 없다.
 SEARCH_URL = "https://ac.stock.naver.com/ac"
+# 원/달러 일별 고시 종가. pageSize는 60이 상한이다(61 이상은 HTTP 400).
+USDKRW_URL = "https://api.stock.naver.com/marketindex/exchange/FX_USDKRW/prices"
+USDKRW_PAGE_SIZE = 60
 REFERER = "https://finance.naver.com/"
 TIMEOUT = http.TIMEOUT
 
@@ -164,3 +169,25 @@ def search_stock(query: str) -> tuple[list[dict] | None, str | None]:
         for item in (data or {}).get("items") or []
         if item.get("nationCode") == "KOR" and item.get("category") == "stock" and item.get("code")
     ], None
+
+
+def fetch_usdkrw(pages: int = 5) -> tuple[list[dict], str | None]:
+    """원/달러 일별 고시 종가 `{"date", "close"}`, 과거 → 최신.
+
+    `pages` × 60행을 받는다(기본 5 = 약 14개월, 52주 창을 채운다). 중간 페이지가 실패하면
+    그때까지 받은 행과 사유를 함께 돌려준다.
+    """
+    by_day: dict[date, float] = {}
+    err = None
+    for page in range(1, pages + 1):
+        data, err = http.get_json(
+            f"{USDKRW_URL}?page={page}&pageSize={USDKRW_PAGE_SIZE}",
+            authed=False,
+            headers=http.build_headers(referer="https://m.stock.naver.com/"),
+            timeout=TIMEOUT,
+        )
+        if err:
+            break
+        for item in data or []:
+            by_day[parse_date(item["localTradedAt"][:10])] = float(item["closePrice"].replace(",", ""))
+    return [{"date": d, "close": by_day[d]} for d in sorted(by_day)], err

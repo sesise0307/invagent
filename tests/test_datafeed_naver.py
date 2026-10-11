@@ -1,5 +1,7 @@
 """`invagent.datafeed.naver` — 네이버 금융 일봉."""
 
+import json
+import urllib.parse
 from datetime import date
 
 from invagent.datafeed import http, naver
@@ -127,3 +129,50 @@ def test_fetch_basic_reports_the_failure_instead_of_raising(monkeypatch) -> None
     basic, err = naver.fetch_basic("213420")
 
     assert basic is None and "timed out" in err
+
+
+def _fx_page(rows: list[tuple[str, str]]) -> bytes:
+    return json.dumps(
+        [{"localTradedAt": day, "closePrice": close, "fluctuations": "0.00"} for day, close in rows]
+    ).encode()
+
+
+def test_fetch_usdkrw_merges_pages_oldest_first_and_parses_comma_prices(monkeypatch) -> None:
+    pages = {
+        "1": _fx_page([("2026-10-08", "1,343.80"), ("2026-10-07", "1,341.00")]),
+        "2": _fx_page([("2026-10-06", "1,340.00"), ("2026-10-02", "1,402.50")]),
+    }
+    seen = []
+
+    def fake(url, headers, timeout):
+        seen.append(url)
+        return pages[urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["page"][0]]
+
+    monkeypatch.setattr(http, "read_url", fake)
+
+    rows, err = naver.fetch_usdkrw(pages=2)
+
+    assert err is None
+    assert rows == [
+        {"date": date(2026, 10, 2), "close": 1402.5},
+        {"date": date(2026, 10, 6), "close": 1340.0},
+        {"date": date(2026, 10, 7), "close": 1341.0},
+        {"date": date(2026, 10, 8), "close": 1343.8},
+    ]
+    assert seen[0] == (
+        "https://api.stock.naver.com/marketindex/exchange/FX_USDKRW/prices?page=1&pageSize=60"
+    )
+
+
+def test_fetch_usdkrw_keeps_the_pages_it_got_when_a_later_page_fails(monkeypatch) -> None:
+    def fake(url, headers, timeout):
+        if "page=1&" in url:
+            return _fx_page([("2026-10-08", "1,343.80")])
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(http, "read_url", fake)
+
+    rows, err = naver.fetch_usdkrw(pages=3)
+
+    assert rows == [{"date": date(2026, 10, 8), "close": 1343.8}]
+    assert err and "timed out" in err

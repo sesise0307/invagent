@@ -6,8 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from invagent.datafeed import http as datafeed_http, stockeasy
+from invagent.datafeed import http as datafeed_http, naver, stockeasy
 from tests.conftest import SKILLS_ROOT, load_script
+
+
+@pytest.fixture(autouse=True)
+def _no_usdkrw(monkeypatch: pytest.MonkeyPatch) -> None:
+    """환율 요청은 네이버로 따로 나간다 — 환율을 보지 않는 테스트도 네트워크에 닿지 않게 막는다."""
+    monkeypatch.setattr(naver, "fetch_usdkrw", lambda: ([], None))
 
 
 def test_market_signal_endpoints_point_at_stockdata_api() -> None:
@@ -187,7 +193,8 @@ def test_market_signal_no_cache_flag_refetches_every_endpoint(
     calls: list[str] = []
 
     def fake_read_url(url, headers, timeout):
-        calls.append(url)
+        if url.startswith(module.API_BASE):
+            calls.append(url)
         return b"{}"
 
     monkeypatch.setattr(datafeed_http, "read_url", fake_read_url)
@@ -408,3 +415,62 @@ def test_market_signals_fetch_endpoints_concurrently(monkeypatch: pytest.MonkeyP
 
     assert set(data) == set(module.ENDPOINTS) and not errors
     assert peak_live > 1, "엔드포인트를 아직 직렬로 받고 있다"
+
+
+def _usdkrw_rows() -> list[dict]:
+    from datetime import date, timedelta
+
+    old = [
+        {"date": date(2025, 9, 1), "close": 1600.0},  # 52주 창(365일) 밖
+        {"date": date(2025, 11, 3), "close": 1500.0},
+        {"date": date(2025, 12, 1), "close": 1300.0},
+    ]
+    recent = [1400.0] + [1350.0] * 14 + [1330.0, 1335.0, 1338.0, 1340.0, 1341.0, 1343.8]
+    start = date(2026, 9, 18)
+    return old + [{"date": start + timedelta(days=i), "close": c} for i, c in enumerate(recent)]
+
+
+def test_market_signal_prints_the_usdkrw_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = load_script("daily-digest", "fetch_market_signals")
+    monkeypatch.setattr(stockeasy, "fetch_market_json", lambda name: ({"indices": []}, None))
+    monkeypatch.setattr(naver, "fetch_usdkrw", lambda: (_usdkrw_rows(), None))
+
+    assert module.main([]) == 0
+
+    line = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("[환율]"))
+    assert "1,343.80원" in line and "2026-10-08" in line
+    assert "전일 +0.21%" in line
+    assert "5거래일 +1.04%" in line
+    assert "20거래일 -4.01%" in line
+    assert "52주 1,300.00~1,500.00원" in line and "범위 내 22%" in line
+
+
+def test_market_signal_keeps_the_usdkrw_line_when_stockeasy_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """환율은 다른 출처라 StockEasy가 막혀도 브리핑에 쓸 수 있다."""
+    module = load_script("daily-digest", "fetch_market_signals")
+    monkeypatch.setattr(stockeasy, "fetch_market_json", lambda name: (None, "HTTP 401"))
+    monkeypatch.setattr(naver, "fetch_usdkrw", lambda: (_usdkrw_rows(), None))
+
+    assert module.main([]) == 1
+
+    captured = capsys.readouterr()
+    assert "[환율] USD/KRW 1,343.80원" in captured.out
+    assert "HTTP 401" in captured.err
+
+
+def test_market_signal_names_the_usdkrw_failure_without_blocking(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = load_script("daily-digest", "fetch_market_signals")
+    monkeypatch.setattr(stockeasy, "fetch_market_json", lambda name: ({"indices": []}, None))
+    monkeypatch.setattr(naver, "fetch_usdkrw", lambda: ([], "HTTP 400"))
+
+    assert module.main([]) == 0
+
+    captured = capsys.readouterr()
+    assert "[환율]" not in captured.out
+    assert "[누락] 환율(네이버) — HTTP 400" in captured.err

@@ -18,7 +18,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from invagent.datafeed import cache as http_cache, stockeasy
+from invagent.datafeed import cache as http_cache, naver, stockeasy
 
 # 엔드포인트는 수집 계층이 소유한다. 이 이름들은 이 모듈의 출력·테스트가 쓰는 재노출이다.
 PAGE_URL = stockeasy.MARKET_PAGE_URL
@@ -358,6 +358,45 @@ def print_credit(cb: dict) -> None:
         )
 
 
+FX_WINDOWS = (5, 20)        # 거래일(고시일). 전일 대비와 함께 찍는 추세 창
+FX_52W_DAYS = 365           # 52주 고저는 행 수가 아니라 달력일로 자른다 — 고시일 수가 해마다 다르다
+
+
+def usdkrw_summary(rows: list[dict]) -> dict | None:
+    """원/달러 고시 종가 → 최신값·전일·5/20거래일 변화율·52주 고저와 범위 내 위치."""
+    if len(rows) < 2:
+        return None
+    closes = [r["close"] for r in rows]
+    last = rows[-1]
+    year = [r["close"] for r in rows if (last["date"] - r["date"]).days < FX_52W_DAYS]
+    low, high = min(year), max(year)
+
+    def change(n: int) -> float | None:
+        return (closes[-1] / closes[-1 - n] - 1) * 100 if len(closes) > n else None
+
+    return {
+        "date": last["date"],
+        "close": last["close"],
+        "day": change(1),
+        "windows": {n: change(n) for n in FX_WINDOWS},
+        "low": low,
+        "high": high,
+        "position": (last["close"] - low) / (high - low) * 100 if high > low else None,
+    }
+
+
+def print_usdkrw(rows: list[dict]) -> None:
+    s = usdkrw_summary(rows)
+    if not s:
+        return
+    parts = [f"[환율] USD/KRW {s['close']:,.2f}원 ({s['date']:%Y-%m-%d} 하나은행 고시)"]
+    parts.append(f"전일 {fmt_pct(s['day'])}")
+    parts += [f"{n}거래일 {fmt_pct(v)}" for n, v in s["windows"].items() if v is not None]
+    pos = f" (범위 내 {s['position']:.0f}%)" if s["position"] is not None else ""
+    parts.append(f"52주 {s['low']:,.2f}~{s['high']:,.2f}원{pos}")
+    print(" · ".join(parts))
+
+
 def fetch_all() -> tuple[dict, dict]:
     """네 엔드포인트를 동시에 받는다. 서로 독립이라 순서대로 기다릴 이유가 없다."""
     data, errors = {}, {}
@@ -376,12 +415,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_cache:
         http_cache.disable()
 
-    data, errors = fetch_all()
+    # 환율은 네이버라 StockEasy와 호스트가 달라 동시에 받는다.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        fx_future = pool.submit(naver.fetch_usdkrw)
+        data, errors = fetch_all()
+        fx_rows, fx_err = fx_future.result()
 
     indices_data, bp = data["indices"], data["big_picture"]
     mm, cb = data["market_monitor"], data["credit_balance"]
 
     if not indices_data and not bp:
+        print_usdkrw(fx_rows)
         detail = ", ".join(f"{k}={v}" for k, v in errors.items()) or "빈 응답"
         print(f"ERROR: 시장 API 호출 실패 — {detail}", file=sys.stderr)
         return 1
@@ -390,6 +434,7 @@ def main(argv: list[str] | None = None) -> int:
     if indices_data:
         print_signals(indices_data)
         print_indices(indices_data)
+    print_usdkrw(fx_rows)
     if bp:
         print_big_picture(bp)
     if mm:
@@ -404,6 +449,8 @@ def main(argv: list[str] | None = None) -> int:
     # 일부만 실패한 경우: 받은 부분은 출력하고 누락 사실을 남긴다
     for name, err in errors.items():
         print(f"[누락] {name} — {err}", file=sys.stderr)
+    if fx_err:
+        print(f"[누락] 환율(네이버) — {fx_err}", file=sys.stderr)
     return 0
 
 
