@@ -157,9 +157,10 @@ def test_daily_bars_and_market_signals_share_the_cache(
         return b'{"indices": []}'
 
     monkeypatch.setattr(datafeed_http, "read_url", fake_signal_read_url)
-    assert signals.fetch_api("indices") == ({"indices": []}, None)
-    assert signals.fetch_api("indices") == ({"indices": []}, None)
-    assert len(sig_calls) == 1
+    signals.fetch_all()
+    data, errors = signals.fetch_all()
+    assert data["indices"] == {"indices": []} and not errors
+    assert len(sig_calls) == len(signals.ENDPOINTS)
 
 
 def test_no_cache_flag_forces_a_fresh_fetch(

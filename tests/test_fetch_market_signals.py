@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from invagent.datafeed import http as datafeed_http
+from invagent.datafeed import http as datafeed_http, stockeasy
 from tests.conftest import SKILLS_ROOT, load_script
 
 
@@ -78,7 +78,7 @@ def test_market_signal_main_renders_api_payload(
             ]
         },
     }
-    monkeypatch.setattr(module, "fetch_api", lambda name: (payloads[name], None))
+    monkeypatch.setattr(stockeasy, "fetch_market_json", lambda name: (payloads[name], None))
 
     assert module.main([]) == 0
 
@@ -170,7 +170,7 @@ def test_market_signal_main_reports_api_failure(
 ) -> None:
     """지수·빅픽처가 모두 실패하면 사유를 stderr에 남기고 exit 1."""
     module = load_script("daily-digest", "fetch_market_signals")
-    monkeypatch.setattr(module, "fetch_api", lambda name: (None, "HTTP 404"))
+    monkeypatch.setattr(stockeasy, "fetch_market_json", lambda name: (None, "HTTP 404"))
 
     assert module.main([]) == 1
     assert "HTTP 404" in capsys.readouterr().err
@@ -403,7 +403,7 @@ def test_market_signals_fetch_endpoints_concurrently(monkeypatch: pytest.MonkeyP
             live -= 1
         return {"indices": []}, None
 
-    monkeypatch.setattr(module, "fetch_api", slow_api)
+    monkeypatch.setattr(stockeasy, "fetch_market_json", slow_api)
     data, errors = module.fetch_all()
 
     assert set(data) == set(module.ENDPOINTS) and not errors

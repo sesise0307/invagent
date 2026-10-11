@@ -72,11 +72,6 @@ STATUS_KO = {
 }
 
 
-def fetch_api(name: str):
-    """market API 하나를 호출해 JSON을 반환한다. 실패하면 (None, 사유)."""
-    return stockeasy.fetch_market_json(name)
-
-
 def _row_date(row: dict) -> str | None:
     raw = row.get("date") or row.get("일자")
     text = str(raw or "").strip()
@@ -367,7 +362,7 @@ def fetch_all() -> tuple[dict, dict]:
     """네 엔드포인트를 동시에 받는다. 서로 독립이라 순서대로 기다릴 이유가 없다."""
     data, errors = {}, {}
     with ThreadPoolExecutor(max_workers=len(ENDPOINTS)) as pool:
-        for name, (payload, err) in zip(ENDPOINTS, pool.map(fetch_api, ENDPOINTS)):
+        for name, (payload, err) in zip(ENDPOINTS, pool.map(stockeasy.fetch_market_json, ENDPOINTS)):
             data[name] = payload
             if err:
                 errors[name] = err
