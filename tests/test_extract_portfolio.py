@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import csv
+import io
 import json
 from pathlib import Path
 
@@ -104,6 +106,33 @@ def test_portfolio_parser_reads_plain_csv(tmp_path: Path) -> None:
 
     assert "## 보유 (2종목 + 현금)" in snapshot
     assert "| 삼성 | 오메가기판 | 기판 | 50 |" in snapshot
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_portfolio_parser_reads_sheets_range(tmp_path: Path, wrapped: bool) -> None:
+    """The connected Sheets range preserves all holdings and formatted amounts."""
+    module = load_script("daily-digest", "extract_portfolio")
+    values = list(csv.reader(io.StringIO(PORTFOLIO_CSV)))
+    values[0][12] = None  # Sheets returns null for empty cells.
+    payload = {"range": "'포트폴리오'!A1:AF50", "majorDimension": "ROWS", "values": values}
+    if wrapped:
+        payload = {"content": [{"type": "text", "text": "Action completed."}],
+                   "structuredContent": payload, "isError": False}
+    dump = tmp_path / "range.json"
+    dump.write_text(json.dumps(payload), encoding="utf-8")
+    snapshot = module.build_snapshot(module.load_content(dump), "2026-10-11")
+    assert "잔고 ₩21,000,000" in snapshot
+    assert "## 보유 (2종목 + 현금)" in snapshot
+    assert "| 삼성 | 오메가기판 | 기판 | 50 |" in snapshot
+
+
+def test_sheets_range_rejects_missing_holding(tmp_path: Path) -> None:
+    module = load_script("daily-digest", "extract_portfolio")
+    values = list(csv.reader(io.StringIO(PORTFOLIO_CSV)))[:-1]
+    dump = tmp_path / "range.json"
+    dump.write_text(json.dumps({"majorDimension": "ROWS", "values": values}), encoding="utf-8")
+    with pytest.raises(ValueError, match="잔고"):
+        module.build_snapshot(module.load_content(dump), "2026-10-11")
 
 
 def test_portfolio_parser_rejects_truncated_holdings(tmp_path: Path) -> None:

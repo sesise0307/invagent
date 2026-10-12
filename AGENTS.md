@@ -415,8 +415,8 @@ stay serial on purpose — they share one MTProto connection, where concurrency 
 per-run budget is counted in message order, which a race would make non-deterministic.
 
 The Telegram daily briefing also reads the user's live holdings from the Google
-Sheets file `주식 포트폴리오` (sheet `포트폴리오`) through the Google Drive MCP
-connector, parses it with
+Sheets file `주식 포트폴리오` (sheet `포트폴리오`) through the connected Google Drive plugin's
+formatted range reads (the collection procedure is owned by `market-data`), parses it with
 `.agents/skills/daily-digest/scripts/extract_portfolio.py`, and stores the
 snapshot in `output/portfolio/<yyyy>/<mm>/<yyyy-mm-dd>.md`. `analyze-stock` and `advice` read
 the latest snapshot instead of re-fetching the sheet. `output/` is gitignored, so

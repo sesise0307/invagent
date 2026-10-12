@@ -114,20 +114,30 @@ SSRF 방어(스킴 제한, 비공개 대역 거부, 홉마다 재검증, 응답 
 
 ### 포트폴리오 (Google Sheets)
 
-Drive MCP로 `주식 포트폴리오` 파일을 정확 일치 검색으로 찾고, `download_file_content`를
-`exportMimeType = text/csv`로 호출해 첫 시트(`포트폴리오`)를 CSV로 받는다. 응답
-`{"content": "<base64 CSV>", ...}` JSON을 **그대로** 파일에 저장해 파서에 넘긴다.
-파일 ID는 어느 문서에도 하드코딩하지 않는다.
+연결된 Google Drive 플러그인(`mcp__codex_apps__google_drive_*`)으로 수집한다.
+구형 `mcp__drive`는 2026-10-11 `Authentication required`를 반환했지만 새 연결은 정상 조회됐다.
+이 오류를 Google Drive 전체 인증 실패로 간주하지 않는다.
+
+1. `search`의 `special_filter_query_str`에
+   `name = '주식 포트폴리오' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`를
+   넣고 `best_effort_fetch=false`로 정확 일치 검색한다. 파일 ID는 검색 결과에서 얻고 하드코딩하지 않는다.
+2. `get_spreadsheet_metadata`로 「포트폴리오」 탭 이름과 행·열 수를 확인한다.
+3. `get_spreadsheet_range`에 `spreadsheet_id`, `sheet_name='포트폴리오'`, `range='A1:AF50'`,
+   `value_render_option='FORMATTED_VALUE'`를 넣는다. 이 범위는 현재 표의 헤더·보유 행·잔고를 담는다.
+   메타데이터보다 큰 범위는 줄이고, 마지막 행까지 보유 행이 있거나 잔고 검증이 실패하면
+   행 범위를 확장해 다시 받는다. 원시 숫자 비율 대신 표시값을 받아 수익률·비중의 `%` 단위를 보존한다.
+4. 응답 전체 또는 `structuredContent` JSON을 **그대로** 파일에 저장해 파서에 넘긴다.
+   응답을 요약하거나 행을 옮겨 적지 않는다.
 
 ```bash
-uv run python .agents/skills/daily-digest/scripts/extract_portfolio.py <CSV 응답 파일> \
+uv run python .agents/skills/daily-digest/scripts/extract_portfolio.py <범위 응답 JSON 파일> \
   --out output/portfolio/$(date +%Y/%m/%Y-%m-%d).md
 ```
 
 - `read_file_content`는 2026-09-28부터 셀 값을 잘라 쓴 요약만 돌려준다 — 포트폴리오 수집에 쓰지 않는다.
-  파서는 예전 덤프(`fileContent`)와 평문 CSV도 계속 받는다.
+  파서는 기존 base64 CSV 응답(`content`), 예전 덤프(`fileContent`)와 평문 CSV도 계속 받는다.
 - **잘림 가드**: 보유 행 평가금액 합계가 시트 `잔고`와 0.5% 넘게 어긋나면 파서가 exit 1로 거부한다.
-  응답을 옮겨 적다 base64가 잘리면 마지막 행이 빠지기 때문이다(2026-09-28). 거부되면 다시 받는다.
+  응답이 잘리거나 범위가 좁으면 마지막 행이 빠지기 때문이다(2026-09-28). 거부되면 다시 받는다.
 
 같은 날 스냅샷이 이미 있으면 다시 받지 않고 그것을 읽는다.
 

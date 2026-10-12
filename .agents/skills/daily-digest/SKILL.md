@@ -211,27 +211,17 @@ URL: `https://www.investing.com/indices/kospi-volatility`
 (반영 범위는 4단계 「포트폴리오 반영 범위」 참조).
 
 1. **스냅샷 재사용**: `output/portfolio/<yyyy>/<mm>/<today>.md`가 있으면 그대로 읽고 2~4를 건너뛴다.
-2. **파일 검색**: Google Drive 검색으로 스프레드시트를 찾는다. 파일 ID는 문서에 하드코딩하지 않는다.
-   ```
-   title = '주식 포트폴리오' and mimeType = 'application/vnd.google-apps.spreadsheet'
-   ```
-   `contains`가 아니라 **정확 일치**를 쓴다 (`주식 포트폴리오 통합본`이 함께 잡힌다).
-3. **본문 받기 (CSV 내보내기)**: 위에서 얻은 `fileId`로 Drive `download_file_content`를
-   `exportMimeType = text/csv`로 호출한다. 첫 시트(「포트폴리오」)만 CSV로 내려오고, 응답은
-   `{"content": "<base64 CSV>", ...}` JSON이다. **이 JSON을 한 글자도 바꾸지 않고 그대로** 파일에
-   저장한다(스크래치 디렉토리의 `portfolio_download.json` 등).
-   - `read_file_content`는 쓰지 않는다 — 2026-09-28부터 셀 값을 `삼...`처럼 잘라 쓴 요약만 돌려줘
-     파서가 읽을 수 없다.
-   - ⚠️ 응답을 옮겨 적다 base64 끝이 잘리면 **마지막 보유 행이 통째로 빠진다**(2026-09-28 실제 사고:
-     이수페타시스 200주가 「전량 청산」으로 읽혔다). 파서가 보유 행 평가금액 합계를 시트 잔고와
-     대조해 0.5%(`BALANCE_TOLERANCE_PCT`) 넘게 어긋나면 exit 1로 거부하므로, 거부되면 추측으로
-     메우지 말고 응답을 다시 받아 저장한다.
+2. **파일 검색**: `market-data` 「포트폴리오 (Google Sheets)」 절차로 연결된 Google Drive에서
+   정확 일치 검색한다. 파일 ID는 문서에 하드코딩하지 않는다.
+3. **본문 받기**: 같은 절차의 메타데이터 확인과 `get_spreadsheet_range` 표시값 조회를 따른다.
+   응답 JSON을 그대로 저장한다. 구형 `mcp__drive` 인증 실패와 새 연결 상태를 구분한다.
+   범위 확장 조건·0.5% 잔고 검증·레거시 입력 호환은 `market-data`가 정본이다.
 4. **파싱·저장**:
    ```bash
    uv run python .agents/skills/daily-digest/scripts/extract_portfolio.py \
-       <CSV 응답 파일> --out output/portfolio/$(date +%Y/%m/%Y-%m-%d).md
+       <범위 응답 JSON 파일> --out output/portfolio/$(date +%Y/%m/%Y-%m-%d).md
    ```
-   입력은 CSV 내보내기 응답 JSON이 정본이고, 평문 CSV와 예전 `read_file_content` 덤프도 받는다.
+   입력은 Sheets 범위 응답 JSON이 정본이고, 기존 CSV와 덤프도 받는다.
    스크립트가 첫 시트(「포트폴리오」)의 보유 표·섹터 집계만 잘라내고,
    `context/my_rules.md` 임계값(-10 / -15 / -20 / 24~30 / 평가 비중 35% / 5~12종목)으로
    **룰 자동 판정**까지 계산한다. 임계 도달은 매도 이행 위반과 다르다. 이행 기록이나

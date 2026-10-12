@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Google Sheets '주식 포트폴리오' → 「포트폴리오」 시트 스냅샷 추출기.
 
-입력 정본은 Drive MCP `download_file_content`(exportMimeType=text/csv) 응답 JSON이다 —
-`content`가 첫 시트의 base64 CSV다. 평문 CSV와 예전 `read_file_content` 덤프
+입력 정본은 Google Drive `get_spreadsheet_range`의 FORMATTED_VALUE 응답 JSON이다.
+기존 Drive MCP `download_file_content`의 base64 CSV, 평문 CSV와 예전 `read_file_content` 덤프
 (`{"fileContent": "..."}`, 전 시트 마크다운)도 받는다. 첫 시트(보유 종목 + 섹터 집계)만 뽑아
 보유 행 합계를 시트 잔고와 대조하고(잘린 입력 거부), `context/my_rules.md` 임계값 기준으로
 룰 위반·근접 항목을 계산한다.
@@ -335,6 +335,7 @@ def load_content(path: Path) -> str:
     """입력 파일 → 마크다운 표 본문.
 
     허용하는 입력 세 가지:
+    - Google Drive `get_spreadsheet_range`의 행 기반 values 또는 structuredContent 응답
     - Drive MCP `download_file_content`(exportMimeType=text/csv) 응답 JSON — `content`가 base64 CSV
     - 평문 CSV
     - Drive MCP `read_file_content` 덤프 JSON(`fileContent`) 또는 그 마크다운 원문 (레거시)
@@ -345,6 +346,20 @@ def load_content(path: Path) -> str:
     except json.JSONDecodeError:
         payload = None
     if isinstance(payload, dict):
+        if payload.get("isError"):
+            raise ValueError("Google Drive 수집 실패 응답")
+        payload = payload.get("structuredContent", payload)
+        if not isinstance(payload, dict):
+            raise ValueError("Google Drive 응답 본문이 객체가 아니다")
+        if "values" in payload:
+            if payload.get("majorDimension", "ROWS") != "ROWS":
+                raise ValueError("포트폴리오 범위는 ROWS 형식이어야 한다")
+            rows = payload["values"]
+            if not isinstance(rows, list) or not all(isinstance(row, list) for row in rows):
+                raise ValueError("포트폴리오 values는 행 목록이어야 한다")
+            buffer = io.StringIO()
+            csv.writer(buffer).writerows(rows)
+            return csv_to_markdown(buffer.getvalue())
         if "fileContent" in payload:
             return payload["fileContent"]
         if "content" in payload:
@@ -356,7 +371,7 @@ def load_content(path: Path) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("dump", type=Path, help="Drive CSV 내보내기 응답 JSON · 평문 CSV · 레거시 read_file_content 덤프 경로")
+    parser.add_argument("dump", type=Path, help="Sheets 범위 응답 JSON · Drive CSV 응답 · 평문 CSV · 레거시 덤프 경로")
     parser.add_argument("--out", type=Path, help="스냅샷 저장 경로 (예: output/portfolio/2026/08/2026-08-09.md)")
     parser.add_argument("--date", default=dt.date.today().isoformat(), help="스냅샷 날짜 (기본: 오늘)")
     args = parser.parse_args()
