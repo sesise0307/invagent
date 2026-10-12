@@ -16,6 +16,7 @@ import argparse
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from invagent.datafeed import cache as http_cache, naver, stockeasy
@@ -223,8 +224,49 @@ def print_margin_call(rows: list[dict], monitor_rows: list[dict] | None = None) 
         print(f"    {market}: 낙폭 {dd} → {state}")
 
 
-def print_drawdown_ladder(monitor_rows: list[dict]) -> None:
+INDEX_NAMES = {"KOSPI": "종합(KOSPI)", "KOSDAQ": "종합(KOSDAQ)"}
+
+
+def _kst(stamp: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(http_cache.KST)
+    except (AttributeError, ValueError):
+        return None
+
+
+def with_session_close(
+    monitor_rows: list[dict], indices_data: dict, bp: dict
+) -> tuple[list[dict], str | None]:
+    """market-monitor가 늦을 때 지수 줄(/indices)의 그날 종가를 이력 끝에 붙인다.
+
+    2026-10-12: 「시장 체력」 칸은 10/08 15:55에 멈췄는데 지수 줄은 10/12 장을 담고 있었다.
+    거래일은 빅픽처 `last_updated`(장 마감 15:30 KST에 갱신)로 정한다. 지수 줄을 받은 시각이
+    그날 정규장 확정(15:40) 뒤이고 다음 평일 개장 전일 때만 그 값을 종가로 본다 — 지수엔
+    시간외 가격이 없지만 장중에 받은 값은 종가가 아니다.
+    """
+    session = _kst((bp or {}).get("last_updated"))
+    fetched = _kst((indices_data or {}).get("cached_at"))
+    if session is None or fetched is None or not monitor_rows:
+        return monitor_rows, None
+    day = session.date()
+    if (_row_date(monitor_rows[-1]) or "") >= day.isoformat():
+        return monitor_rows, None
+    settled = datetime.combine(day, http_cache.REGULAR_SESSION_SETTLED, http_cache.KST)
+    reopen = day + timedelta(days=1)
+    while reopen.weekday() >= 5:
+        reopen += timedelta(days=1)
+    reopen_at = datetime.combine(reopen, time(http_cache.MARKET_OPEN_HOUR), http_cache.KST)
+    if not settled <= fetched < reopen_at:
+        return monitor_rows, None
+    closes = {i.get("index_name"): i.get("current_value") for i in indices_data.get("indices", [])}
+    row = {"일자": day.isoformat(), **{m: closes.get(name) for m, name in INDEX_NAMES.items()}}
+    return monitor_rows + [row], f"{day.isoformat()} 종가는 지수 줄에서 보충 (market-monitor 최종 {_row_date(monitor_rows[-1])})"
+
+
+def print_drawdown_ladder(monitor_rows: list[dict], note: str | None = None) -> None:
     print(f"[지수 낙폭 사다리] 52주 고점 대비 · -10%부터 5%마다")
+    if note:
+        print(f"  ({note})")
     for market in LEVERAGE_MARKETS:
         L = drawdown_ladder(monitor_rows, market)
         if L["drawdown"] is None:
@@ -445,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
         rows = (cb.get("data") or cb.get("credit_balance") or []) if isinstance(cb, dict) else cb
         print_margin_call(rows, (mm or {}).get("data", []))
     if mm:
-        print_drawdown_ladder(mm.get("data", []))
+        print_drawdown_ladder(*with_session_close(mm.get("data", []), indices_data or {}, bp or {}))
     # 일부만 실패한 경우: 받은 부분은 출력하고 누락 사실을 남긴다
     for name, err in errors.items():
         print(f"[누락] {name} — {err}", file=sys.stderr)

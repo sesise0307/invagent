@@ -474,3 +474,90 @@ def test_market_signal_names_the_usdkrw_failure_without_blocking(
     captured = capsys.readouterr()
     assert "[환율]" not in captured.out
     assert "[누락] 환율(네이버) — HTTP 400" in captured.err
+
+
+def _stale_monitor_payloads(cached_at: str, last_date: str = "2026-10-08") -> dict:
+    """market-monitor는 10/08에서 멈췄고, 지수 줄(/indices)만 10/12 장을 담은 상태."""
+    days = [f"2026-{8 + i // 28:02d}-{1 + i % 28:02d}" for i in range(60)] + [last_date]
+    closes = [100.0] * 60 + [78.0]
+    return {
+        "indices": {
+            "short_term_signal": "red",
+            "long_term_signal": "red",
+            "cached_at": cached_at,
+            "indices": [
+                {"index_name": "종합(KOSPI)", "current_value": 73.0, "price_change_percent": -6.41,
+                 "rising_stocks": 1, "falling_stocks": 9, "upper_limit_stocks": 0, "lower_limit_stocks": 0},
+                {"index_name": "종합(KOSDAQ)", "current_value": 73.0, "price_change_percent": -6.41,
+                 "rising_stocks": 1, "falling_stocks": 9, "upper_limit_stocks": 0, "lower_limit_stocks": 0},
+            ],
+        },
+        "big_picture": {
+            "kospi": {"status": "uptrend_under_pressure", "rally_day_count": 0, "distribution_days": []},
+            "last_updated": "2026-10-12T06:30:00.887652Z",
+        },
+        "market_monitor": {
+            "data": [
+                {"일자": d, "KOSPI": c, "KOSDAQ": c, "20down_ratio": 0.5, "200down_ratio": 0.7,
+                 "52W_High_count": 1.0, "52W_Low_count": 1.0, "ADR(KOSPI)": 80.0, "ADR(KOSDAQ)": 90.0}
+                for d, c in zip(days, closes)
+            ]
+        },
+        "credit_balance": {"data": []},
+    }
+
+
+def _ladder_lines(out: str) -> str:
+    return out[out.index("[지수 낙폭 사다리]"):]
+
+
+def test_drawdown_ladder_takes_the_session_close_from_the_index_line_when_history_lags(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """2026-10-12: market-monitor는 10/08에서 멈췄지만 지수 줄은 10/12 종가를 담고 있었다.
+
+    사다리가 이력만 보면 급락일에 「오늘 처음 밟은 단」이 하루 이상 늦게 뜬다.
+    장 마감 뒤 받은 지수 줄의 값은 그날 종가이므로(지수엔 시간외가 없다) 이력 끝에 붙여 판정한다.
+    """
+    module = load_script("daily-digest", "fetch_market_signals")
+    payloads = _stale_monitor_payloads(cached_at="2026-10-13T01:29:35.087707+09:00")
+    monkeypatch.setattr(stockeasy, "fetch_market_json", lambda name: (payloads[name], None))
+
+    assert module.main([]) == 0
+
+    ladder = _ladder_lines(capsys.readouterr().out)
+    assert "KOSPI: -27.0%" in ladder
+    assert "오늘 처음 밟은 단: -25%" in ladder
+    assert "2026-10-12 종가는 지수 줄에서 보충" in ladder
+
+
+def test_drawdown_ladder_ignores_an_index_line_fetched_during_the_session(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """장중에 받은 지수 줄은 종가가 아니다 — 10/13 10:00 KST의 값을 10/12 종가로 붙이면 안 된다."""
+    module = load_script("daily-digest", "fetch_market_signals")
+    payloads = _stale_monitor_payloads(cached_at="2026-10-13T10:00:00+09:00")
+    monkeypatch.setattr(stockeasy, "fetch_market_json", lambda name: (payloads[name], None))
+
+    assert module.main([]) == 0
+
+    ladder = _ladder_lines(capsys.readouterr().out)
+    assert "KOSPI: -22.0%" in ladder
+    assert "지수 줄에서 보충" not in ladder
+
+
+def test_drawdown_ladder_does_not_double_a_session_the_history_already_has(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """이력이 따라잡으면 그날 행은 이력 것을 쓴다 — 지수 줄을 한 번 더 붙이면 같은 날이 두 번 센다."""
+    module = load_script("daily-digest", "fetch_market_signals")
+    payloads = _stale_monitor_payloads(
+        cached_at="2026-10-13T01:29:35+09:00", last_date="2026-10-12"
+    )
+    monkeypatch.setattr(stockeasy, "fetch_market_json", lambda name: (payloads[name], None))
+
+    assert module.main([]) == 0
+
+    ladder = _ladder_lines(capsys.readouterr().out)
+    assert "KOSPI: -22.0%" in ladder
+    assert "지수 줄에서 보충" not in ladder
