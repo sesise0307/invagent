@@ -149,8 +149,12 @@ real value in the gitignored `.env`, never in a tracked file, and never print it
 the refresh procedure lives in `market-data/SKILL.md`. Since the 2026-09-29 page
 redesign the script also prints two things the new page exposes: a `[시간외·NXT]` line from
 `info-tab`'s `after_hours_quote`/`nxt_quote`, measured against the regular-session price and labelled as
-reference only — `stock_info.cur_prc` and the chart close stay the regular close every rule judges on —
-and a `[공시]` list from `stock-info/analysis-tab` (`--disclosures N`, default 10), the company's
+reference only. The regular-session price is the last bar of the `info-tab` chart, not `stock_info.cur_prc`:
+after the close `cur_prc` follows after-hours trades (산일전기 2026-10-12: chart close 214,500원, `cur_prc` 213,500원
+at 16:43), so `[시세]`, the after-hours gap, the 52-week position, the preferred discount, consensus upside and
+`--json`'s `regular_close` all read the chart close, and `[시세]` names a differing `cur_prc` as 시간외 반영.
+Inside the session (weekdays 09:00~15:40 KST) the chart is used only once it has today's bar.
+The second addition is a `[공시]` list from `stock-info/analysis-tab` (`--disclosures N`, default 10), the company's
 latest DART filings by receipt number. That list is a checklist for the OpenDART steps, never a
 substitute for reading a filing.
 

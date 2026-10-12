@@ -16,7 +16,8 @@ stockeasy.intellio.kr의 `/stockdata/api/v1/**` JSON API에서 개별 종목의 
 
 2026-09 개편 페이지 기준으로 `info-tab`은 KRX 시간외·NXT 체결가(`after_hours_quote`·`nxt_quote`)를
 따로 싣고, 소식 탭(`analysis-tab`)은 종목별 DART 공시 목록을 싣는다. 시간외가는 참고줄로만 찍는다 —
-판정 가격은 정규장 종가(`stock_info.cur_prc`)다.
+판정 가격은 정규장 종가 = `info-tab` 차트 마지막 봉이다(`regular_session`). 시세 줄 `stock_info.cur_prc`는
+장 마감 뒤 시간외 체결가를 따라가므로 다르면 [시세] 줄에 「시간외 반영」으로 떼어 보여 준다.
 
 의존성: stdlib + 저장소 패키지(`invagent.datafeed`). 네트워크는 전부 `datafeed.http`를 거친다.
 종료 코드: 0 정상(부분 누락 포함) / 1 수집 실패 / 2 종목명 후보 다수.
@@ -32,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from math import isfinite
 
-from invagent.datafeed import cache as http_cache, stockeasy, stockinfo, tickers
+from invagent.datafeed import cache as http_cache, daily, stockeasy, stockinfo, tickers
 
 # 추정치는 컨센서스이지 공시가 아니다. 표 헤더에 그대로 박아 보고서로 흘려보낸다.
 ESTIMATE_NOTE = "추정 — 컨센서스, DART 데이터 아님"
@@ -109,10 +110,47 @@ def num(value, suffix: str = "", fmt: str = ",.0f") -> str:
     return "-" if v is None else f"{v:{fmt}}{suffix}"
 
 
-def print_quote(si: dict) -> None:
+def regular_session(payload: dict | None, now: datetime) -> dict | None:
+    """정규장 가격 — `info-tab` 일봉의 마지막 봉. 쓸 수 없으면 None(시세 줄 `cur_prc`로 대신한다).
+
+    시세 줄 `cur_prc`는 장 마감 뒤 시간외·NXT 체결가를 따라 움직인다(2026-10-12 산일전기:
+    정규장 종가 214,500원, 16:43 수집 `cur_prc` 213,500원). 정규장 시간(평일 09:00~15:40) 밖이면
+    일봉 마지막 봉이 가장 최근 정규장 종가다. 정규장 시간 안에는 오늘 봉이 있을 때만 쓴다 —
+    없으면 일봉은 어제 종가이고 오늘 가격은 시세 줄이 맞다.
+    """
+    bars = daily.chart_bars(payload or {})
+    if not bars:
+        return None
+    local = now.astimezone(KST)
+    in_session = local.weekday() < 5 and 9 <= local.hour and local.time() < http_cache.REGULAR_SESSION_SETTLED
+    last = bars[-1]
+    if in_session and last["date"] != local.strftime("%Y%m%d"):
+        return None
+    prev = bars[-2]["close"] if len(bars) > 1 else None
+    return {"date": last["date"], "close": last["close"], "prev_close": prev}
+
+
+def regular_price(payload: dict | None, now: datetime) -> float | None:
+    """판정 가격. 정규장 일봉 종가, 없으면 시세 줄."""
+    session = regular_session(payload, now)
+    if session:
+        return session["close"]
+    return unsigned(((payload or {}).get("stock_info") or {}).get("cur_prc"))
+
+
+def print_quote(si: dict, session: dict | None = None) -> None:
+    price, rate, diff, note = si.get("cur_prc"), si.get("flu_rt"), si.get("pred_pre"), ""
+    if session:
+        close, prev = session["close"], session["prev_close"]
+        price = close
+        rate = (close / prev - 1) * 100 if prev else None
+        diff = close - prev if prev else None
+        quoted = unsigned(si.get("cur_prc"))
+        if quoted and quoted != close:
+            note = f" (시세 줄 {quoted:,.0f}원 — 시간외 반영, 판정 미사용)"
     print(
-        f"[시세] {won(si.get('cur_prc'))} "
-        f"({pct(si.get('flu_rt'))}, 전일대비 {num(si.get('pred_pre'), '원', '+,.0f')}) | "
+        f"[시세] {won(price)} "
+        f"({pct(rate)}, 전일대비 {num(diff, '원', '+,.0f')}){note} | "
         f"시총 {num(si.get('mac'), '억원')} | "
         f"거래량 {num(si.get('trde_qty'), '주')}"
     )
@@ -158,14 +196,15 @@ def print_multiples(si: dict) -> None:
     )
 
 
-def print_52w(si: dict) -> None:
+def print_52w(si: dict, current: float | None = None) -> None:
     print(
         f"[52주(250일)] 고 {won(si.get('250hgst'))}({ymd(si.get('250hgst_pric_dt'))}, "
         f"{pct(si.get('250hgst_pric_pre_rt'))}) / "
         f"저 {won(si.get('250lwst'))}({ymd(si.get('250lwst_pric_dt'))}, "
         f"{pct(si.get('250lwst_pric_pre_rt'))})"
     )
-    hi, lo, cur = unsigned(si.get("250hgst")), unsigned(si.get("250lwst")), unsigned(si.get("cur_prc"))
+    hi, lo = unsigned(si.get("250hgst")), unsigned(si.get("250lwst"))
+    cur = current if current is not None else unsigned(si.get("cur_prc"))
     if hi and lo and cur and hi > lo:
         print(f"[52주 밴드 내 위치] {(cur - lo) / (hi - lo) * 100:.1f}% (0%=저점, 100%=고점)")
 
@@ -624,8 +663,10 @@ def build_summary(
     info = payloads.fundamentals or {}
     price = payloads.price or {}
     quote = price.get("stock_info")
-    parent_prc = unsigned((info.get("stock_info") or {}).get("cur_prc"))
-    own_prc = unsigned((quote or {}).get("cur_prc")) if payloads.info.is_preferred else None
+    # 판정 가격 = 정규장 일봉 종가. 시세 줄 `cur_prc`는 장 마감 뒤 시간외가를 따라간다.
+    regular_close = regular_price(price, fetched)
+    parent_prc = regular_price(info, fetched)
+    own_prc = regular_close if payloads.info.is_preferred else None
     history = info.get("target_price_history") or []
     # 목표주가는 본주에 매겨진다 — 우선주 주가에 대면 괴리율만큼 상승여력이 부풀려진다.
     consensus = build_consensus_summary(history, parent_prc)
@@ -639,7 +680,8 @@ def build_summary(
             (own_prc / parent_prc - 1) * 100 if own_prc and parent_prc else None
         ),
         "stock_info": quote,
-        # 참고용 — 판정은 정규장 종가(`stock_info.cur_prc`)로만 한다.
+        "regular_close": regular_close,
+        # 참고용 — 판정은 정규장 종가(`regular_close`)로만 한다.
         "after_hours_quote": price.get("after_hours_quote"),
         "nxt_quote": price.get("nxt_quote"),
         "primary_fs_type": info.get("primary_fs_type"),
@@ -782,24 +824,25 @@ def main(argv: list[str] | None = None) -> int:
         f"=== StockEasy 종목정보 — {name}({ticker}) {si.get('market') or ''} === "
         f"조회 {date.today().isoformat()} · 출처 {stockeasy.PAGE_BASE}/{ticker}"
     )
+    now = _now()
     if is_preferred:
-        own_prc, parent_prc = unsigned(si.get("cur_prc")), unsigned(parent_si.get("cur_prc"))
+        own_prc, parent_prc = regular_price(price, now), regular_price(info, now)
         gap = f" · 괴리율 {(own_prc / parent_prc - 1) * 100:+.1f}%" if own_prc and parent_prc else ""
         print(
             f"[우선주] 시세·52주·수급은 {ticker} 자기 것 · 멀티플·컨센서스·목표주가·재무·뉴스·"
             f"리포트는 본주 {parent_si.get('name') or ''}({payloads.info.parent_code}) 기준{gap}"
         )
-    print_quote(si)
-    print_after_hours(price, unsigned(si.get("cur_prc")))
+    print_quote(si, regular_session(price, now))
+    print_after_hours(price, regular_price(price, now))
     print_multiples(parent_si if is_preferred else si)
-    print_52w(si)
+    print_52w(si, regular_price(price, now))
     print_flow(si)
     print_sector(info.get("sector_info"), info.get("rs_data"))
     print_grades(info.get("investment"))
     # 목표주가는 본주에 매겨진다 — 우선주 주가에 대면 상승여력이 괴리율만큼 부풀려진다.
     print_target_prices(
         info.get("target_price_history") or [],
-        unsigned(parent_si.get("cur_prc")),
+        regular_price(info, now),
         args.reports,
         args.since,
     )

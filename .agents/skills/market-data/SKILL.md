@@ -33,7 +33,7 @@ StockEasy와 Naver가 함께 `<urlopen error [Errno 8] nodename nor servname pro
 | 증권사별 목표주가·컨센서스·EPS 리비전·리포트 요약 | `invagent.datafeed.stockeasy.fetch_stock_json` (`securities-reports`) → `analyze-stock/scripts/fetch_stock_info.py` | 필요 |
 | 종목 뉴스 | 같음 (`news/by-stock-code`) | 필요 |
 | 종목 DART 공시 목록 | 같음 (`stock-info/analysis-tab` — 2026-09 개편 페이지의 소식 탭, 공시·리포트·뉴스 각 최근 20건) | 필요 |
-| 시간외·NXT 체결가 (참고) | `invagent.datafeed.stockinfo` (`info-tab`의 `after_hours_quote`·`nxt_quote`) — `stock_info.cur_prc`와 차트 종가는 정규장가 그대로다. 판정에 쓰지 않는다 | 필요 |
+| 시간외·NXT 체결가 (참고) | `invagent.datafeed.stockinfo` (`info-tab`의 `after_hours_quote`·`nxt_quote`) — 판정에 쓰지 않는다. ⚠️ 장 마감 뒤 `stock_info.cur_prc`는 시간외 체결가를 따라 움직인다(2026-10-12 산일전기 차트 종가 214,500원 vs `cur_prc` 213,500원). 정규장가는 `info-tab` 차트 마지막 봉 종가다 — `fetch_stock_info.py`의 `[시세]`·`regular_close`가 그것을 쓴다 | 필요 |
 | `info-tab` 두 축(시세·실적) | `invagent.datafeed.stockinfo.fetch(ticker)` — `.price`는 종목 자기 것(시세 축), `.fundamentals`는 본주 것(실적 축). 처음 읽힐 때 받으므로 보통주는 요청 하나, 실적만 읽는 우선주도 본주 요청 하나다. 실패 사유(`gaps` — 401 쿠키 힌트·빈 응답)와 출처(`sources`) — 쿠키가 없으면 반드시 401인 무인증 요청을 보내지 않고 `HTTP 401 (STOCKEASY_COOKIE 미설정)`만 남긴다(요청 예산 보존) —, 주 재무제표(C/S) 분기·연간 확정/추정 시계열(`quarterly`·`yearly`)과 행(`rows`), 종목 자기 이름(`name`)도 이 모듈이 만든다. `info-tab`을 읽는 스크립트(`stage_scan`·`canslim_scan`·`extract_earnings`·`fetch_stock_info`·`fetch.py quote`)는 모두 이것을 거친다 | 필요 |
 | 종목 RS(상대강도)·RS선 | 같음 (`info-tab`의 `rs_data`·`rs_line_chart`) → `analyze-stock/scripts/canslim_scan.py`. 업종 RS(`/rs/dashboard-data`)는 앱 토큰 없이는 HTTP 403이라 받지 않는다 | 필요 |
 | 종목 투자자별 매매동향(기관·외국인·개인 순매수량) | `invagent.datafeed.naver.fetch_investor_trend` — `m.stock.naver.com/api/stock/<code>/trend`, 최근 60거래일까지 | 불필요 |

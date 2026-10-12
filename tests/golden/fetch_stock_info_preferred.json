@@ -22,6 +22,7 @@
   "for_exh_rt": "+70.1",
   "dstr_rt": "95.0"
  },
+ "regular_close": 61000.0,
  "after_hours_quote": {
   "dt": "20260929",
   "cur_prc": "+61200",

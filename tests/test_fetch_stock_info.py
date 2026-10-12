@@ -876,3 +876,73 @@ def test_preferred_consensus_upside_is_measured_against_the_common_share(monkeyp
     assert summary["consensus"]["upside_percent"] == pytest.approx(-6.25)
     assert summary["consensus_input"]["average"] == 75000.0
     assert summary["consensus_envelopes"]["consensus_average"]["source"] == "StockEasy stock-info/005930 [컨센 요약]"
+
+
+def _with_chart(payload: dict, bars: list[tuple[str, float]], **extra) -> dict:
+    """`info-tab`에 정규장 일봉(chart)을 붙인다. (일자, 종가)만 의미가 있다."""
+    return {
+        **payload,
+        **extra,
+        "chart": {
+            "interval": "1d",
+            "schema": {"fields": ["timestamp", "open", "high", "low", "close", "volume", "price_change_percent"]},
+            "data": [[f"{d}T00:00:00+09:00", c, c, c, c, 1000, 0.0] for d, c in bars],
+        },
+    }
+
+
+def test_stock_info_quote_uses_the_regular_session_close_after_the_close(monkeypatch, capsys):
+    """2026-10-12 산일전기: 장 마감 뒤 받은 `cur_prc`는 213,500원이었지만 정규장 종가는 214,500원이었다.
+
+    시세 줄은 시간외 체결가를 따라 움직인다. 판정 가격은 정규장 일봉 종가이므로 [시세] 줄도
+    그것을 찍고, 시세 줄 값은 시간외 반영이라고 떼어 보여 준다.
+    """
+    payload = _with_chart(
+        STOCK_INFO_PAYLOAD,
+        [("2026-09-26", 32100.0), ("2026-09-29", 31000.0)],
+        after_hours_quote={"dt": "20260929", "cur_prc": "-31467", "cntr_tm": "195959",
+                           "market": "krx", "session": "after"},
+    )
+    out, _ = _run_golden(monkeypatch, capsys, ["064290"], {"064290": payload}, "064290")
+
+    quote = next(l for l in out.splitlines() if l.startswith("[시세]"))
+    assert quote.startswith("[시세] 31,000원 (-3.43%, 전일대비 -1,100원)")
+    assert "시세 줄 30,850원 — 시간외 반영, 판정 미사용" in quote
+    after = next(l for l in out.splitlines() if l.startswith("[시간외·NXT]"))
+    assert "KRX 시간외 31,467원(정규장가 대비 +1.5%)" in after
+    # (31,000 − 8,540) / (54,100 − 8,540) = 49.3% — 시세 줄 30,850원이면 49.0%
+    assert "[52주 밴드 내 위치] 49.3%" in out
+
+
+def test_stock_info_json_measures_against_the_regular_session_close(monkeypatch, capsys):
+    """9단계 입력도 정규장 종가 기준이다 — 시간외가 섞인 시세 줄로 상승여력을 재면 안 된다."""
+    payload = _with_chart(STOCK_INFO_PAYLOAD, [("2026-07-17", 32100.0), ("2026-07-20", 31000.0)])
+    summary = _consensus_json(
+        monkeypatch, capsys, ["064290"], {"064290": payload}, "064290", _kst(2026, 7, 20, 16, 43)
+    )
+
+    assert summary["regular_close"] == 31000.0
+    # 메리츠 75,000 vs 정규장 31,000원 → +141.9% (시세 줄 30,850원이면 +143.1%)
+    assert summary["consensus"]["upside_percent"] == pytest.approx(141.935, abs=0.01)
+
+
+def test_preferred_share_measures_both_axes_on_their_regular_session_closes(monkeypatch, capsys):
+    """우선주는 자기 일봉 종가, 본주는 본주 일봉 종가로 괴리율과 상승여력을 잰다."""
+    tabs = {
+        "005935": _with_chart(PREFERRED_OWN_PAYLOAD, [("2026-07-17", 61500.0), ("2026-07-20", 60000.0)]),
+        "005930": _with_chart(PREFERRED_PARENT_PAYLOAD, [("2026-07-17", 80500.0), ("2026-07-20", 79000.0)]),
+    }
+    summary = _consensus_json(monkeypatch, capsys, ["005935"], tabs, "005930", _kst(2026, 7, 20, 16, 43))
+
+    assert summary["regular_close"] == 60000.0
+    # 60,000 / 79,000 − 1 = −24.05% (시세 줄 61,000 / 80,000이면 −23.75%)
+    assert summary["preferred_discount_pct"] == pytest.approx(-24.051, abs=0.01)
+    # 메리츠 75,000 vs 본주 79,000 → −5.06%
+    assert summary["consensus"]["upside_percent"] == pytest.approx(-5.063, abs=0.01)
+
+    module = load_script("analyze-stock", "fetch_stock_info")
+    monkeypatch.setattr(module, "_now", lambda: _kst(2026, 7, 20, 16, 43))
+    assert module.main(["005935"]) == 0
+    out = capsys.readouterr().out
+    assert "괴리율 -24.1%" in out
+    assert "[시세] 60,000원" in out
