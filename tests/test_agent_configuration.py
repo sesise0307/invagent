@@ -673,9 +673,9 @@ def test_account_mdd_action_text_matches_my_rules(tmp_path: Path) -> None:
     assert "현금 비중을 30% 이상 확보" in rules
     assert "5거래일 동안 신규 매수를 금지" in rules
     assert "복기한 뒤에만 매매를 재개" in rules
-    assert "신규 매수 중단은 발동일부터 최소 5거래일 유지" in rules
+    assert "신규 매수 중단은 지수가 더 하락하지 않고 반등하기 전까지 유지" in rules
     assert "레버리지 전량 정리" in module.ACCOUNT_MDD_ACTION[-10.0]
-    assert "신규 매수 중단(최소 5거래일" in module.ACCOUNT_MDD_ACTION[-10.0]
+    assert "신규 매수 중단(지수 하락 멈추고 반등 전까지)" in module.ACCOUNT_MDD_ACTION[-10.0]
     assert "5거래일 신규 매수 금지" in module.ACCOUNT_MDD_ACTION[-15.0]
 
 
