@@ -541,7 +541,10 @@ sequential scan at the 3-second interval was still cut off around the twelfth re
 A 429/502/503/504, a dropped connection or a timeout is retried up to `MAX_ATTEMPTS` (3) times with
 exponential backoff plus jitter, honouring `Retry-After`; a 401 is never retried. When retries run
 out the host enters a `COOLDOWN_SECONDS` (120, or its `HOST_LIMITS` value) cool-down during which every process fails fast
-instead of extending the block — daily bars then take the Naver fallback. The cool-down file records why it started (`HTTP 429`,
+instead of extending the block — daily bars then take the Naver fallback. A name-resolution failure
+(`[Errno 8]`) is retried but never starts a cool-down, because the request never reached the server: on
+2026-10-14 the "DNS drops" were scripts run inside a network-denied Codex sandbox, and their cool-down files
+blocked every other session for ten minutes. The cool-down file records why it started (`HTTP 429`,
 `연결 끊김: …` or `시간 초과`, trimmed to `REASON_MAX_CHARS`) and the fail-fast message carries that reason, because on 2026-10-06
 three unrelated hosts cooled down within eight seconds — a local network drop that looked like a StockEasy block until the
 reasons could be told apart. Tune the spacing only on HTTP refusals; a file written before reasons existed reads as `사유 미기록`. A URL refused that way

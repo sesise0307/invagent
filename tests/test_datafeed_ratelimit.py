@@ -310,3 +310,21 @@ def test_a_cool_down_file_from_before_reasons_were_recorded_still_holds(monkeypa
 
     assert payload is None and calls == []
     assert "300초 남음 · 사유 미기록" in err
+
+
+def test_a_name_resolution_failure_does_not_cool_the_host_down(monkeypatch) -> None:
+    """DNS 실패는 서버 한도와 무관하다 — 네트워크가 막힌 샌드박스 하나가 모든 프로세스를 막으면 안 된다.
+
+    2026-10-14 Codex 샌드박스(네트워크 차단)에서 돈 스크립트가 `[Errno 8]`로 StockEasy를 600초
+    cool-down에 넣어, 네트워크가 멀쩡한 다른 세션까지 막혔다.
+    """
+    import socket
+
+    dns_failure = urllib.error.URLError(socket.gaierror(8, "nodename nor servname provided, or not known"))
+    calls = _scripted(monkeypatch, [dns_failure] * ratelimit.MAX_ATTEMPTS + [b'{"ok": 1}'])
+
+    first = http.get_json("https://example.test/a", authed=False)
+
+    assert first[0] is None and "nodename nor servname" in first[1]
+    assert http.get_json("https://example.test/b", authed=False) == ({"ok": 1}, None)
+    assert len(calls) == ratelimit.MAX_ATTEMPTS + 1

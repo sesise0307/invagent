@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import random
+import socket
 import time
 import urllib.error
 
@@ -76,6 +77,15 @@ def is_retryable(error: BaseException) -> bool:
     return isinstance(error, (urllib.error.URLError, ConnectionError, TimeoutError))
 
 
+def is_name_resolution_failure(error: BaseException) -> bool:
+    """호스트 이름을 못 풀었다 — 요청이 서버에 닿지도 않았으니 서버 한도와 무관하다.
+
+    네트워크가 막힌 샌드박스(Codex 등)에서는 getaddrinfo가 `[Errno 8]`로 즉시 실패한다. 이걸로
+    공유 cool-down 파일을 쓰면 네트워크가 멀쩡한 다른 프로세스까지 막힌다 (2026-10-14).
+    """
+    return isinstance(getattr(error, "reason", None), socket.gaierror) or isinstance(error, socket.gaierror)
+
+
 def call_with_retry(host: str, fetch):
     """`fetch()`를 재시도 가능한 실패에 한해 최대 MAX_ATTEMPTS번 부른다.
 
@@ -93,8 +103,9 @@ def call_with_retry(host: str, fetch):
             if not is_retryable(error):
                 raise
             if attempt == MAX_ATTEMPTS:
-                cooldown = _limit(host, "cooldown", COOLDOWN_SECONDS)
-                start_cooldown(host, max(cooldown, retry_after(error) or 0.0), reason=failure_reason(error))
+                if not is_name_resolution_failure(error):
+                    cooldown = _limit(host, "cooldown", COOLDOWN_SECONDS)
+                    start_cooldown(host, max(cooldown, retry_after(error) or 0.0), reason=failure_reason(error))
                 raise
             _sleep(wait_seconds(error, attempt))
 
