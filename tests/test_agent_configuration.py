@@ -678,6 +678,12 @@ def test_account_mdd_action_text_matches_my_rules(tmp_path: Path) -> None:
     assert "레버리지 전량 정리" in module.ACCOUNT_MDD_ACTION[-10.0]
     assert "신규 매수 중단(지수 하락 멈추고 반등 전까지)" in module.ACCOUNT_MDD_ACTION[-10.0]
     assert "5거래일 신규 매수 금지" in module.ACCOUNT_MDD_ACTION[-15.0]
+    assert "5거래일 매수 금지는 개별 종목에만 적용" in rules
+    assert "레버리지가 아닌 지수 ETF는 중단·금지 기간에도 바텀피싱" in rules
+    assert "개별 종목 한정" in module.ACCOUNT_MDD_ACTION[-15.0]
+    assert "지수 ETF 바텀피싱 분할 매수 허용" in module.ACCOUNT_MDD_ACTION[-15.0]
+    assert "-10% 신규 매수 중단과 -15% 5거래일 매수 금지는 개별 종목에만 적용" in rules
+    assert "개별 종목 신규 매수 중단(지수 하락 멈추고 반등 전까지)" in module.ACCOUNT_MDD_ACTION[-10.0]
 
 
 FLAT_ARCHIVE_PATH_RE = re.compile(
@@ -968,3 +974,19 @@ def test_analyze_stock_skill_envelope_example_validates():
 
     assert result["valid"] is True, result["errors"]
     assert result["observations"]["consensus_average"]["kind"] == "estimate"
+
+
+def test_market_regime_constants_match_my_rules_and_skill() -> None:
+    """「시장 국면」 급락 정의는 룰 원문·스크립트 상수·SKILL.md 표가 같아야 한다."""
+    module = load_script("daily-digest", "fetch_market_signals")
+    rules = (REPO_ROOT / "context" / "my_rules.md").read_text(encoding="utf-8")
+    skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert f"{module.CRASH_STREAK_DAYS}거래일 연속 하락한 뒤 그날 종가가 {module.CRASH_DROP_PCT:g}% 넘게 하락" in rules
+    assert f"+{module.CRASH_MARGIN_SIGMA:g}σ 이상" in rules
+    for name, value in (
+        ("CRASH_STREAK_DAYS", module.CRASH_STREAK_DAYS),
+        ("CRASH_DROP_PCT", f"{module.CRASH_DROP_PCT:g}%"),
+        ("CRASH_MARGIN_SIGMA", f"+{module.CRASH_MARGIN_SIGMA:g}σ"),
+    ):
+        assert f"| `{name}` | {value} |" in skill, name

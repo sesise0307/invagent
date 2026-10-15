@@ -52,6 +52,14 @@ MARGIN_CALL_WINDOW_DAYS = 120
 MARGIN_CALL_MIN_DRAWDOWN_PCT = -10.0
 MARGIN_CALL_PEAK_WINDOW = 250
 
+# --- 「시장 국면」 급락 (context/my_rules.md 「시장 국면」, 2026-10-15 사용자 확정) ------
+# 급락 = 조정(52주 고점 대비 -10% 이하) + 3거래일 연속 하락 뒤 그날 -3% 넘게 하락 + 가장 최근
+# 반대매매가 직전 120거래일 평균 +1σ 이상. 클라이맥스(+2σ)보다 한 단계 이른 신호이고,
+# 지수 ETF 바텀피싱(「지수 ETF 규칙 2」)과 「매매규칙 6」 시장 급락 예외가 이 판정을 쓴다.
+CRASH_STREAK_DAYS = 3
+CRASH_DROP_PCT = -3.0
+CRASH_MARGIN_SIGMA = 1.0
+
 # --- 지수 낙폭 사다리 -------------------------------------------------------
 # 고점 대비 -10%부터 5%마다. 분할 매수의 눈금이자, 깊은 단은 사실상 유일한 타이밍 신호다.
 # 3.3년 실측(저점 18개): 얕은 단은 저점 100거래일 이상 전에 켜져 타이밍이 되지 못하지만
@@ -248,6 +256,80 @@ def print_margin_call(rows: list[dict], monitor_rows: list[dict] | None = None) 
         else:
             state = "미성립"
         print(f"    {market}: 낙폭 {dd} → {state}")
+
+
+def _margin_baseline(rows: list[dict]) -> tuple[float | None, float | None, float | None]:
+    """(가장 최근 반대매매, 직전 창 평균, 표준편차). 창을 못 채우면 평균·σ는 None."""
+    values = [float(r["margin_call_amount"]) for r in rows if r.get("margin_call_amount") is not None]
+    today = values[-1] if values else None
+    baseline = values[-MARGIN_CALL_WINDOW_DAYS - 1 : -1]
+    if today is None or len(baseline) < MARGIN_CALL_WINDOW_DAYS:
+        return today, None, None
+    mean = sum(baseline) / len(baseline)
+    return today, mean, (sum((x - mean) ** 2 for x in baseline) / len(baseline)) ** 0.5
+
+
+def market_regime(rows: list[dict], monitor_rows: list[dict] | None = None) -> dict:
+    """「시장 국면」을 지수별로 판정한다: climax > crash > correction > normal.
+
+    급락의 하락 연속성은 그날까지의 종가 등락률로, 반대매매는 가장 최근 발표값으로 본다 —
+    반대매매는 하루 늦게 발표되므로 장 마감 직후에는 전일 값이 최신이다.
+    """
+    monitor_rows = monitor_rows or []
+    value, mean, sigma = _margin_baseline(rows)
+    threshold = mean + CRASH_MARGIN_SIGMA * sigma if mean is not None else None
+    surge = threshold is not None and value is not None and value >= threshold
+    climax = margin_call_climax(rows, monitor_rows)
+    out: dict[str, dict] = {}
+    for market in LEVERAGE_MARKETS:
+        drawdown = index_drawdown(monitor_rows, market)
+        deep = drawdown is not None and drawdown <= MARGIN_CALL_MIN_DRAWDOWN_PCT
+        changes = [v for _, v in daily_changes(monitor_rows, market)]
+        recent = changes[-(CRASH_STREAK_DAYS + 1):]
+        drop = recent[-1] if recent else None
+        streak = (
+            len(recent) == CRASH_STREAK_DAYS + 1
+            and all(v < 0 for v in recent[:-1])
+            and recent[-1] < CRASH_DROP_PCT
+        )
+        if climax[market]["climax"]:
+            regime = "climax"
+        elif deep and streak and surge:
+            regime = "crash"
+        elif deep:
+            regime = "correction"
+        else:
+            regime = "normal"
+        out[market] = {
+            "regime": regime, "drawdown": drawdown, "deep": deep, "streak": streak,
+            "drop": drop, "margin_surge": surge, "margin_value": value, "margin_threshold": threshold,
+        }
+    return out
+
+
+REGIME_KO = {"climax": "🟢 클라이맥스", "crash": "🟠 급락", "correction": "🟡 조정", "normal": "정상"}
+
+
+def print_market_regime(rows: list[dict], monitor_rows: list[dict] | None = None) -> None:
+    result = market_regime(rows, monitor_rows)
+    first = result[LEVERAGE_MARKETS[0]]
+    print(
+        f"[시장 국면] 급락 = 낙폭 {MARGIN_CALL_MIN_DRAWDOWN_PCT:g}% 이하 · {CRASH_STREAK_DAYS}거래일 연속 하락 뒤 "
+        f"{CRASH_DROP_PCT:g}% 초과 하락 · 반대매매 +{CRASH_MARGIN_SIGMA:g}σ"
+    )
+    if first["margin_threshold"] is not None:
+        print(
+            f"  반대매매 {first['margin_value']:,.0f}억 / +{CRASH_MARGIN_SIGMA:g}σ {first['margin_threshold']:,.0f}억 "
+            f"→ 급증 {'예' if first['margin_surge'] else '아니오'}"
+        )
+    for market, v in result.items():
+        dd = f"{v['drawdown']:+.1f}%" if v["drawdown"] is not None else "미상"
+        drop = f"{v['drop']:+.2f}%" if v["drop"] is not None else "미상"
+        note = " — 지수 ETF 바텀피싱 분할 매수 가능(「지수 ETF 규칙 2」)" if v["regime"] in ("crash", "climax") else ""
+        print(
+            f"  {market}: {REGIME_KO[v['regime']]} (낙폭 {dd} · 오늘 {drop} · "
+            f"연속 하락 조건 {'✅' if v['streak'] else '❌'}){note}"
+        )
 
 
 INDEX_NAMES = {"KOSPI": "종합(KOSPI)", "KOSDAQ": "종합(KOSDAQ)"}
@@ -512,6 +594,7 @@ def main(argv: list[str] | None = None) -> int:
         print_credit(cb)
         rows = (cb.get("data") or cb.get("credit_balance") or []) if isinstance(cb, dict) else cb
         print_margin_call(rows, (mm or {}).get("data", []))
+        print_market_regime(rows, (mm or {}).get("data", []))
     if mm:
         print_drawdown_ladder(*with_session_close(mm.get("data", []), indices_data or {}, bp or {}))
     # 일부만 실패한 경우: 받은 부분은 출력하고 누락 사실을 남긴다
