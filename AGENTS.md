@@ -14,6 +14,11 @@ professional language.
 
 ## Project Structure
 
+For direct Naver Blog reading requests, use the existing `LinkExtractor` through
+[docs/naver-blog-fetch.md](docs/naver-blog-fetch.md). A web-tool access error or
+an iframe title is a retry signal; verify the local body fetch before reporting
+that the post is unavailable.
+
 Core package code lives under `src/invagent/`. Keep shared configuration and
 Telegram client setup in `src/invagent/core/`, Telegram fetch logic in
 `src/invagent/telegram/`, stock tracking in `src/invagent/tracking/`, and every
