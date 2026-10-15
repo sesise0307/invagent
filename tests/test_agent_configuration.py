@@ -406,6 +406,7 @@ def test_drawdown_ladder_constants_are_documented() -> None:
 
     assert "`DRAWDOWN_RUNGS`" in skill
     assert f"`RUNG_RECLAIM_DAYS` | {module.RUNG_RECLAIM_DAYS}" in skill
+    assert f"`PEAK_RESET_REBOUND_PCT` | {module.PEAK_RESET_REBOUND_PCT:g}%" in skill
     # 되풀이 발동 실측과 T-1 근거가 함께 남아야 한다.
     assert "08-06" in skill and "T-1" in skill
     assert "오늘 처음 밟은 단" in skill

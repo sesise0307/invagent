@@ -63,6 +63,11 @@ DRAWDOWN_RUNGS = tuple(float(-x) for x in range(10, 65, 5))
 # 간격으로 같은 「신규」가 다시 뜬다 — 실측에서 KOSPI -30%가 2026-07-28·08-03·08-06 세 번
 # 발동했다. 직전 이만큼 안에 이미 밟았던 단은 새 사건으로 세지 않는다.
 RUNG_RECLAIM_DAYS = 10
+# 사다리는 52주 최고가 아니라 **전고점** 대비다 (2026-10-15 사용자 결정). 저점에서 이만큼 이상
+# 반등하면 그 반등의 고점을 새 전고점으로 잡는다. 52주 최고로 재면 07-30 폭락 뒤 반등장의 하락이
+# 이미 밟은 깊은 단에 묻혔다 — 10/15 KOSPI는 9,114.65 대비 -39.1%였지만 9월 전고점 7,078.93
+# 대비로는 -21.5%였다. 10%는 사다리 첫 단과 같은 폭이다.
+PEAK_RESET_REBOUND_PCT = 10.0
 
 SIGNAL_EMOJI = {"red": "🔴", "yellow": "🟡", "green": "🟢"}
 STATUS_KO = {
@@ -99,19 +104,39 @@ def index_drawdown(
     return (window[-1] / peak - 1) * 100 if peak else None
 
 
+def prior_peak(closes: list[float]) -> float | None:
+    """창 안의 **전고점** — 마지막으로 `PEAK_RESET_REBOUND_PCT` 이상 반등한 저점 이후의 최고 종가.
+
+    그런 반등이 없었으면 창의 최고 종가(52주 최고)와 같다.
+    """
+    if not closes:
+        return None
+    peak = low = closes[0]
+    for close in closes[1:]:
+        if close >= low * (1 + PEAK_RESET_REBOUND_PCT / 100):
+            # 저점에서 충분히 올라왔다 — 새 상승 구간의 고점을 전고점으로 다시 잰다.
+            peak = low = close
+        elif close > peak:
+            peak = low = close
+        else:
+            low = min(low, close)
+    return peak
+
+
 def drawdown_ladder(monitor_rows: list[dict], market: str, asof: str | None = None) -> dict:
-    """지수의 52주 고점 대비 낙폭을 사다리 눈금으로 옮긴다.
+    """지수의 전고점(`prior_peak`) 대비 낙폭을 사다리 눈금으로 옮긴다.
 
     `newly`는 **오늘 처음 밟은 단**이다. 매일 같은 단에 머무르는 것은 사건이 아니고,
     새 단을 밟는 순간이 분할 매수의 행동 시점이다.
     """
     closes = [r[market] for r in _through(monitor_rows, asof) if r.get(market)]
     if not closes:
-        return {"drawdown": None, "breached": [], "newly": [], "next_rung": None, "next_level": None}
+        return {"drawdown": None, "breached": [], "newly": [], "next_rung": None, "next_level": None,
+                "peak": None}
 
     def dd_at(end: int) -> float | None:
         window = closes[max(0, end - MARGIN_CALL_PEAK_WINDOW + 1) : end + 1]
-        peak = max(window) if window else None
+        peak = prior_peak(window)
         return (window[-1] / peak - 1) * 100 if peak else None
 
     today = dd_at(len(closes) - 1)
@@ -125,8 +150,9 @@ def drawdown_ladder(monitor_rows: list[dict], market: str, asof: str | None = No
         recent.update(r for r in DRAWDOWN_RUNGS if past <= r)
     remaining = [r for r in DRAWDOWN_RUNGS if today is None or today > r]
     next_rung = remaining[0] if remaining else None
-    peak = max(closes[-MARGIN_CALL_PEAK_WINDOW:])
+    peak = prior_peak(closes[-MARGIN_CALL_PEAK_WINDOW:])
     return {
+        "peak": peak,
         "drawdown": today,
         "breached": breached,
         "newly": [r for r in breached if r not in recent],
@@ -264,7 +290,7 @@ def with_session_close(
 
 
 def print_drawdown_ladder(monitor_rows: list[dict], note: str | None = None) -> None:
-    print(f"[지수 낙폭 사다리] 52주 고점 대비 · -10%부터 5%마다")
+    print(f"[지수 낙폭 사다리] 전고점(저점 +{PEAK_RESET_REBOUND_PCT:g}% 반등 뒤 고점) 대비 · -10%부터 5%마다")
     if note:
         print(f"  ({note})")
     for market in LEVERAGE_MARKETS:
@@ -273,7 +299,7 @@ def print_drawdown_ladder(monitor_rows: list[dict], note: str | None = None) -> 
             print(f"  {market}: 미상")
             continue
         marks = " ".join(f"{'✅' if r in L['breached'] else '·'}{r:.0f}%" for r in DRAWDOWN_RUNGS[:7])
-        line = f"  {market}: {L['drawdown']:+.1f}%  [{marks}]"
+        line = f"  {market}: {L['drawdown']:+.1f}% (전고점 {L['peak']:,.2f}p)  [{marks}]"
         if L["next_rung"] is not None:
             gap = L["drawdown"] - L["next_rung"]
             line += f"  다음 {L['next_rung']:.0f}% = {L['next_level']:,.0f}p ({gap:.1f}%p 남음)"

@@ -279,6 +279,27 @@ def test_drawdown_ladder_reports_every_five_percent_from_ten() -> None:
     assert round(ladder["next_level"], 1) == 75.0
 
 
+def test_drawdown_ladder_measures_from_the_rally_high_after_a_rebound() -> None:
+    """사다리는 52주 최고가 아니라 **전고점** 대비다 (2026-10-15 사용자 결정).
+
+    2026-10-15 KOSPI는 52주 최고 9,114.65(06-22) 대비 -39.1%였지만, 07-30 저점 뒤 +18% 반등이
+    만든 전고점 7,078.93(09월) 대비로는 -21.5%였다. 지금 하락의 눈금은 뒤쪽이다.
+    """
+    module = load_script("daily-digest", "fetch_market_signals")
+
+    # 100 → 저점 60 → +10% 이상 반등해 85까지 → 76. 전고점은 85다.
+    closes = [100.0] * 60 + [60.0, 70.0, 85.0, 76.0]
+    ladder = module.drawdown_ladder(_ladder_monitor(closes), "KOSPI")
+    assert ladder["peak"] == 85.0
+    assert round(ladder["drawdown"], 1) == -10.6
+    assert ladder["breached"] == [-10.0]
+    assert round(ladder["next_level"], 2) == 72.25
+
+    # 반등이 10%에 못 미치면 전고점은 그대로 52주 최고다.
+    shallow = [100.0] * 60 + [70.0, 76.0, 68.0]
+    assert module.drawdown_ladder(_ladder_monitor(shallow), "KOSPI")["peak"] == 100.0
+
+
 def test_drawdown_ladder_flags_the_rung_first_touched_today() -> None:
     """새로 밟은 단이 행동 시점이다. 2026-07-30 저점에서 KOSPI는 -35%를 T-1에 처음 밟았다."""
     module = load_script("daily-digest", "fetch_market_signals")
