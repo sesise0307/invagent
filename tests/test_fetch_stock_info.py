@@ -191,7 +191,7 @@ def _patch_stock_info_fetch(
     """
     calls = {}
 
-    def fake_fetch(path, params=None, referer=None, cookie=None):
+    def fake_fetch(path, params=None, referer=None, cookie=None, ttl=None):
         calls[path] = {"params": params, "cookie": cookie}
         if path == datafeed_stockeasy.ENDPOINTS["search"]:
             return (search if search is not None else []), None
@@ -287,7 +287,7 @@ def test_stock_info_info_tab_401_points_at_cookie(
     """info-tab이 401이면 원인은 쿠키다 — 사유를 stderr에 특정해 준다."""
     module = load_script("analyze-stock", "fetch_stock_info")
 
-    def fake_fetch(path, params=None, referer=None, cookie=None):
+    def fake_fetch(path, params=None, referer=None, cookie=None, ttl=None):
         if path == datafeed_stockeasy.ENDPOINTS["search"]:
             return [{"stock_code": "064290", "stock_name": "인텍플러스", "market": "KR"}], None
         return None, "HTTP 401"
@@ -453,7 +453,7 @@ def test_stock_info_shows_after_hours_quotes_apart_from_the_regular_close(
     }
     fake = datafeed_stockeasy.fetch_stock_json
 
-    def with_after_hours(path, params=None, referer=None, cookie=None):
+    def with_after_hours(path, params=None, referer=None, cookie=None, ttl=None):
         if path.startswith("/stock-info/info-tab/"):
             return payload, None
         return fake(path, params, referer=referer, cookie=cookie)
@@ -518,7 +518,7 @@ def test_stock_info_lists_disclosures_from_the_analysis_tab(
     calls = _patch_stock_info_fetch(module, monkeypatch)
     fake = datafeed_stockeasy.fetch_stock_json
 
-    def with_disclosures(path, params=None, referer=None, cookie=None):
+    def with_disclosures(path, params=None, referer=None, cookie=None, ttl=None):
         if path == "/stock-info/analysis-tab/064290":
             calls[path] = {"params": params, "cookie": cookie}
             return ANALYSIS_TAB_PAYLOAD, None
@@ -591,7 +591,7 @@ def test_stock_info_splits_a_preferred_share_between_two_tickers(monkeypatch):
     }
     paths: list[str] = []
 
-    def fake_fetch(path, params=None, referer=None, cookie=None):
+    def fake_fetch(path, params=None, referer=None, cookie=None, ttl=None):
         paths.append(path)
         code = (params or {}).get("stock_code") or path.rstrip("/").split("/")[-1]
         return payloads.get(code, {"items": []}), None

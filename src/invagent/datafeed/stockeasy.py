@@ -70,8 +70,9 @@ def fetch_stock_json(
     referer: str = PAGE_BASE,
     cookie: str | None = None,
     closed_from=None,
+    ttl: int | None = None,
 ):
-    """종목 API 하나를 호출해 JSON을 반환한다. 실패하면 `(None, 사유)`."""
+    """종목 API 하나를 호출해 JSON을 반환한다. 실패하면 `(None, 사유)`. `ttl`은 캐시 허용 나이(초)."""
     url = API_BASE + path
     if params:
         url += "?" + urllib.parse.urlencode(params)
@@ -81,6 +82,7 @@ def fetch_stock_json(
         headers=http.build_headers(referer=referer, cookie=cookie),
         timeout=TIMEOUT,
         closed_from=closed_from,
+        ttl=ttl,
     )
 
 

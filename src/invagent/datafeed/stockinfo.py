@@ -14,6 +14,11 @@ from __future__ import annotations
 
 from invagent.datafeed import stockeasy, tickers
 
+# 실적 축은 이만큼 지난 캐시 응답도 쓴다. 분기 실적은 하루 안에 거의 바뀌지 않고, 대량 스캔을 다시
+# 돌릴 때마다 종목 수만큼 로그인 요청 예산(`ratelimit` `daily_budget`)을 쓰던 것을 막는다. 시세 축은
+# 기본 TTL(15분) 그대로다 — 같은 응답에 현재가가 실려 있다.
+FUNDAMENTALS_TTL_SECONDS = 12 * 3600
+
 
 def fetch(ticker: str) -> StockInfo:
     """6자리 티커 하나의 `StockInfo`. 이 호출 자체는 네트워크를 타지 않는다."""
@@ -30,6 +35,8 @@ class StockInfo:
         self.gaps: list[str] = []
         self.sources: list[str] = []
         self._payloads: dict[str, dict | None] = {}
+        # 기본 TTL로 받은 코드 — 시세 축은 여기 든 응답만 쓴다.
+        self._fresh: set[str] = set()
         self._cookie: str | None = None
         self._cookie_loaded = False
 
@@ -37,12 +44,19 @@ class StockInfo:
 
     @property
     def fundamentals(self) -> dict | None:
-        """실적 축 — 본주의 `info-tab` (보통주면 자기 것). 실패하면 None."""
-        return self._load(self.parent_code or self.ticker)
+        """실적 축 — 본주의 `info-tab` (보통주면 자기 것). 12시간 안의 캐시 응답도 쓴다. 실패하면 None."""
+        code = self.parent_code or self.ticker
+        if code in self._payloads:
+            return self._payloads[code]
+        return self._load(code, ttl=FUNDAMENTALS_TTL_SECONDS)
 
     @property
     def price(self) -> dict | None:
-        """시세 축 — 종목 자기 `info-tab`. 실패하면 None."""
+        """시세 축 — 종목 자기 `info-tab`. 기본 TTL 안의 응답만 쓴다. 실패하면 None."""
+        if self.ticker in self._fresh or (self.ticker in self._payloads and self._payloads[self.ticker] is None):
+            # 이미 실패한 축은 다시 부르지 않는다.
+            return self._payloads[self.ticker]
+        self._fresh.add(self.ticker)
         return self._load(self.ticker)
 
     @property
@@ -98,9 +112,7 @@ class StockInfo:
 
     # --- 내부 ---------------------------------------------------------------
 
-    def _load(self, code: str) -> dict | None:
-        if code in self._payloads:
-            return self._payloads[code]
+    def _load(self, code: str, ttl: int | None = None) -> dict | None:
         if not self._cookie_loaded:
             self._cookie = stockeasy.load_cookie()
             self._cookie_loaded = True
@@ -113,6 +125,7 @@ class StockInfo:
             stockeasy.ENDPOINTS["info_tab"].format(code=code),
             referer=f"{stockeasy.PAGE_BASE}/{code}",
             cookie=self._cookie,
+            ttl=ttl,
         )
         payload = payload or None
         self._payloads[code] = payload

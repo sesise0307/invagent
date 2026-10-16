@@ -247,3 +247,25 @@ def test_name_is_the_shares_own_name_once_its_payload_is_in(monkeypatch, cookie)
     assert len(calls) == 1, "본주 info-tab은 캐시에서 다시 쓴다"
     preferred.price
     assert preferred.name == "삼성전자우"
+
+
+def test_fundamentals_reuse_a_half_day_old_payload_but_the_price_axis_does_not(monkeypatch, cookie) -> None:
+    """분기 실적은 하루에 바뀌지 않는다 — 대량 스캔 재실행이 로그인 요청 예산을 다시 쓰지 않게 한다."""
+    import os
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from invagent.datafeed import cache
+
+    calls = _serve(monkeypatch, {"005930": {"stock_info": {"name": "삼성전자"}}})
+    stored = datetime(2026, 10, 16, 10, 0, tzinfo=ZoneInfo("Asia/Seoul")).timestamp()
+    monkeypatch.setattr(cache, "_now", lambda: stored)
+    stockinfo.fetch("005930").fundamentals
+    os.utime(cache.cache_path(_info_url("005930"), authed=True), (stored, stored))
+    monkeypatch.setattr(cache, "_now", lambda: stored + 3 * 3600)
+
+    later = stockinfo.fetch("005930")
+    assert later.fundamentals is not None
+    assert len(calls) == 1
+    assert later.price is not None
+    assert len(calls) == 2

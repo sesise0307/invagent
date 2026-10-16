@@ -330,3 +330,37 @@ def test_a_name_resolution_failure_does_not_cool_the_host_down(monkeypatch) -> N
     assert first[0] is None and "nodename nor servname" in first[1]
     assert http.get_json("https://example.test/b", authed=False) == ({"ok": 1}, None)
     assert len(calls) == ratelimit.MAX_ATTEMPTS + 1
+
+
+def test_a_cooled_down_login_endpoint_leaves_the_anonymous_market_endpoint_open(monkeypatch) -> None:
+    """2026-10-16 StockEasy는 로그인 `info-tab`만 끊고 무인증 시장 지표는 줬다 — 계정 제한이다."""
+    calls = _scripted(monkeypatch, [ConnectionResetError("reset")] * ratelimit.MAX_ATTEMPTS + [b'{"ok": 1}'])
+
+    assert http.get_json(f"{STOCKEASY}/info-tab", authed=True)[0] is None
+    assert http.get_json(f"{STOCKEASY}/market", authed=False) == ({"ok": 1}, None)
+    assert http.get_json(f"{STOCKEASY}/info-tab-2", authed=True)[0] is None
+    assert len(calls) == ratelimit.MAX_ATTEMPTS + 1
+
+
+def test_login_requests_stop_at_the_daily_budget_until_the_next_kst_day(monkeypatch) -> None:
+    """계정 한도에 닿기 전에 스스로 멈춘다 — 서버에 가지 않고, 무인증 요청은 예산과 무관하다."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    kst = ZoneInfo("Asia/Seoul")
+    clock = _Clock(datetime(2026, 10, 16, 23, 0, tzinfo=kst).timestamp())
+    monkeypatch.setattr(ratelimit, "_now", clock)
+    limits = {**ratelimit.HOST_LIMITS["stockeasy.intellio.kr"], "daily_budget": 2}
+    monkeypatch.setitem(ratelimit.HOST_LIMITS, "stockeasy.intellio.kr", limits)
+    calls = _scripted(monkeypatch, [b'{"ok": 1}'] * 5)
+
+    assert http.get_json(f"{STOCKEASY}/a", authed=True)[0] == {"ok": 1}
+    assert http.get_json(f"{STOCKEASY}/b", authed=True)[0] == {"ok": 1}
+    payload, err = http.get_json(f"{STOCKEASY}/c", authed=True)
+    assert payload is None and "하루 요청 예산" in err and "2/2" in err
+    assert http.get_json(f"{STOCKEASY}/market", authed=False)[0] == {"ok": 1}
+    assert len(calls) == 3
+
+    clock.now = datetime(2026, 10, 17, 0, 1, tzinfo=kst).timestamp()
+    assert http.get_json(f"{STOCKEASY}/c", authed=True)[0] == {"ok": 1}
+

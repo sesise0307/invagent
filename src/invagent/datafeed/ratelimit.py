@@ -15,6 +15,7 @@ import time
 import urllib.error
 
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -49,9 +50,20 @@ REASON_MAX_CHARS = 80
 # 호스트별로 기본값을 덮어쓰는 한도. StockEasy는 2026-10-05에 순차 실행으로도 분당 30~40건에서
 # 연결을 끊었고, 2분 cool-down 뒤 다시 부르면 차단이 연장됐다 — 분당 20건 이하·한 번에 하나·
 # 1시간 대기로 잡는다 — 10분 대기도 짧았다(2026-10-16 15:08 KST에 끊긴 뒤 15:44 요청도 끊겼다).
+#
+# `daily_budget`은 로그인 요청의 KST 하루 상한이다. 2026-10-16 StockEasy는 무인증 시장 지표는 주면서
+# 로그인 `info-tab`만 끊었고 브라우저에서도 열리지 않았다 — 간격이 아니라 계정 하루 사용량 한도로 본다.
+# 실제 한도는 비공개다. 전날 밤 보고서 146종목 재산출이 73종목 근처에서 끊긴 것과 낮 사용분을 보고
+# 100건으로 추정했다 — 다음 차단 때 그 시점의 카운터를 보고 조정한다.
 HOST_LIMITS = {
-    "stockeasy.intellio.kr": {"min_interval": 8.0, "max_concurrent": 1, "cooldown": 3600.0},
+    "stockeasy.intellio.kr": {
+        "min_interval": 8.0,
+        "max_concurrent": 1,
+        "cooldown": 3600.0,
+        "daily_budget": 100,
+    },
 }
+KST = timezone(timedelta(hours=9))
 
 
 def _limit(host: str, key: str, default: float) -> float:
@@ -63,6 +75,10 @@ _now = time.time
 
 class CoolingDown(Exception):
     """호스트가 cool-down 중이라 요청하지 않았다."""
+
+
+class BudgetExhausted(CoolingDown):
+    """로그인 요청의 하루 예산을 다 써서 요청하지 않았다. cool-down처럼 캐시 대체를 탄다."""
 
 
 def _jitter() -> float:
@@ -86,18 +102,23 @@ def is_name_resolution_failure(error: BaseException) -> bool:
     return isinstance(getattr(error, "reason", None), socket.gaierror) or isinstance(error, socket.gaierror)
 
 
-def call_with_retry(host: str, fetch):
+def call_with_retry(host: str, fetch, *, authed: bool = False):
     """`fetch()`를 재시도 가능한 실패에 한해 최대 MAX_ATTEMPTS번 부른다.
 
     호스트가 cool-down 중이면 부르지 않고 `CoolingDown`을 던진다. 재시도를 다 써도
-    거절되면 호스트를 cool-down에 넣고 마지막 오류를 그대로 던진다.
+    거절되면 호스트를 cool-down에 넣고 마지막 오류를 그대로 던진다. cool-down은 로그인
+    요청(`authed`)과 무인증 요청을 따로 센다 — StockEasy는 계정 단위로 막아 로그인 `info-tab`만
+    끊고 무인증 시장 지표는 그대로 줬다(2026-10-16). 간격·동시 접속은 호스트 하나로 공유한다.
     """
-    remaining = cooldown_remaining(host)
+    scope = cooldown_scope(host, authed=authed)
+    remaining = cooldown_remaining(scope)
     if remaining > 0:
-        raise CoolingDown(f"{host} 요청 제한으로 대기 중 — {remaining:.0f}초 남음 · {cooldown_reason(host)}")
+        raise CoolingDown(f"{host} 요청 제한으로 대기 중 — {remaining:.0f}초 남음 · {cooldown_reason(scope)}")
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             with paced(host):
+                if authed:
+                    spend_budget(host)
                 return fetch()
         except Exception as error:
             if not is_retryable(error):
@@ -105,9 +126,41 @@ def call_with_retry(host: str, fetch):
             if attempt == MAX_ATTEMPTS:
                 if not is_name_resolution_failure(error):
                     cooldown = _limit(host, "cooldown", COOLDOWN_SECONDS)
-                    start_cooldown(host, max(cooldown, retry_after(error) or 0.0), reason=failure_reason(error))
+                    start_cooldown(scope, max(cooldown, retry_after(error) or 0.0), reason=failure_reason(error))
                 raise
             _sleep(wait_seconds(error, attempt))
+
+
+def spend_budget(host: str) -> None:
+    """로그인 요청 하나를 KST 오늘 예산에서 뺀다. 예산이 없는 호스트는 세지 않는다.
+
+    다 썼으면 `BudgetExhausted`를 던진다. 재시도도 서버에 닿는 요청이라 하나씩 센다. 카운터는
+    프로세스끼리 공유하는 파일이고, 읽기·쓰기 실패는 무시한다 — 보조 장치다.
+    """
+    budget = HOST_LIMITS.get(host, {}).get("daily_budget")
+    if budget is None:
+        return
+    path = STATE_ROOT / f"{host}.authed.budget"
+    today = datetime.fromtimestamp(_now(), KST).strftime("%Y-%m-%d")
+    with _flock(STATE_ROOT / f"{host}.authed.budget.lock"):
+        try:
+            state = json.loads(path.read_text())
+            count = int(state["count"]) if state.get("day") == today else 0
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            count = 0
+        if count >= budget:
+            raise BudgetExhausted(
+                f"{host} 로그인 하루 요청 예산 소진 — {count}/{budget}건 (KST {today}) · 내일 0시 KST부터 다시 부른다"
+            )
+        try:
+            atomic_write(path, json.dumps({"day": today, "count": count + 1}))
+        except OSError:
+            pass
+
+
+def cooldown_scope(host: str, *, authed: bool) -> str:
+    """cool-down 파일 이름의 몸통. 무인증은 호스트 그대로, 로그인 요청은 `<호스트>.authed`."""
+    return f"{host}.authed" if authed else host
 
 
 def _cooldown_path(host: str) -> Path:

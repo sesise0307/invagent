@@ -223,20 +223,25 @@ def _key_lock(url: str, *, authed: bool) -> Iterator[None]:
 
 
 def get_or_fetch(
-    url: str, *, authed: bool, fetcher: Callable[[], bytes], closed_from: clock | None = None
+    url: str,
+    *,
+    authed: bool,
+    fetcher: Callable[[], bytes],
+    closed_from: clock | None = None,
+    ttl: int | None = None,
 ) -> tuple[bytes, bool]:
     """캐시 본문 또는 `fetcher` 결과와 cache-hit 여부를 반환한다.
 
     잠금 획득 뒤 다시 읽어 같은 cold-cache URL을 기다리던 프로세스가 네트워크를
     중복 호출하지 않게 한다. `fetcher` 예외와 실패 응답은 저장하지 않는다.
     """
-    cached = load(url, authed=authed, closed_from=closed_from)
+    cached = load(url, authed=authed, ttl=ttl, closed_from=closed_from)
     if cached is not None:
         return cached, True
     if not enabled():
         return fetcher(), False
     with _key_lock(url, authed=authed):
-        cached = load(url, authed=authed, closed_from=closed_from)
+        cached = load(url, authed=authed, ttl=ttl, closed_from=closed_from)
         if cached is not None:
             return cached, True
         body = fetcher()

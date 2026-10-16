@@ -547,6 +547,15 @@ a one-hour cool-down (raised from 600 seconds after a 2026-10-16 block outlasted
 still cut off at 15:44), because on 2026-10-05 a strictly sequential 21-stock run was cut off at the
 fourteenth stock and every retry after the 2-minute cool-down extended the block, and on 2026-10-06 a
 sequential scan at the 3-second interval was still cut off around the twelfth request.
+Cool-downs are counted separately for login (cookie-carrying) and anonymous requests — on 2026-10-16
+StockEasy dropped every login `info-tab` call, in the browser as well, while still serving the anonymous
+market endpoints, so the limit is per account rather than per IP. Login requests to StockEasy also
+carry a KST daily budget (`daily_budget`, 100, an estimate: the 146-stock re-run of 2026-10-15 was cut
+off near the 73rd stock); once spent, requests fail fast with a 「하루 요청 예산 소진」 reason and take the
+kept-response fallback, and the shared counter in `output/.cache/ratelimit/<host>.authed.budget`
+resets at KST midnight — read its count at the next block and tune the number from it. `stockinfo`'s
+earnings axis accepts an `info-tab` response up to 12 hours old (`FUNDAMENTALS_TTL_SECONDS`) because
+quarterly figures do not change within a day; the price axis keeps the 15-minute TTL.
 A 429/502/503/504, a dropped connection or a timeout is retried up to `MAX_ATTEMPTS` (3) times with
 exponential backoff plus jitter, honouring `Retry-After`; a 401 is never retried. When retries run
 out the host enters a `COOLDOWN_SECONDS` (120, or its `HOST_LIMITS` value) cool-down during which every process fails fast
