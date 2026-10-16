@@ -342,25 +342,41 @@ def test_a_cooled_down_login_endpoint_leaves_the_anonymous_market_endpoint_open(
     assert len(calls) == ratelimit.MAX_ATTEMPTS + 1
 
 
-def test_login_requests_stop_at_the_daily_budget_until_the_next_kst_day(monkeypatch) -> None:
-    """계정 한도에 닿기 전에 스스로 멈춘다 — 서버에 가지 않고, 무인증 요청은 예산과 무관하다."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
-    kst = ZoneInfo("Asia/Seoul")
-    clock = _Clock(datetime(2026, 10, 16, 23, 0, tzinfo=kst).timestamp())
-    monkeypatch.setattr(ratelimit, "_now", clock)
-    limits = {**ratelimit.HOST_LIMITS["stockeasy.intellio.kr"], "daily_budget": 2}
+def _small_budget(monkeypatch, count, window):
+    limits = {**ratelimit.HOST_LIMITS["stockeasy.intellio.kr"], "login_budget": count, "login_window": window}
     monkeypatch.setitem(ratelimit.HOST_LIMITS, "stockeasy.intellio.kr", limits)
+
+
+def test_login_requests_stop_at_the_budget_until_the_oldest_leaves_the_window(monkeypatch) -> None:
+    """한도는 KST 날짜로 풀리지 않았다 — 2026-10-16 같은 날 오후에 브라우저가 다시 열렸다. 최근 구간으로 센다."""
+    clock = _Clock(1_000_000.0)
+    monkeypatch.setattr(ratelimit, "_now", clock)
+    _small_budget(monkeypatch, 2, 3600)
     calls = _scripted(monkeypatch, [b'{"ok": 1}'] * 5)
 
     assert http.get_json(f"{STOCKEASY}/a", authed=True)[0] == {"ok": 1}
+    clock.now += 600
     assert http.get_json(f"{STOCKEASY}/b", authed=True)[0] == {"ok": 1}
     payload, err = http.get_json(f"{STOCKEASY}/c", authed=True)
-    assert payload is None and "하루 요청 예산" in err and "2/2" in err
+    assert payload is None and "요청 예산 소진" in err and "2/2" in err
     assert http.get_json(f"{STOCKEASY}/market", authed=False)[0] == {"ok": 1}
     assert len(calls) == 3
 
-    clock.now = datetime(2026, 10, 17, 0, 1, tzinfo=kst).timestamp()
+    clock.now += 3001  # 첫 요청이 1시간 구간을 벗어났다
     assert http.get_json(f"{STOCKEASY}/c", authed=True)[0] == {"ok": 1}
 
+
+def test_every_stockeasy_request_is_logged_with_its_outcome(monkeypatch) -> None:
+    """다음 차단 때 직전 요청 이력을 보고 차단 방식(일정 시간 차단 · 최근 구간 누적)을 가린다."""
+    clock = _Clock(1_000_000.0)
+    monkeypatch.setattr(ratelimit, "_now", clock)
+    _scripted(monkeypatch, [b'{"ok": 1}', b'{"ok": 1}'] + [ConnectionResetError("reset")] * ratelimit.MAX_ATTEMPTS)
+
+    http.get_json(f"{STOCKEASY}/market", authed=False)
+    http.get_json(f"{STOCKEASY}/a", authed=True)
+    http.get_json(f"{STOCKEASY}/b", authed=True)
+
+    log = ratelimit.request_log("stockeasy.intellio.kr")
+    assert [(e["authed"], e["ok"]) for e in log] == [(False, True), (True, True)] + [(True, False)] * 3
+    assert log[-1]["reason"].startswith("연결 끊김")
+    assert log[0]["t"] == 1_000_000.0

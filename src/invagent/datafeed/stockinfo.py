@@ -15,7 +15,7 @@ from __future__ import annotations
 from invagent.datafeed import stockeasy, tickers
 
 # 실적 축은 이만큼 지난 캐시 응답도 쓴다. 분기 실적은 하루 안에 거의 바뀌지 않고, 대량 스캔을 다시
-# 돌릴 때마다 종목 수만큼 로그인 요청 예산(`ratelimit` `daily_budget`)을 쓰던 것을 막는다. 시세 축은
+# 돌릴 때마다 종목 수만큼 로그인 요청 예산(`ratelimit` `login_budget`)을 쓰던 것을 막는다. 시세 축은
 # 기본 TTL(15분) 그대로다 — 같은 응답에 현재가가 실려 있다.
 FUNDAMENTALS_TTL_SECONDS = 12 * 3600
 

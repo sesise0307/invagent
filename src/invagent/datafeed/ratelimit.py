@@ -15,7 +15,6 @@ import time
 import urllib.error
 
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -51,19 +50,23 @@ REASON_MAX_CHARS = 80
 # 연결을 끊었고, 2분 cool-down 뒤 다시 부르면 차단이 연장됐다 — 분당 20건 이하·한 번에 하나·
 # 1시간 대기로 잡는다 — 10분 대기도 짧았다(2026-10-16 15:08 KST에 끊긴 뒤 15:44 요청도 끊겼다).
 #
-# `daily_budget`은 로그인 요청의 KST 하루 상한이다. 2026-10-16 StockEasy는 무인증 시장 지표는 주면서
-# 로그인 `info-tab`만 끊었고 브라우저에서도 열리지 않았다 — 간격이 아니라 계정 하루 사용량 한도로 본다.
-# 실제 한도는 비공개다. 전날 밤 보고서 146종목 재산출이 73종목 근처에서 끊긴 것과 낮 사용분을 보고
-# 100건으로 추정했다 — 다음 차단 때 그 시점의 카운터를 보고 조정한다.
+# `login_budget`/`login_window`: 최근 `login_window`초 안의 로그인 요청(재시도 포함)이 `login_budget`건이면
+# 더 보내지 않는다. 2026-10-16 StockEasy는 무인증 시장 지표는 주면서 이 세션의 로그인 요청만 끊었다
+# (쿠키 없이 보내면 401이 바로 왔다). 같은 날 오후 브라우저는 다시 열려 KST 하루 한도는 아니다 — 일정 시간
+# 차단인지 최근 구간 누적 한도인지는 아직 모른다. 둘 다 몰린 대량 요청이 부르므로 이동 구간으로 센다.
+# 숫자는 추정이다(전날 밤 보고서 146종목 재산출이 73종목 근처에서 끊김). 다음 차단 때 `request_log`를 보고 조정한다.
 HOST_LIMITS = {
     "stockeasy.intellio.kr": {
         "min_interval": 8.0,
         "max_concurrent": 1,
         "cooldown": 3600.0,
-        "daily_budget": 100,
+        "login_budget": 60,
+        "login_window": 6 * 3600.0,
     },
 }
-KST = timezone(timedelta(hours=9))
+# 요청 기록 보관 기간. 예산 구간보다 길게 둬 차단 직전 이력을 남긴다.
+REQUEST_LOG_RETENTION_SECONDS = 48 * 3600.0
+
 
 
 def _limit(host: str, key: str, default: float) -> float:
@@ -78,7 +81,7 @@ class CoolingDown(Exception):
 
 
 class BudgetExhausted(CoolingDown):
-    """로그인 요청의 하루 예산을 다 써서 요청하지 않았다. cool-down처럼 캐시 대체를 탄다."""
+    """최근 구간의 로그인 요청 예산을 다 써서 요청하지 않았다. cool-down처럼 캐시 대체를 탄다."""
 
 
 def _jitter() -> float:
@@ -118,8 +121,14 @@ def call_with_retry(host: str, fetch, *, authed: bool = False):
         try:
             with paced(host):
                 if authed:
-                    spend_budget(host)
-                return fetch()
+                    check_budget(host)
+                try:
+                    body = fetch()
+                except Exception as error:
+                    record_request(host, authed=authed, ok=False, reason=failure_reason(error))
+                    raise
+                record_request(host, authed=authed, ok=True)
+                return body
         except Exception as error:
             if not is_retryable(error):
                 raise
@@ -131,31 +140,65 @@ def call_with_retry(host: str, fetch, *, authed: bool = False):
             _sleep(wait_seconds(error, attempt))
 
 
-def spend_budget(host: str) -> None:
-    """로그인 요청 하나를 KST 오늘 예산에서 뺀다. 예산이 없는 호스트는 세지 않는다.
+def _logged(host: str) -> bool:
+    return "login_budget" in HOST_LIMITS.get(host, {})
 
-    다 썼으면 `BudgetExhausted`를 던진다. 재시도도 서버에 닿는 요청이라 하나씩 센다. 카운터는
-    프로세스끼리 공유하는 파일이고, 읽기·쓰기 실패는 무시한다 — 보조 장치다.
+
+def _log_path(host: str) -> Path:
+    return STATE_ROOT / f"{host}.requests.jsonl"
+
+
+def request_log(host: str) -> list[dict]:
+    """보관 중인 요청 기록, 오래된 것부터. 항목은 `{"t", "authed", "ok", "reason"?}`. 없으면 빈 리스트."""
+    try:
+        lines = _log_path(host).read_text().splitlines()
+    except OSError:
+        return []
+    entries = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and isinstance(entry.get("t"), (int, float)):
+            entries.append(entry)
+    return entries
+
+
+def record_request(host: str, *, authed: bool, ok: bool, reason: str = "") -> None:
+    """서버에 닿은 요청 하나를 기록한다. 예산이 걸린 호스트만, 보관 기간이 지난 줄은 버린다.
+
+    쓰기 실패는 무시한다 — 보조 장치다.
     """
-    budget = HOST_LIMITS.get(host, {}).get("daily_budget")
-    if budget is None:
+    if not _logged(host):
         return
-    path = STATE_ROOT / f"{host}.authed.budget"
-    today = datetime.fromtimestamp(_now(), KST).strftime("%Y-%m-%d")
-    with _flock(STATE_ROOT / f"{host}.authed.budget.lock"):
+    now = _now()
+    entry = {"t": now, "authed": authed, "ok": ok}
+    if reason:
+        entry["reason"] = reason
+    with _flock(STATE_ROOT / f"{host}.requests.lock"):
+        kept = [e for e in request_log(host) if now - e["t"] <= REQUEST_LOG_RETENTION_SECONDS]
+        kept.append(entry)
         try:
-            state = json.loads(path.read_text())
-            count = int(state["count"]) if state.get("day") == today else 0
-        except (OSError, ValueError, KeyError, TypeError, AttributeError):
-            count = 0
-        if count >= budget:
-            raise BudgetExhausted(
-                f"{host} 로그인 하루 요청 예산 소진 — {count}/{budget}건 (KST {today}) · 내일 0시 KST부터 다시 부른다"
-            )
-        try:
-            atomic_write(path, json.dumps({"day": today, "count": count + 1}))
+            atomic_write(_log_path(host), "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in kept))
         except OSError:
             pass
+
+
+def check_budget(host: str) -> None:
+    """최근 `login_window`초의 로그인 요청이 `login_budget`건이면 `BudgetExhausted`를 던진다."""
+    limits = HOST_LIMITS.get(host, {})
+    budget, window = limits.get("login_budget"), limits.get("login_window")
+    if budget is None or window is None:
+        return
+    now = _now()
+    recent = [e["t"] for e in request_log(host) if e.get("authed") and now - e["t"] < window]
+    if len(recent) >= budget:
+        reopen = min(recent) + window - now
+        raise BudgetExhausted(
+            f"{host} 로그인 요청 예산 소진 — 최근 {window / 3600:g}시간 {len(recent)}/{budget}건 · "
+            f"{reopen / 60:.0f}분 뒤 한 건씩 다시 열린다"
+        )
 
 
 def cooldown_scope(host: str, *, authed: bool) -> str:

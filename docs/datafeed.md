@@ -110,12 +110,19 @@ still cut off at 15:44), because on 2026-10-05 a strictly sequential 21-stock ru
 fourteenth stock and every retry after the 2-minute cool-down extended the block, and on 2026-10-06 a
 sequential scan at the 3-second interval was still cut off around the twelfth request.
 Cool-downs are counted separately for login (cookie-carrying) and anonymous requests — on 2026-10-16
-StockEasy dropped every login `info-tab` call, in the browser as well, while still serving the anonymous
-market endpoints, so the limit is per account rather than per IP. Login requests to StockEasy also
-carry a KST daily budget (`daily_budget`, 100, an estimate: the 146-stock re-run of 2026-10-15 was cut
-off near the 73rd stock); once spent, requests fail fast with a 「하루 요청 예산 소진」 reason and take the
-kept-response fallback, and the shared counter in `output/.cache/ratelimit/<host>.authed.budget`
-resets at KST midnight — read its count at the next block and tune the number from it. `stockinfo`'s
+StockEasy dropped every login `info-tab` call while still serving the anonymous market endpoints, so the
+limit sits on the login session rather than the IP. Login requests to StockEasy also
+carry a rolling budget (`login_budget` 60 per `login_window` six hours, retries included). It was a KST
+daily budget for one afternoon — the same day the browser opened again, so the limit does not reset at
+midnight; whether it is a timed lock-out or a rolling count is still unknown, and both are set off by a
+burst. Once spent, requests fail fast with a 「요청 예산 소진」 reason and take the kept-response fallback.
+Every request to a budgeted host, anonymous ones included, is appended to
+`output/.cache/ratelimit/<host>.requests.jsonl` (`t`, `authed`, `ok`, `reason`; kept 48 hours,
+`ratelimit.request_log`) so the next block can be read against the hours before it and the numbers tuned.
+On 2026-10-16 the same `info-tab` URL answered 401 in 0.9 s without a cookie but dropped the connection
+with the stored one while the browser worked — the block sat on that session, so the first check after a
+login-only drop is a cookie-less request sent outside `http.get_json` (so it cannot start a shared
+cool-down), and the fix is a fresh `STOCKEASY_COOKIE`. `stockinfo`'s
 earnings axis accepts an `info-tab` response up to 12 hours old (`FUNDAMENTALS_TTL_SECONDS`) because
 quarterly figures do not change within a day; the price axis keeps the 15-minute TTL.
 A 429/502/503/504, a dropped connection or a timeout is retried up to `MAX_ATTEMPTS` (3) times with
