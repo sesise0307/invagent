@@ -160,3 +160,62 @@ def test_without_a_key_nothing_is_requested(monkeypatch) -> None:
     bars, err = fsc.fetch_bars("353200", 30, asof=date(2026, 9, 14))
 
     assert bars == [] and "DATA_GO_KR_SERVICE_KEY" in err
+
+
+def etf_item(basDt, clpr, vs="0"):
+    """증권상품시세 `getETFPriceInfo_V2`의 한 행 — 가격 필드 이름은 주식시세와 같다."""
+    return {
+        "basDt": basDt,
+        "srtnCd": "069500",
+        "isinCd": "KR7069500007",
+        "itmsNm": "KODEX 200",
+        "clpr": clpr,
+        "vs": vs,
+        "fltRt": "0",
+        "nav": clpr,
+        "mkp": clpr,
+        "hipr": clpr,
+        "lopr": clpr,
+        "trqu": "1000",
+        "trPrc": "0",
+        "mrktTotAmt": "0",
+        "stLstgCnt": "0",
+        "bssIdxIdxNm": "코스피 200",
+        "bssIdxClpr": "0",
+        "nPptTotAmt": "0",
+    }
+
+
+def test_an_etf_missing_from_stock_prices_comes_from_the_securities_product_prices(monkeypatch) -> None:
+    """ETF는 주식시세에 없다 — 빈 응답이면 증권상품시세에서 받는다(KODEX 200 2026-10-15 87,025원)."""
+    monkeypatch.setattr(fsc, "load_key", lambda: "k" * 64)
+    seen = []
+
+    def read(url, headers, timeout):
+        seen.append(url)
+        if url.startswith(fsc.ETF_PRICE_URL):
+            return response(etf_item("20261015", "87025", vs="-7780"), etf_item("20261014", "94805", vs="-445"))
+        return response()
+
+    monkeypatch.setattr(http, "read_url", read)
+
+    bars, err = fsc.fetch_bars("069500", 30, asof=date(2026, 10, 16))
+
+    assert err is None
+    assert [(b["date"], b["close"]) for b in bars] == [("20261014", 94805.0), ("20261015", 87025.0)]
+    assert [url.split("?")[0] for url in seen] == [fsc.PRICE_URL, fsc.ETF_PRICE_URL]
+
+
+def test_a_stock_with_prices_never_asks_the_securities_product_prices(monkeypatch) -> None:
+    monkeypatch.setattr(fsc, "load_key", lambda: "k" * 64)
+    seen = []
+
+    def read(url, headers, timeout):
+        seen.append(url)
+        return response(item("20260914"))
+
+    monkeypatch.setattr(http, "read_url", read)
+
+    fsc.fetch_bars("353200", 30, asof=date(2026, 9, 14))
+
+    assert not any(url.startswith(fsc.ETF_PRICE_URL) for url in seen)

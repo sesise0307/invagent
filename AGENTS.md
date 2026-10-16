@@ -31,7 +31,10 @@ design notes to `docs/`.
 `http.get_json` is the single request path and every other module goes through it:
 `stockeasy` (the `/stockdata/api/v1/**` stock endpoints and the `.../market/**`
 ones, the `STOCKEASY_COOKIE` session, stock resolution, `gap_reason` — the one 401/cookie hint text every caller quotes), `fsc` (the Financial Services
-Commission's official KRX daily prices on data.go.kr, keyed by `DATA_GO_KR_SERVICE_KEY`), `naver`
+Commission's official KRX daily prices on data.go.kr, keyed by `DATA_GO_KR_SERVICE_KEY`; an ETF, absent
+from the stock-price service, is asked of the securities-product service `getETFPriceInfo_V2` instead —
+without it ETFs fell through to StockEasy's three years even intraday and a KODEX 200 scan started a
+StockEasy cool-down on 2026-10-16), `naver`
 (daily OHLCV, plus the USD/KRW daily Hana Bank closing quote that the briefing's `[환율]` line reads —
 StockEasy's market API carries no exchange rate), `daily` (the bars every price judgement reads — see below), `cache` (the shared response cache),
 `ratelimit` (per-host request spacing, retry and cool-down — see below), `env` (repository root,

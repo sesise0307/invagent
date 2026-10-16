@@ -1,6 +1,6 @@
 """금융위원회 주식시세정보 — KRX 공식 정규장 일봉.
 
-공공데이터포털(`data.go.kr`)의 `GetStockSecuritiesInfoService_V2`. 종목 하나의 3년치 일봉을 한 번에
+공공데이터포털(`data.go.kr`)의 `GetStockSecuritiesInfoService_V2`, ETF는 `GetSecuritiesProductInfoService_V2`. 종목 하나의 3년치 일봉을 한 번에
 주고, 종가는 KRX 정규장 종가다 — 네이버가 시간외가를 섞어 95,600원으로 보인 대덕전자 2026-09-14를
 97,000원으로 준다. 요청 한도는 개발계정 하루 10,000회라 StockEasy처럼 막히지 않는다.
 
@@ -23,6 +23,10 @@ from invagent.datafeed.env import env_value
 
 PRICE_URL = (
     "https://apis.data.go.kr/1160100/GetStockSecuritiesInfoService_V2/getStockPriceInfo_V2"
+)
+# ETF는 주식시세에 없다 — 같은 키로 「금융위원회_증권상품시세정보」를 따로 활용신청해야 한다.
+ETF_PRICE_URL = (
+    "https://apis.data.go.kr/1160100/GetSecuritiesProductInfoService_V2/getETFPriceInfo_V2"
 )
 KEY_ENV = "DATA_GO_KR_SERVICE_KEY"
 TIMEOUT = http.TIMEOUT
@@ -92,7 +96,7 @@ def adjust_for_splits(bars: list[dict]) -> list[dict]:
 
 
 def fetch_bars(code: str, days: int, asof: date | str | None = None) -> tuple[list[dict], str | None]:
-    """공식 일봉을 받아온다. 실패하면 ([], 사유)."""
+    """공식 일봉을 받아온다. 주식시세가 빈 응답이면 ETF로 보고 증권상품시세에 묻는다. 실패하면 ([], 사유)."""
     key = load_key()
     if not key:
         return [], f"{KEY_ENV} 미설정"
@@ -108,10 +112,13 @@ def fetch_bars(code: str, days: int, asof: date | str | None = None) -> tuple[li
             "numOfRows": max(days, 1),
         }
     )
-    bars, err = http.get_json(
-        f"{PRICE_URL}?{query}",
-        authed=True,
-        timeout=TIMEOUT,
-        decode=lambda text: parse_prices(text, code),
-    )
-    return bars or [], err
+    for url in (PRICE_URL, ETF_PRICE_URL):
+        bars, err = http.get_json(
+            f"{url}?{query}",
+            authed=True,
+            timeout=TIMEOUT,
+            decode=lambda text: parse_prices(text, code),
+        )
+        if bars or err:
+            return bars or [], err
+    return [], None

@@ -44,10 +44,12 @@ def official(*rows) -> str:
     return json.dumps({"response": {"header": {"resultCode": "00"}, "body": {"items": {"item": items}}}})
 
 
-def fake_read(info_tab=INFO_TAB, naver_body=NAVER_SISE, info_error=None, fsc_body=None):
+def fake_read(info_tab=INFO_TAB, naver_body=NAVER_SISE, info_error=None, fsc_body=None, etf_body=None):
     def read(url, headers, timeout):
         if url.startswith(fsc.PRICE_URL) and fsc_body is not None:
             return fsc_body.encode()
+        if url.startswith(fsc.ETF_PRICE_URL) and etf_body is not None:
+            return etf_body.encode()
         if url.startswith(stockeasy.API_BASE):
             if info_error:
                 raise info_error
@@ -279,6 +281,27 @@ def test_todays_bar_before_the_regular_session_settles_comes_from_naver(monkeypa
 
     assert err is None and note is None
     assert [(b["date"], b["close"], b["source"]) for b in bars][-1] == ("20260928", 121700.0, "naver_intraday")
+    assert not any(url.startswith(stockeasy.API_BASE) for url in seen)
+
+
+def test_an_etf_intraday_scan_takes_official_bars_and_never_calls_stockeasy(monkeypatch) -> None:
+    """ETF는 주식시세가 비어 StockEasy 3년치로 빠졌다 — 2026-10-16 장중 KODEX 200 조회가 쿨다운을 걸었다."""
+    monkeypatch.setattr(fsc, "load_key", lambda: "k" * 64)
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
+    monkeypatch.setattr(cache, "_now", lambda: _kst(2026, 9, 28, 14, 0))
+    seen = recording(
+        monkeypatch,
+        fsc_body=official(),
+        etf_body=official(("20260923", "119000"), ("20260925", "120000")),
+    )
+
+    result = daily.fetch_daily_bars("353200", days=30, asof="2026-09-28")
+
+    assert [(b["date"], b["source"]) for b in result.rows] == [
+        ("20260923", "fsc"),
+        ("20260925", "fsc"),
+        ("20260928", "naver_intraday"),
+    ]
     assert not any(url.startswith(stockeasy.API_BASE) for url in seen)
 
 
