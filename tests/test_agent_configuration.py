@@ -349,16 +349,19 @@ def test_briefing_prep_steps_have_one_entry_point() -> None:
 def test_http_cache_ttl_is_documented_where_it_is_explained() -> None:
     """TTL은 시세 신선도와 맞물린 운영 선택이다 — 상수만 바꾸고 근거가 남으면 다음 사람이 못 읽는다."""
     module = _load_http_cache_module()
+    notes = (REPO_ROOT / "docs" / "datafeed.md").read_text(encoding="utf-8")
     agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
     minutes = module.DEFAULT_TTL_SECONDS // 60
-    assert f"{minutes}분" in agents, "AGENTS.md의 TTL 설명이 상수와 어긋난다"
-    assert "INVAGENT_HTTP_CACHE" in agents
+    for name, text in (("docs/datafeed.md", notes), ("AGENTS.md", agents)):
+        assert f"{minutes}분" in text, f"{name}의 TTL 설명이 상수와 어긋난다"
+    assert "INVAGENT_HTTP_CACHE" in notes
     # 모듈이 옮겨가면 설명도 따라와야 한다. 우연히 남은 옛 이름으로 통과하지 않도록 경로로 찾는다.
     anchor = "src/invagent/datafeed/cache.py"
-    assert anchor in agents, "AGENTS.md가 캐시 모듈의 현재 위치를 가리키지 않는다"
+    assert anchor in notes, "docs/datafeed.md가 캐시 모듈의 현재 위치를 가리키지 않는다"
+    assert "docs/datafeed.md" in agents, "AGENTS.md가 수집 계층 설계 노트를 가리키지 않는다"
     # 왜 일 단위가 아닌지가 이 설계의 핵심이다.
-    assert "현재가" in agents.split(anchor)[1][:1200]
+    assert "현재가" in notes.split(anchor)[1][:1200]
 
 
 def _my_rules() -> str:
@@ -699,6 +702,7 @@ def test_docs_use_the_year_month_archive_layout() -> None:
         + sorted(SKILLS_ROOT.glob("*/scripts/*.py"))
         + sorted((REPO_ROOT / "template").rglob("*.md"))
         + sorted((REPO_ROOT / "src").rglob("*.py"))
+        + sorted((REPO_ROOT / "docs").glob("*.md"))
         + [REPO_ROOT / "AGENTS.md"]
     )
     stale = [

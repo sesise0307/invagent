@@ -9,6 +9,8 @@ description: 외부 데이터를 어디서 어떻게 가져오는지에 대한 �
 `analyze-stock`(종목), `stage-analysis`(국면), `daily-digest`(브리핑), `advice`(대가 관점),
 `opendart`(공시)의 몫이다.
 
+모듈 내부 동작과 상수의 근거(코드를 고칠 때)는 `docs/datafeed.md`에 있다.
+
 ## 공통 원칙
 
 1. **수집 실패는 비블로킹이다.** 한 소스가 실패해도 나머지로 작업을 계속하고, 실패한 항목은
