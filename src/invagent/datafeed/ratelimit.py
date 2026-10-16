@@ -48,9 +48,9 @@ REASON_MAX_CHARS = 80
 
 # 호스트별로 기본값을 덮어쓰는 한도. StockEasy는 2026-10-05에 순차 실행으로도 분당 30~40건에서
 # 연결을 끊었고, 2분 cool-down 뒤 다시 부르면 차단이 연장됐다 — 분당 20건 이하·한 번에 하나·
-# 10분 대기로 잡는다.
+# 1시간 대기로 잡는다 — 10분 대기도 짧았다(2026-10-16 15:08 KST에 끊긴 뒤 15:44 요청도 끊겼다).
 HOST_LIMITS = {
-    "stockeasy.intellio.kr": {"min_interval": 8.0, "max_concurrent": 1, "cooldown": 600.0},
+    "stockeasy.intellio.kr": {"min_interval": 8.0, "max_concurrent": 1, "cooldown": 3600.0},
 }
 
 

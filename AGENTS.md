@@ -543,7 +543,8 @@ therefore sits inside `http.get_json`, per host and only on cache misses: reques
 at least `MIN_INTERVAL_SECONDS` (0.5) apart and at most `MAX_CONCURRENT_PER_HOST` (2) run at once,
 both shared across processes through lock files under the gitignored `output/.cache/ratelimit/`.
 `HOST_LIMITS` overrides those per host: StockEasy gets an 8-second interval, one request at a time and
-a 600-second cool-down, because on 2026-10-05 a strictly sequential 21-stock run was cut off at the
+a one-hour cool-down (raised from 600 seconds after a 2026-10-16 block outlasted it: cut off at 15:08 KST,
+still cut off at 15:44), because on 2026-10-05 a strictly sequential 21-stock run was cut off at the
 fourteenth stock and every retry after the 2-minute cool-down extended the block, and on 2026-10-06 a
 sequential scan at the 3-second interval was still cut off around the twelfth request.
 A 429/502/503/504, a dropped connection or a timeout is retried up to `MAX_ATTEMPTS` (3) times with

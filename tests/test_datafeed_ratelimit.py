@@ -214,8 +214,8 @@ def test_stockeasy_requests_are_spaced_wider_than_other_hosts(monkeypatch) -> No
     assert slept == [8.0, ratelimit.MIN_INTERVAL_SECONDS]
 
 
-def test_stockeasy_cools_down_for_ten_minutes(monkeypatch) -> None:
-    """2분 뒤 다시 두드리면 차단이 연장됐다 — StockEasy cool-down은 10분이다."""
+def test_stockeasy_cools_down_for_an_hour(monkeypatch) -> None:
+    """10분 cool-down도 짧았다 — 2026-10-16 15:08 KST에 끊긴 뒤 15:44 요청도 끊겼다. 1시간 쉰다."""
     clock = _Clock(1_000_000.0)
     monkeypatch.setattr(ratelimit, "_now", clock)
     _scripted(monkeypatch, [_http_error(429)] * ratelimit.MAX_ATTEMPTS + [b'{"ok": 1}'])
@@ -223,6 +223,8 @@ def test_stockeasy_cools_down_for_ten_minutes(monkeypatch) -> None:
     http.get_json(f"{STOCKEASY}/a", authed=False)
 
     clock.now += ratelimit.COOLDOWN_SECONDS + 1
+    assert http.get_json(f"{STOCKEASY}/a", authed=False)[0] is None
+    clock.now += 3000
     assert http.get_json(f"{STOCKEASY}/a", authed=False)[0] is None
     clock.now += 600
     assert http.get_json(f"{STOCKEASY}/a", authed=False) == ({"ok": 1}, None)
