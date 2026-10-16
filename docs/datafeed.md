@@ -120,9 +120,13 @@ Every request to a budgeted host, anonymous ones included, is appended to
 `output/.cache/ratelimit/<host>.requests.jsonl` (`t`, `authed`, `ok`, `reason`; kept 48 hours,
 `ratelimit.request_log`) so the next block can be read against the hours before it and the numbers tuned.
 On 2026-10-16 the same `info-tab` URL answered 401 in 0.9 s without a cookie but dropped the connection
-with the stored one while the browser worked — the block sat on that session, so the first check after a
-login-only drop is a cookie-less request sent outside `http.get_json` (so it cannot start a shared
-cool-down), and the fix is a fresh `STOCKEASY_COOKIE`. `stockinfo`'s
+with the stored cookie and with a fresh cookie from the same account, while the browser worked; a cookie
+from a different account was answered at once. The block sits on the account, not the session or the
+client, so the first check after a login-only drop is a cookie-less request sent outside `http.get_json`
+(so it cannot start a shared cool-down), and the remedy is to wait or switch `STOCKEASY_COOKIE` to another
+account — never to disguise the client. `env.env_value` reads the process environment before `.env`, so a stale
+`STOCKEASY_COOKIE` left in a shell or agent `env` setting silently hides a refreshed `.env` value; that
+masked the first cookie refresh the same day. `stockinfo`'s
 earnings axis accepts an `info-tab` response up to 12 hours old (`FUNDAMENTALS_TTL_SECONDS`) because
 quarterly figures do not change within a day; the price axis keeps the 15-minute TTL.
 A 429/502/503/504, a dropped connection or a timeout is retried up to `MAX_ATTEMPTS` (3) times with
