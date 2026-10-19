@@ -258,6 +258,36 @@ def test_margin_call_climax_excludes_today_from_its_own_baseline() -> None:
     assert spike["climax"] is True
 
 
+def test_margin_call_climax_fires_on_a_ratio_spike_when_the_amount_baseline_is_inflated() -> None:
+    """과거 폭발 값이 금액 σ를 붙잡아도 반대매매 비중이 +2σ로 튀면 클라이맥스다 (2026-10-14 사례)."""
+    module = load_script("daily-digest", "fetch_market_signals")
+    amounts = [100.0, 2000.0] * 75 + [900.0]           # 금액 기준선은 폭발 값으로 부풀어 있다
+    ratios = [1.0, 2.0, 1.5, 1.2, 1.3] * 30 + [7.0]
+    credit = [dict(r, margin_call_ratio=x) for r, x in zip(_credit_rows(amounts), ratios)]
+
+    verdict = module.margin_call_climax(credit, _deep_drawdown(credit))["KOSPI"]
+
+    assert verdict["amount_spike"] is False
+    assert verdict["ratio_spike"] is True
+    assert verdict["ratio_value"] == 7.0
+    assert verdict["climax"] is True
+
+
+def test_margin_call_line_shows_the_ratio_axis(capsys: pytest.CaptureFixture[str]) -> None:
+    """브리핑은 이 줄을 그대로 옮긴다 — 어느 축으로 급증했는지가 보여야 한다."""
+    module = load_script("daily-digest", "fetch_market_signals")
+    amounts = [100.0, 2000.0] * 75 + [900.0]
+    ratios = [1.0, 2.0, 1.5, 1.2, 1.3] * 30 + [7.0]
+    credit = [dict(r, margin_call_ratio=x) for r, x in zip(_credit_rows(amounts), ratios)]
+
+    module.print_margin_call(credit, _deep_drawdown(credit))
+    out = capsys.readouterr().out
+
+    assert "비중 7.0%" in out
+    assert "급증 예 (비중)" in out
+    assert "🟢 베팅 가능 구간" in out
+
+
 def _ladder_monitor(closes: list[float]) -> list[dict]:
     return [{"일자": f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}", "KOSPI": c, "KOSDAQ": c}
             for i, c in enumerate(closes)]

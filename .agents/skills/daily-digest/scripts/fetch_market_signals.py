@@ -39,7 +39,7 @@ VOLATILE_DAY_TRIGGER = 3      # 이 수 이상이면 발동
 LEVERAGE_MARKETS = ("KOSPI", "KOSDAQ")
 
 # --- 「레버리지 규칙 2」 반대매매 클라이맥스 예외 -----------------------------
-# 룰 원문: 반대매매 금액이 평소(직전 120거래일) 대비 +2σ 이상인 날은 「레버리지 규칙 3」
+# 룰 원문: 반대매매 금액 또는 비중이 평소(직전 120거래일) 대비 +2σ 이상인 날은 「레버리지 규칙 3」
 # 발동 중이어도 **지수** 레버리지를 분할 신규 매수할 수 있다.
 # σ 배수(2.0)는 사용자가 정한 값이고, 창 길이는 이 스킬의 운영 선택이다 (SKILL.md 근거 참조).
 MARGIN_CALL_SIGMA = 2.0
@@ -51,6 +51,11 @@ MARGIN_CALL_WINDOW_DAYS = 120
 # 같은 중간 구간이 빠진다.
 MARGIN_CALL_MIN_DRAWDOWN_PCT = -10.0
 MARGIN_CALL_PEAK_WINDOW = 250
+# 금액 축과 **별도로** 반대매매 비중(`margin_call_ratio`, %) 축을 같은 창·같은 σ로 본다. 둘 중 하나만
+# 넘어도 급증이다 (2026-10-19 사용자 결정). 금액 σ는 과거 폭발 값이 120일 창에 남아 있는 동안 내려오지
+# 않는다 — 6~7월 1,000억대 반대매매 탓에 8월~10월 임계가 ~1,000억에 묶여 2026-10-14(893억, 낙폭 -34%)를
+# z 1.71로 놓쳤다. 같은 날 비중은 7.2%로 +2.2σ였고, 07-30·07-31도 비중 축에서 잡힌다.
+MARGIN_CALL_RATIO_SIGMA = 2.0
 
 # --- 「시장 국면」 급락 (context/my_rules.md 「시장 국면」, 2026-10-15 사용자 확정) ------
 # 급락 = 조정(52주 고점 대비 -10% 이하) + 3거래일 연속 하락 뒤 그날 -3% 넘게 하락 + 가장 최근
@@ -172,7 +177,7 @@ def drawdown_ladder(monitor_rows: list[dict], market: str, asof: str | None = No
 def leverage_entry_window(rows: list[dict], monitor_rows: list[dict] | None = None) -> dict:
     """「레버리지 규칙 2」 지수 레버리지 베팅 가능 구간.
 
-    낙폭이 첫 단(-10%) 아래이고 **동시에** 반대매매가 +2σ로 튄 날에만 열린다.
+    낙폭이 첫 단(-10%) 아래이고 **동시에** 반대매매 금액 또는 비중이 +2σ로 튄 날에만 열린다.
     사다리를 함께 실어 보내는 이유: 구간이 열린 것과 *어느 단에서* 살지는 다른 질문이다.
     """
     climax = margin_call_climax(rows, monitor_rows)
@@ -191,6 +196,8 @@ def margin_call_climax(rows: list[dict], monitor_rows: list[dict] | None = None)
     낙폭 국면은 지수마다 다르다. 레버리지 상품이 지수별이므로 판정도 지수별로 낸다 —
     실측(2025-01~2026-09)에서 KOSPI 게이트 8건, KOSDAQ 게이트 9건이고 겹치는 날은 3일뿐이다.
 
+    급증은 금액(+2σ)과 비중(`margin_call_ratio`, +2σ) **둘 중 하나**만 넘어도 성립한다.
+
     **당일을 기준선에서 뺀다.** 오늘 값이 자기 평균·표준편차에 섞이면 값이 클수록 임계가
     함께 올라가 정작 클라이맥스에서 신호가 무뎌진다.
 
@@ -205,14 +212,26 @@ def margin_call_climax(rows: list[dict], monitor_rows: list[dict] | None = None)
         return {
             market: {"climax": False, "insufficient": True, "value": today, "threshold": None,
                      "sigma": MARGIN_CALL_SIGMA, "drawdown": index_drawdown(monitor_rows, market),
-                     "spike": False, "deep": False}
+                     "spike": False, "amount_spike": False, "ratio_spike": False,
+                     "ratio_value": None, "ratio_threshold": None, "deep": False}
             for market in LEVERAGE_MARKETS
         }
 
     mean = sum(baseline) / len(baseline)
     var = sum((x - mean) ** 2 for x in baseline) / len(baseline)
     threshold = mean + MARGIN_CALL_SIGMA * (var ** 0.5)
-    spike = today >= threshold
+    amount_spike = today >= threshold
+
+    ratios = [float(r["margin_call_ratio"]) for r in rows if r.get("margin_call_ratio") is not None]
+    ratio_today = ratios[-1] if ratios else None
+    ratio_base = ratios[-MARGIN_CALL_WINDOW_DAYS - 1 : -1]
+    ratio_threshold = None
+    if ratio_today is not None and len(ratio_base) >= MARGIN_CALL_WINDOW_DAYS:
+        r_mean = sum(ratio_base) / len(ratio_base)
+        r_var = sum((x - r_mean) ** 2 for x in ratio_base) / len(ratio_base)
+        ratio_threshold = r_mean + MARGIN_CALL_RATIO_SIGMA * (r_var ** 0.5)
+    ratio_spike = ratio_threshold is not None and ratio_today >= ratio_threshold
+    spike = amount_spike or ratio_spike
 
     out: dict[str, dict] = {}
     for market in LEVERAGE_MARKETS:
@@ -227,6 +246,10 @@ def margin_call_climax(rows: list[dict], monitor_rows: list[dict] | None = None)
             "sigma": MARGIN_CALL_SIGMA,
             "drawdown": drawdown,
             "spike": spike,
+            "amount_spike": amount_spike,
+            "ratio_spike": ratio_spike,
+            "ratio_value": ratio_today,
+            "ratio_threshold": ratio_threshold,
             "deep": deep,
         }
     return out
@@ -236,16 +259,22 @@ def print_margin_call(rows: list[dict], monitor_rows: list[dict] | None = None) 
     result = margin_call_climax(rows, monitor_rows)
     print(
         f"[레버리지 규칙 2] 반대매매 클라이맥스 "
-        f"(직전 {MARGIN_CALL_WINDOW_DAYS}거래일 +{MARGIN_CALL_SIGMA:g}σ "
+        f"(직전 {MARGIN_CALL_WINDOW_DAYS}거래일 금액 +{MARGIN_CALL_SIGMA:g}σ 또는 비중 +{MARGIN_CALL_RATIO_SIGMA:g}σ "
         f"· 지수 낙폭 {MARGIN_CALL_MIN_DRAWDOWN_PCT:g}% 이하 · 지수 한정)"
     )
     first = result[LEVERAGE_MARKETS[0]]
     if first["insufficient"]:
         print("  ❔ 판정 불가 — 기준선 표본 부족")
         return
+    axes = [name for name, hit in (("금액", first["amount_spike"]), ("비중", first["ratio_spike"])) if hit]
+    ratio = (
+        f" · 비중 {first['ratio_value']:.1f}% / 임계 {first['ratio_threshold']:.1f}%"
+        if first["ratio_threshold"] is not None else " · 비중 판정 불가"
+    )
     print(
         f"  반대매매 {first['value']:,.0f}억 / 임계 {first['threshold']:,.0f}억 "
-        f"(평균 {first['mean']:,.0f}억) → 급증 {'예' if first['spike'] else '아니오'}"
+        f"(평균 {first['mean']:,.0f}억){ratio} → 급증 "
+        + (f"예 ({'·'.join(axes)})" if axes else "아니오")
     )
     for market, v in result.items():
         dd = f"{v['drawdown']:+.1f}%" if v["drawdown"] is not None else "미상"

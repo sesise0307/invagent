@@ -428,6 +428,12 @@ def test_margin_call_window_rationale_is_documented() -> None:
     # 60일 창이 왜 안 되는지가 이 선택의 핵심이다.
     assert "자기 σ를 부풀려" in skill
     assert "당일을 기준선에서 제외" in skill
+    # 비중 축은 사용자가 더한 두 번째 급증 조건이다 — 룰 원문과 근거 표가 함께 말해야 한다.
+    assert f"`MARGIN_CALL_RATIO_SIGMA` | {module.MARGIN_CALL_RATIO_SIGMA:g}" in skill
+    assert "2026-10-14" in skill
+    rule2 = [ln for ln in _my_rules().splitlines() if ln.startswith("2. **지수·섹터 레버리지")][0]
+    assert f"반대매매 비중이 같은 기준으로 +{module.MARGIN_CALL_RATIO_SIGMA:g}σ 이상" in rule2
+    assert "둘 중 하나" in rule2
 
 
 def test_long_bull_candle_is_wired_into_the_entry_rules() -> None:
