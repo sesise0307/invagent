@@ -14,11 +14,11 @@ import argparse
 import json
 import re
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from invagent.core.archive import dated_files
-from invagent.datafeed import fsc, naver, tickers
+from invagent.datafeed import cache, fsc, naver, tickers
 from invagent.datafeed.env import output_dir, repo_root
 from invagent.datafeed.snapshot import parse_holdings, to_float
 
@@ -26,6 +26,11 @@ WATCHLIST_REL = Path("context") / "interested_stocks.md"
 NEWS_PER_STOCK = 5
 FSC_WINDOW_DAYS = 10
 SNAPSHOT_DATE_RE = re.compile(r"^# .*?(\d{4}-\d{2}-\d{2})", re.M)
+
+
+def kst_today() -> date:
+    """KST 오늘. 실행 기기가 KST가 아니어도(2026-10-20 CEST 실행) 한국 장 날짜를 쓴다."""
+    return datetime.fromtimestamp(cache._now(), cache.KST).date()
 
 
 def latest_snapshot() -> Path | None:
@@ -151,13 +156,13 @@ def render(result: dict) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--days", type=int, default=2, help="뉴스 기간(일, 기준일 포함 이전)")
-    parser.add_argument("--asof", help="기준일 YYYY-MM-DD (기본 오늘)")
+    parser.add_argument("--asof", help="기준일 YYYY-MM-DD (기본 KST 오늘)")
     parser.add_argument("--snapshot", type=Path, help="포트폴리오 스냅샷 (기본 최신)")
     parser.add_argument("--watchlist", type=Path, help="관심 종목 파일 (기본 context/interested_stocks.md)")
     parser.add_argument("--json", action="store_true", help="JSON으로 출력")
     args = parser.parse_args(argv)
 
-    asof = date.fromisoformat(args.asof) if args.asof else date.today()
+    asof = date.fromisoformat(args.asof) if args.asof else kst_today()
     since = (asof - timedelta(days=args.days)).strftime("%Y%m%d")
     snapshot = args.snapshot or latest_snapshot()
     held = {h["name"]: h for h in holdings(snapshot)}

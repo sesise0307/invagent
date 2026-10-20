@@ -133,3 +133,25 @@ def test_exits_one_when_no_price_was_collected(monkeypatch, files, capsys) -> No
     }))
 
     assert brief_prep.main(files) == 1
+
+
+def test_the_default_asof_is_the_kst_date_not_the_machine_date(monkeypatch, files, capsys) -> None:
+    """2026-10-20 19:32 CEST 실행이 10/20으로 잡혔다 — KST로는 이미 10/21 02:32였다."""
+    from datetime import datetime, timezone
+
+    from invagent.datafeed import cache
+
+    monkeypatch.setattr(cache, "_now", lambda: datetime(2026, 10, 20, 17, 32, tzinfo=timezone.utc).timestamp())
+    monkeypatch.setattr(fsc, "load_key", lambda: None)
+    monkeypatch.setattr(http, "read_url", _route({
+        naver.BASIC_URL.format(code="353200"): _basic("353200", "140,000", "+1.82"),
+        naver.BASIC_URL.format(code="003230"): _basic("003230", "1,200,000", "-0.50"),
+        naver.NEWS_URL.format(code="353200"): _news(),
+        naver.NEWS_URL.format(code="003230"): _news(),
+    }))
+    no_asof = [arg for arg in files if arg not in ("--asof", "2026-10-20")]
+
+    assert brief_prep.main([*no_asof, "--days", "2", "--json"]) == 0
+
+    out = json.loads(capsys.readouterr().out)
+    assert (out["asof"], out["since"]) == ("2026-10-21", "20261019")
