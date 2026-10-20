@@ -366,6 +366,20 @@ def test_login_requests_stop_at_the_budget_until_the_oldest_leaves_the_window(mo
     assert http.get_json(f"{STOCKEASY}/c", authed=True)[0] == {"ok": 1}
 
 
+def test_stockeasy_allows_seventy_login_requests_per_six_hours(monkeypatch) -> None:
+    """2026-10-19 사용자 결정으로 60건에서 70건으로 올렸다 — 한 번의 종목 분석이 예산 끝에서 끊겼다."""
+    clock = _Clock(1_000_000.0)
+    monkeypatch.setattr(ratelimit, "_now", clock)
+    calls = _scripted(monkeypatch, [b'{"ok": 1}'] * 71)
+
+    for i in range(70):
+        clock.now += 60
+        assert http.get_json(f"{STOCKEASY}/r{i}", authed=True)[0] == {"ok": 1}
+    payload, err = http.get_json(f"{STOCKEASY}/r70", authed=True)
+    assert payload is None and "최근 6시간 70/70건" in err
+    assert len(calls) == 70
+
+
 def test_every_stockeasy_request_is_logged_with_its_outcome(monkeypatch) -> None:
     """다음 차단 때 직전 요청 이력을 보고 차단 방식(일정 시간 차단 · 최근 구간 누적)을 가린다."""
     clock = _Clock(1_000_000.0)
