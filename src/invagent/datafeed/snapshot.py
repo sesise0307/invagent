@@ -14,6 +14,7 @@ import re
 
 CASH_SECTOR = "현금"
 HOLDINGS_HEADING = "## 보유"
+RULE_CHECKS_HEADING = "## 룰 자동 판정"
 # 스냅샷 세대에 따라 종목 열 이름이 다르다.
 NAME_KEYS = ("종목", "종목명")
 
@@ -94,3 +95,16 @@ def parse_balance(text: str) -> float | None:
     """스냅샷 머리말의 `잔고 ₩…` → float."""
     m = _BALANCE_RE.search(text)
     return float(m.group(1).replace(",", "")) if m else None
+
+
+def parse_rule_checks(text: str) -> list[str]:
+    """스냅샷 `## 룰 자동 판정` 절의 불릿 줄(앞의 `- ` 제외). 절이 없으면 빈 리스트."""
+    out: list[str] = []
+    inside = False
+    for line in text.split("\n"):
+        if line.startswith("## "):
+            inside = line.startswith(RULE_CHECKS_HEADING)
+            continue
+        if inside and line.startswith("- "):
+            out.append(line[2:].strip())
+    return out

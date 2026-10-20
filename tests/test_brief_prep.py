@@ -17,6 +17,15 @@ SNAPSHOT = """# 포트폴리오 스냅샷 — 2026-10-19
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | 은행 | _현금 | 현금 | 1 | ₩100 | ₩100 | ₩100 | 0.00% | 50.0% | ₩100 |  |
 | 삼성 | 대덕전자 | AI | 150 | ₩100,000 | ₩137,500 | ₩15,000,000 | 37.50% | 4.2% | ₩20,625,000 |  |
+
+## 룰 자동 판정
+
+- 매매규칙 6(-20% 전량 매도): 해당 없음
+- 매매규칙 11(24~30%↑ 익절 쿠션): 대덕전자 +37.50% (비중 4.2%)
+
+## 다음 절
+
+- 이 줄은 룰 판정이 아니다
 """
 
 WATCHLIST = """# 관심 종목
@@ -155,3 +164,48 @@ def test_the_default_asof_is_the_kst_date_not_the_machine_date(monkeypatch, file
 
     out = json.loads(capsys.readouterr().out)
     assert (out["asof"], out["since"]) == ("2026-10-21", "20261019")
+
+
+def _quiet_routes() -> dict:
+    return {
+        naver.BASIC_URL.format(code="353200"): _basic("353200", "140,000", "+1.82"),
+        naver.BASIC_URL.format(code="003230"): _basic("003230", "1,200,000", "-0.50"),
+        naver.NEWS_URL.format(code="353200"): _news(),
+        naver.NEWS_URL.format(code="003230"): _news(),
+    }
+
+
+@pytest.mark.parametrize(
+    ("utc", "session"),
+    [
+        ((2026, 10, 21, 1, 0), "intraday"),   # 수 10:00 KST — 장중, 가격선 판정은 미확정
+        ((2026, 10, 21, 6, 45), "closed"),    # 수 15:45 KST — 정규장 종가 확정 뒤
+        ((2026, 10, 20, 17, 32), "closed"),   # 수 02:32 KST — 개장 전, 전날 종가
+        ((2026, 10, 24, 1, 0), "closed"),     # 토 10:00 KST
+    ],
+)
+def test_session_says_whether_prices_are_settled_closes(monkeypatch, files, capsys, utc, session) -> None:
+    """트리거는 종가로만 판정한다 — 15:40 KST 전 평일 장중가는 「미확정」으로 내보낸다."""
+    from datetime import datetime, timezone
+
+    from invagent.datafeed import cache
+
+    monkeypatch.setattr(cache, "_now", lambda: datetime(*utc, tzinfo=timezone.utc).timestamp())
+    monkeypatch.setattr(fsc, "load_key", lambda: None)
+    monkeypatch.setattr(http, "read_url", _route(_quiet_routes()))
+
+    assert brief_prep.main([*files, "--json"]) == 0
+
+    assert json.loads(capsys.readouterr().out)["session"] == session
+
+
+def test_the_snapshot_rule_checks_are_passed_through(monkeypatch, files, capsys) -> None:
+    monkeypatch.setattr(fsc, "load_key", lambda: None)
+    monkeypatch.setattr(http, "read_url", _route(_quiet_routes()))
+
+    assert brief_prep.main([*files, "--json"]) == 0
+
+    assert json.loads(capsys.readouterr().out)["rule_checks"] == [
+        "매매규칙 6(-20% 전량 매도): 해당 없음",
+        "매매규칙 11(24~30%↑ 익절 쿠션): 대덕전자 +37.50% (비중 4.2%)",
+    ]

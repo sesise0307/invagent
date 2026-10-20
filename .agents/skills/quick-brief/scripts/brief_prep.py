@@ -14,23 +14,39 @@ import argparse
 import json
 import re
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from invagent.core.archive import dated_files
 from invagent.datafeed import cache, fsc, naver, tickers
 from invagent.datafeed.env import output_dir, repo_root
-from invagent.datafeed.snapshot import parse_holdings, to_float
+from invagent.datafeed.snapshot import parse_holdings, parse_rule_checks, to_float
 
 WATCHLIST_REL = Path("context") / "interested_stocks.md"
 NEWS_PER_STOCK = 5
 FSC_WINDOW_DAYS = 10
+REGULAR_SESSION_OPEN = time(9, 0)
+SESSION_LABELS = {"intraday": "장중(가격선 판정 미확정)", "closed": "정규장 마감(종가 판정 가능)"}
 SNAPSHOT_DATE_RE = re.compile(r"^# .*?(\d{4}-\d{2}-\d{2})", re.M)
+
+
+def kst_now() -> datetime:
+    return datetime.fromtimestamp(cache._now(), cache.KST)
 
 
 def kst_today() -> date:
     """KST 오늘. 실행 기기가 KST가 아니어도(2026-10-20 CEST 실행) 한국 장 날짜를 쓴다."""
-    return datetime.fromtimestamp(cache._now(), cache.KST).date()
+    return kst_now().date()
+
+
+def session(now: datetime) -> str:
+    """`intraday` — 평일 09:00~15:40 KST라 현재가가 종가가 아니다. 그 밖은 `closed`(정규장 종가 확정).
+
+    공휴일은 모른다 — 휴장 평일 낮은 `intraday`로 나와 판정을 미루는 쪽으로 틀린다.
+    """
+    if now.weekday() < 5 and REGULAR_SESSION_OPEN <= now.time() < cache.REGULAR_SESSION_SETTLED:
+        return "intraday"
+    return "closed"
 
 
 def latest_snapshot() -> Path | None:
@@ -56,6 +72,10 @@ def load_watchlist(path: Path) -> list[str]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.startswith("- ") and line[2:].strip()
     ]
+
+
+def rule_checks(path: Path | None) -> list[str]:
+    return parse_rule_checks(path.read_text(encoding="utf-8")) if path else []
 
 
 def holdings(path: Path | None) -> list[dict]:
@@ -131,7 +151,7 @@ def _pct(value: float | None) -> str:
 def render(result: dict) -> str:
     """세션에 바로 붙일 마크다운 — 시세 표, 뉴스, 미수집 사유."""
     lines = [
-        f"기준일 {result['asof']} · 스냅샷 {result['snapshot_date'] or '없음'} · 뉴스 {result['since']}~",
+        f"기준일 {result['asof']} · {SESSION_LABELS[result['session']]} · 스냅샷 {result['snapshot_date'] or '없음'} · 뉴스 {result['since']}~",
         "",
         "| 구분 | 종목 | 현재가 | 등락 | 평단 대비 | 비중 | 공식 종가 |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
@@ -143,6 +163,8 @@ def render(result: dict) -> str:
             f"| {'보유' if s['held'] else '관심'} | {s['name']} | {_won(s['price'])} | {_pct(s['change_pct'])} "
             f"| {_pct(s['return_pct'])} | {s['weight'] or '—'} | {official_text} |"
         )
+    if result["rule_checks"]:
+        lines += ["", "## 룰 자동 판정 (스냅샷)", *(f"- {line}" for line in result["rule_checks"])]
     lines += ["", "## 뉴스"]
     for s in result["stocks"]:
         for n in s["news"]:
@@ -175,8 +197,10 @@ def main(argv: list[str] | None = None) -> int:
 
     result = {
         "asof": asof.isoformat(),
+        "session": session(kst_now()),
         "since": since,
         "snapshot_date": snapshot_date(snapshot),
+        "rule_checks": rule_checks(snapshot),
         "stocks": [collect(name, held.get(name), since) for name in names],
     }
     print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else render(result))
