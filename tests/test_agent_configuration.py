@@ -21,6 +21,7 @@ SKILL_NAMES = (
     "market-data",
     "monthly-investment-review",
     "opendart",
+    "quick-brief",
     "stage-analysis",
     "weekly-investment-review",
 )

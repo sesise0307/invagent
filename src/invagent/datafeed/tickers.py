@@ -75,12 +75,15 @@ def resolve_code(name: str, overrides: dict[str, str] | None = None) -> tuple[st
     return None, err or "티커 해석 실패"
 
 
-def resolve_stock(query: str, overrides: dict[str, str] | None = None):
+def resolve_stock(
+    query: str, overrides: dict[str, str] | None = None, *, stockeasy_fallback: bool = True
+):
     """종목명 또는 티커 → (종목 레코드, 사유, exit_code). 오버라이드가 API보다 우선한다.
 
     `stockeasy.resolve_stock`과 같은 모양을 돌려주되 오버라이드 단계를 앞에 두고, 검색은 네이버가
     먼저다 — StockEasy 검색은 네이버가 실패했을 때만 부른다. 이름·거래소는
     오버라이드 파일에 없으므로 이름은 질의 그대로, 거래소는 미상으로 채운다.
+    `stockeasy_fallback=False`면 네이버 실패를 `(None, 사유, 1)`로 그대로 돌려준다.
     """
     overrides = load_overrides() if overrides is None else overrides
     if query in overrides:
@@ -88,6 +91,8 @@ def resolve_stock(query: str, overrides: dict[str, str] | None = None):
     if TICKER_RE.match(query):
         return {"stock_code": query, "stock_name": None, "exchange": None}, None, 0
     hits, err = naver.search_stock(query)
+    if err and not stockeasy_fallback:
+        return None, err, 1
     if err:
         # 네이버가 답하지 못할 때만 StockEasy 검색을 쓴다 — 요청 한도가 빠듯한 쪽이다.
         return stockeasy.resolve_stock(query)

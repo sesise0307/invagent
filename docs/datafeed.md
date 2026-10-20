@@ -12,12 +12,12 @@ Commission's official KRX daily prices on data.go.kr, keyed by `DATA_GO_KR_SERVI
 from the stock-price service, is asked of the securities-product service `getETFPriceInfo_V2` instead —
 without it ETFs fell through to StockEasy's three years even intraday and a KODEX 200 scan started a
 StockEasy cool-down on 2026-10-16), `naver`
-(daily OHLCV, plus the USD/KRW daily Hana Bank closing quote that the briefing's `[환율]` line reads —
+(daily OHLCV, the `.../basic` current quote and the stock-news feed that `quick-brief` reads without StockEasy, plus the USD/KRW daily Hana Bank closing quote that the briefing's `[환율]` line reads —
 StockEasy's market API carries no exchange rate), `daily` (the bars every price judgement reads — see below), `cache` (the shared response cache),
 `ratelimit` (per-host request spacing, retry and cool-down — see below), `env` (repository root,
 `output/`, `.env` values), `series` (`sma`), `tickers` (override-first ticker
 resolution — then Naver's `ac.stock.naver.com` search, with StockEasy `stock-search` only when
-Naver fails, so StockEasy's request budget goes to values only it serves — plus the
+Naver fails (a caller that must not touch StockEasy passes `stockeasy_fallback=False`), so StockEasy's request budget goes to values only it serves — plus the
 preferred-to-common mapping below), `stockinfo` (the `info-tab` pair — the share's own payload
 for the 시세 축 and the 본주's for the 실적 축, each fetched on first read so a common share costs one
 request and a fundamentals-only reader of a preferred never fetches the preferred's own; it collects

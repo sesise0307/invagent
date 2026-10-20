@@ -163,3 +163,17 @@ def test_a_ticker_query_needs_no_search(monkeypatch) -> None:
     hit, err, code = tickers.resolve_stock("353200", {})
 
     assert (hit["stock_code"], err, code) == ("353200", None, 0)
+
+
+def test_a_caller_can_forbid_the_stockeasy_fallback(monkeypatch) -> None:
+    """StockEasy를 쓰지 않는 스킬(`quick-brief`)은 네이버 실패를 그대로 실패로 받는다."""
+    def read(url, headers, timeout):
+        if url.startswith(naver.SEARCH_URL):
+            raise TimeoutError("timed out")
+        raise AssertionError(f"StockEasy에 묻지 않는다: {url}")
+
+    monkeypatch.setattr(http, "read_url", read)
+
+    hit, err, code = tickers.resolve_stock("대덕전자", {}, stockeasy_fallback=False)
+
+    assert hit is None and "timed out" in err and code == 1

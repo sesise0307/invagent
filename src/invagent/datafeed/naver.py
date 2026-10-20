@@ -13,6 +13,7 @@ JSON이고 한 번에 최근 60거래일까지 준다 — StockEasy에는 종목
 
 from __future__ import annotations
 
+import html
 import json
 import urllib.parse
 from datetime import date, datetime, timedelta
@@ -23,6 +24,8 @@ SISE_URL = "https://api.finance.naver.com/siseJson.naver"
 TREND_URL = "https://m.stock.naver.com/api/stock/{code}/trend"
 TREND_MAX_DAYS = 60
 BASIC_URL = "https://m.stock.naver.com/api/stock/{code}/basic"
+# 종목 뉴스. 응답은 기사 묶음 리스트이고 묶음마다 `items`가 있다.
+NEWS_URL = "https://m.stock.naver.com/api/news/stock/{code}"
 # 종목명 자동완성. StockEasy `stock-search`와 달리 로그인·요청 제한이 없다.
 SEARCH_URL = "https://ac.stock.naver.com/ac"
 # 원/달러 일별 고시 종가. pageSize는 60이 상한이다(61 이상은 HTTP 400).
@@ -148,6 +151,73 @@ def fetch_basic(code: str) -> tuple[dict | None, str | None]:
     if not market:
         return None, "상장 시장 필드 없음"
     return {"name": data.get("stockName"), "market": market}, None
+
+
+def _number(value) -> float | None:
+    text = str(value or "").replace(",", "").replace("+", "").strip()
+    try:
+        return float(text) if text else None
+    except ValueError:
+        return None
+
+
+def fetch_quote(code: str) -> tuple[dict | None, str | None]:
+    """현재가·전일대비·등락률(%)·장 상태 — 같은 `.../basic` 응답. 실패하면 (None, 사유).
+
+    장중이면 현재가, 마감 뒤면 그날 종가다. 판정용 종가가 아니라 참고 시세다 — 판정은
+    `daily.fetch_daily_bars`의 몫이다.
+    """
+    data, err = http.get_json(
+        BASIC_URL.format(code=code),
+        authed=False,
+        headers=http.build_headers(referer="https://m.stock.naver.com/"),
+        timeout=TIMEOUT,
+    )
+    if err:
+        return None, err
+    data = data or {}
+    price = _number(data.get("closePrice"))
+    if price is None:
+        return None, "현재가 필드 없음"
+    return {
+        "name": data.get("stockName"),
+        "price": price,
+        "change": _number(data.get("compareToPreviousClosePrice")),
+        "change_pct": _number(data.get("fluctuationsRatio")),
+        "market_status": data.get("marketStatus"),
+        "traded_at": data.get("localTradedAt"),
+    }, None
+
+
+def parse_news(text: str) -> list[dict]:
+    """종목 뉴스 응답을 기사 리스트(최신순)로 편다. 날짜·제목이 없는 행은 버린다."""
+    rows = []
+    for cluster in json.loads(text) or []:
+        for item in (cluster or {}).get("items") or []:
+            if not item.get("datetime") or not item.get("title"):
+                continue
+            rows.append(
+                {
+                    "datetime": str(item["datetime"]),
+                    "office": item.get("officeName"),
+                    "title": html.unescape(item["title"]),
+                    "url": item.get("mobileNewsUrl"),
+                }
+            )
+    rows.sort(key=lambda r: r["datetime"], reverse=True)
+    return rows
+
+
+def fetch_news(code: str, count: int = 10) -> tuple[list[dict], str | None]:
+    """종목 뉴스 최근 `count`묶음 — `{"datetime", "office", "title", "url"}`. 실패하면 ([], 사유)."""
+    rows, err = http.get_json(
+        f"{NEWS_URL.format(code=code)}?pageSize={count}&page=1",
+        authed=False,
+        headers=http.build_headers(referer="https://m.stock.naver.com/"),
+        timeout=TIMEOUT,
+        decode=parse_news,
+    )
+    return rows or [], err
 
 
 def search_stock(query: str) -> tuple[list[dict] | None, str | None]:

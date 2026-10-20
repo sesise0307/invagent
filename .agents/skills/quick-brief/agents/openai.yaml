@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quick Brief"
+  short_description: "Session-only snapshot of holdings and watchlist prices, news and DART filings"
+  default_prompt: "Use $quick-brief to brief me on my holdings and watchlist."

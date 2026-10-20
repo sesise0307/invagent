@@ -131,6 +131,77 @@ def test_fetch_basic_reports_the_failure_instead_of_raising(monkeypatch) -> None
     assert basic is None and "timed out" in err
 
 
+def test_fetch_quote_reads_the_current_price_and_change(monkeypatch) -> None:
+    body = (
+        '{"itemCode":"005930","stockName":"삼성전자","closePrice":"209,000",'
+        '"compareToPreviousClosePrice":"-9,000","fluctuationsRatio":"-4.13",'
+        '"marketStatus":"CLOSE","localTradedAt":"2026-10-20T20:20:22+09:00"}'
+    ).encode()
+    monkeypatch.setattr(http, "read_url", lambda url, headers, timeout: body)
+
+    quote, err = naver.fetch_quote("005930")
+
+    assert err is None
+    assert quote == {
+        "name": "삼성전자",
+        "price": 209000.0,
+        "change": -9000.0,
+        "change_pct": -4.13,
+        "market_status": "CLOSE",
+        "traded_at": "2026-10-20T20:20:22+09:00",
+    }
+
+
+def test_fetch_quote_reports_a_missing_price_instead_of_zero(monkeypatch) -> None:
+    monkeypatch.setattr(http, "read_url", lambda url, headers, timeout: b'{"stockName":"X"}')
+
+    quote, err = naver.fetch_quote("005930")
+
+    assert quote is None and err
+
+
+def test_fetch_news_flattens_the_clusters_newest_first(monkeypatch) -> None:
+    """응답은 기사 묶음(cluster) 리스트다 — 묶음마다 `items`가 있다."""
+    seen = {}
+    body = json.dumps(
+        [
+            {"total": 1, "items": [
+                {"datetime": "202610200900", "officeName": "A", "title": "옛 기사",
+                 "mobileNewsUrl": "https://n.news.naver.com/mnews/article/1/1"},
+            ]},
+            {"total": 2, "items": [
+                {"datetime": "202610201500", "officeName": "B", "title": "새 &quot;기사&quot;",
+                 "mobileNewsUrl": "https://n.news.naver.com/mnews/article/2/2"},
+                {"officeName": "깨진 행"},
+            ]},
+        ]
+    ).encode()
+    monkeypatch.setattr(http, "read_url", lambda url, headers, timeout: seen.update(url=url) or body)
+
+    news, err = naver.fetch_news("005930", count=5)
+
+    assert err is None
+    assert seen["url"].startswith("https://m.stock.naver.com/api/news/stock/005930")
+    assert "pageSize=5" in seen["url"]
+    assert news == [
+        {"datetime": "202610201500", "office": "B", "title": '새 "기사"',
+         "url": "https://n.news.naver.com/mnews/article/2/2"},
+        {"datetime": "202610200900", "office": "A", "title": "옛 기사",
+         "url": "https://n.news.naver.com/mnews/article/1/1"},
+    ]
+
+
+def test_fetch_news_reports_the_failure_instead_of_raising(monkeypatch) -> None:
+    def boom(url, headers, timeout):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(http, "read_url", boom)
+
+    news, err = naver.fetch_news("005930")
+
+    assert news == [] and "timed out" in err
+
+
 def _fx_page(rows: list[tuple[str, str]]) -> bytes:
     return json.dumps(
         [{"localTradedAt": day, "closePrice": close, "fluctuations": "0.00"} for day, close in rows]

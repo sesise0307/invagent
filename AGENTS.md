@@ -2,7 +2,7 @@
 
 This repository contains a personal investment-decision support package. Use the
 project skills for investment advice, single-stock analysis, price-stage
-judgement, the daily briefing, monthly Notion reviews, and OpenDART research
+judgement, the daily briefing, the quick session-only holdings brief, monthly Notion reviews, and OpenDART research
 instead of recreating those workflows in a prompt. When the question is where a
 piece of external data comes from — an endpoint, a credential, the response cache —
 read the `market-data` skill rather than tracing the scripts.
@@ -63,7 +63,7 @@ the user decisions and incidents the constants came from, which the SKILL.md pro
 
 Canonical project skills live in `.agents/skills/`: `advice`, `analyze-stock`,
 `daily-digest`, `market-data`, `monthly-investment-review`, `opendart`,
-`stage-analysis`, and `weekly-investment-review`. Each `.claude/skills/<name>` is a symlink to the canonical
+`quick-brief`, `stage-analysis`, and `weekly-investment-review`. Each `.claude/skills/<name>` is a symlink to the canonical
 directory — edit the canonical files only. Client-side setup that cannot live in
 the repository (Codex plugins, the local OpenDART MCP server, Notion) is
 documented in `docs/agent-setup.md`; keep its skill list in sync when adding a
