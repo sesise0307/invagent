@@ -11,12 +11,14 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-MIN_STOP_LOSS = 0.20
-# 손익비 분모의 하한. 실행 손절선(MIN_STOP_LOSS)과 일부러 분리해 둔다 — 20%는
+MIN_STOP_LOSS = 0.15
+# 「매매규칙 6」 두 티어(2026-10-21 개정) — 진입가 대비 1차 분할·전량 매도선.
+FIRST_PARTIAL_STOP = 0.12
+# 손익비 분모의 하한. 실행 손절선(MIN_STOP_LOSS)과 일부러 분리해 둔다 — 실행 손절선은
 # 「매매규칙 6」의 전량 이탈선이라 1회 최대 손실을 정하고 「기본 원칙 4(2%룰)」의
-# 분모로 남아야 하지만, 손익비 분모까지 거기 묶으면 손익비가 `중심 기대수익 ÷ 20%`
-# 로 붕괴해 기대수익의 재진술이 된다. 하방이 막힌 종목이 분모를 낮게 받도록 15%를
-# 쓴다 (사용자 확정 2026-09-22). 두 값을 다시 합치지 마라.
+# 분모로 남아야 하지만, 손익비 분모는 하방이 막힌 종목이 낮은 분모를 받도록 따로 정한
+# 값이다 (사용자 확정 2026-09-22). 2026-10-21 개정으로 둘 다 15%가 됐지만 재는 것이
+# 다르다 — 한쪽이 바뀌어도 다른 쪽이 따라가지 않게 두 값을 합치지 마라.
 MIN_REWARD_RISK_STOP = 0.15
 MIN_REWARD_RISK = 2.0
 ACCOUNT_RISK_LIMIT = 0.02
@@ -265,8 +267,8 @@ def decide(payload: Any) -> dict[str, Any]:
                  "reward_risk_denominator": reward_risk_stop,
                  "reward_risk": reward_risk, "account_risk_limit": ACCOUNT_RISK_LIMIT,
                  "max_purchase_fraction": position_cap, "entry_price": entry_price,
-                 "stop_prices": {"first_partial": entry_price * 0.85,
-                                 "full_exit": entry_price * 0.80},
+                 "stop_prices": {"first_partial": entry_price * (1 - FIRST_PARTIAL_STOP),
+                                 "full_exit": entry_price * (1 - MIN_STOP_LOSS)},
                  "account_value": account_value, "max_purchase_amount": max_amount,
                  "max_whole_shares": max_shares},
         "audit": audit,

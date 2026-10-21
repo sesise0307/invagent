@@ -30,9 +30,9 @@ NEXT_SHEET_MARKER = "최초 투자"
 # context/my_rules.md 임계값 — 룰 원문이 정본이다.
 # `tests/test_agent_configuration.py::test_portfolio_thresholds_match_my_rules`가
 # 룰 파일에서 숫자를 파싱해 아래 상수와 대조한다. 룰이 바뀌면 그 테스트가 먼저 깨진다.
-STOP_LOSS_PCT = -15.0  # 매매규칙 6: -15% 1차 분할 매도
-STOP_FULL_PCT = -20.0  # 매매규칙 6: -20% 전량 매도
-TRIM_PCT = -10.0  # 매매규칙 7: -10% 비중 축소 고려
+STOP_LOSS_PCT = -12.0  # 매매규칙 6: -12% 1차 분할 매도
+STOP_FULL_PCT = -15.0  # 매매규칙 6: -15% 전량 매도
+TRIM_PCT = -8.0  # 매매규칙 7: -8% 비중 축소 고려
 PROFIT_CUSHION_PCT = 24.0  # 매매규칙 11: 24~30% 수익 시 보유량 10~30% 익절
 # 매매규칙 9는 두 축을 나눈다. 아래는 **평가 비중** 축(주가 상승분 허용, 최대 35%)이다.
 # 매수원금 비중 상한(= 2% ÷ 계획 손절률)은 스냅샷이 아니라 진입 판단에서 계산한다.
@@ -178,24 +178,27 @@ def rule_findings(holdings: list[dict]) -> list[str]:
         ]
 
     # 「매매규칙 6」은 두 티어다. 깊은 티어가 얕은 티어를 흡수해 한 종목이 두 줄에 겹치지 않는다.
+    full_label = f"- 매매규칙 6({STOP_FULL_PCT:.0f}% 전량 매도)"
     full_exit = names(lambda v: v <= STOP_FULL_PCT)
     findings.append(
-        f"- 매매규칙 6(-20% 전량 매도): {', '.join(full_exit)} "
+        f"{full_label}: {', '.join(full_exit)} "
         "← **위반** (임계 도달 · 이행 여부 미확인 · 시장 급락 예외 미확인)" if full_exit
-        else "- 매매규칙 6(-20% 전량 매도): 해당 없음"
+        else f"{full_label}: 해당 없음"
     )
 
+    tier1_label = f"- 매매규칙 6({STOP_LOSS_PCT:.0f}% 1차 분할 매도)"
     tier1 = names(lambda v: STOP_LOSS_PCT >= v > STOP_FULL_PCT)
     findings.append(
-        f"- 매매규칙 6(-15% 1차 분할 매도): {', '.join(tier1)} "
+        f"{tier1_label}: {', '.join(tier1)} "
         "← **위반** (임계 도달 · 이행 여부 미확인 · 시장 급락 예외 미확인)" if tier1
-        else "- 매매규칙 6(-15% 1차 분할 매도): 해당 없음"
+        else f"{tier1_label}: 해당 없음"
     )
 
+    trim_label = f"- 매매규칙 7({TRIM_PCT:.0f}% 비중 축소 고려)"
     trim = names(lambda v: TRIM_PCT >= v > STOP_LOSS_PCT)
     findings.append(
-        f"- 매매규칙 7(-10% 비중 축소 고려): {', '.join(trim)}" if trim
-        else "- 매매규칙 7(-10% 비중 축소 고려): 해당 없음"
+        f"{trim_label}: {', '.join(trim)}" if trim
+        else f"{trim_label}: 해당 없음"
     )
 
     cushion = names(lambda v: v >= PROFIT_CUSHION_PCT)

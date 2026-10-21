@@ -113,7 +113,7 @@ into the other's script directory any more. The peak
 window and the band list are this skill's own operating choices and live as
 constants at the top of the script; the band-to-rule mapping is documented in
 `daily-digest/SKILL.md` step 1-3-1, and the two must change together.
-Because the -15% band is measured from the peak while 「매매규칙 6」's -15% is
+Because the -15% band is measured from the peak while 「매매규칙 6」's -15% full exit is
 measured from average cost, the skill is required to keep the axes apart.
 Names the StockEasy search cannot resolve (a new listing, or a sheet label that
 differs from the official name) are pinned in the tracked

@@ -114,9 +114,9 @@ def test_analyze_stock_downside_drives_stop_and_position_cap() -> None:
     """손익비 분모가 상수 15%면 중심 기대수익의 재진술이 된다 — 실측 하방을 쓴다."""
     content = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
 
-    # 「매매규칙 6」의 최종 이탈선은 -20%다. 2%룰 분모를 15%로 내리면 1회 최대 손실이
-    # 계좌의 2.67%가 되어 「기본 원칙 4」를 넘기므로, 실효 손절폭 하한은 20%로 남는다.
-    assert "실효 손절폭  = max(하방, 20%)" in content
+    # 「매매규칙 6」의 최종 이탈선은 -15%다(2026-10-21 개정). 2%룰 분모를 1차 분할선 12%로
+    # 내리면 1회 최대 손실이 계좌의 2.5%가 되어 「기본 원칙 4」를 넘기므로, 실효 손절폭 하한은 15%다.
+    assert "실효 손절폭  = max(하방, 15%)" in content
     # 손익비 분모는 그와 별개의 값이고, 상수가 아니라 실측 하방과의 max다
     # (사용자 확정 2026-09-22).
     assert "손익비 분모  = max(하방, 15%)" in content
@@ -541,24 +541,26 @@ def test_leverage_and_short_term_rules_are_wired_into_advice() -> None:
 
 
 def test_rule_check_blocks_convert_every_line_my_rules_asks_for() -> None:
-    """`my_rules.md`「적용 방법」은 -10/-15/-20/24/30 선을 전부 가격으로 환산하라고 요구한다.
+    """`my_rules.md`「적용 방법」은 -8/-12/-15/24/30 선을 전부 가격으로 환산하라고 요구한다.
 
     advice 룰 체크 블록과 보고서 템플릿이 그 목록을 빠짐없이 담아야 한다.
     """
     rules = _my_rules()
-    assert "-10%/-15%/-20%/24%/30% 선을 구체적 가격으로 환산" in rules
+    assert "-8%/-12%/-15%/24%/30% 선을 구체적 가격으로 환산" in rules
 
     advice = (SKILLS_ROOT / "advice" / "SKILL.md").read_text(encoding="utf-8")
     block = advice.split("🛡️ 룰 체크")[1].split("---")[0]
-    assert "「매매규칙 7」 -10%" in block
+    assert "「매매규칙 7」 -8%" in block
+    assert "「매매규칙 6」 -12%" in block
     assert "「매매규칙 6」 -15%" in block
-    assert "「매매규칙 6」 -20%" in block
     assert "매수원금 비중 상한 = 2% ÷ 실효 손절폭" in block
     assert "평가 비중 상한 35%" in block
-    assert "-8%" not in block
+    # 2026-10-21에 은퇴한 선(룰 6 -20% 전량, 룰 7 -10%)이 남으면 안 된다.
+    assert "「매매규칙 6」 -20%" not in block
+    assert "「매매규칙 7」 -10%" not in block
 
     template = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
-    assert "실효 손절폭 max(하방, 20%)" in template
+    assert "실효 손절폭 max(하방, 15%)" in template
     assert "매수원금 비중 상한" in template
     assert "min(2%÷" not in template
 
@@ -577,10 +579,13 @@ def test_advice_resolves_rule_versus_rule_conflicts() -> None:
     assert "계좌 레벨" in table
 
 
-def test_no_file_presents_minus_fifteen_as_the_whole_of_rule_six() -> None:
-    """「매매규칙 6」을 인용하면서 -15%만 적으면 -20% 전량 매도 티어가 통째로 사라진다."""
+def test_no_file_presents_one_tier_as_the_whole_of_rule_six() -> None:
+    """「매매규칙 6」을 인용하면서 -12%만 적으면 -15% 전량 매도 티어가 통째로 사라진다.
+
+    2026-10-21에 -15%/-20%에서 -12%/-15%로 바뀌었다. 옛 -20% 전량을 인용하는 줄도 남으면 안 된다.
+    """
     rules = _my_rules()
-    assert "-15%, -20% 손절" in rules, "룰 6의 제목이 두 티어를 담고 있어야 한다"
+    assert "-12%, -15% 손절" in rules, "룰 6의 제목이 두 티어를 담고 있어야 한다"
 
     bad = []
     for path in sorted(SKILLS_ROOT.rglob("*")) + sorted((REPO_ROOT / "template").rglob("*.md")):
@@ -589,27 +594,29 @@ def test_no_file_presents_minus_fifteen_as_the_whole_of_rule_six() -> None:
         for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if "매매규칙 6" not in line:
                 continue
-            # 티어를 명시한 줄(-15% = 1차 분할)과 축을 구분하는 줄은 정상이다.
-            allowed = ("-20%", "1차 분할", "평단", "고점")
-            if "-15%" in line and not any(tok in line for tok in allowed):
+            # 티어를 명시한 줄(-12% = 1차 분할)과 축을 구분하는 줄은 정상이다.
+            allowed = ("-15%", "1차 분할", "평단", "고점")
+            if "-12%" in line and not any(tok in line for tok in allowed):
                 bad.append(f"{path.relative_to(REPO_ROOT)}:{i}")
-    assert not bad, "「매매규칙 6」을 -15% 단독으로 인용한 곳: " + ", ".join(bad)
+            if "-20% 전량" in line or "-15% 1차 분할" in line:
+                bad.append(f"{path.relative_to(REPO_ROOT)}:{i} (옛 티어)")
+    assert not bad, "「매매규칙 6」을 한 티어만 또는 옛 티어로 인용한 곳: " + ", ".join(bad)
 
 
 def test_master_versus_rule_table_sizes_off_the_terminal_stop() -> None:
-    """손절폭 2배를 사이징으로 상쇄한다는 논리는 분모가 최종 이탈선(-20%)일 때만 성립한다."""
+    """손절폭이 넓은 만큼 사이징으로 상쇄한다는 논리는 분모가 최종 이탈선(-15%)일 때만 성립한다."""
     advice = (SKILLS_ROOT / "advice" / "SKILL.md").read_text(encoding="utf-8")
     row = [ln for ln in advice.splitlines() if ln.startswith("| 손절폭 |")]
     assert row, "대가↔룰 표의 손절폭 행을 찾지 못했다"
     text = row[0]
 
-    assert "-20%" in text, "1차 분할만 적고 최종 이탈선을 빼면 리스크 총량이 과소평가된다"
-    assert "10%" in text
-    assert "13.3%" not in text
+    assert "-15% 전량" in text, "1차 분할만 적고 최종 이탈선을 빼면 리스크 총량이 과소평가된다"
+    assert "13.3%" in text
+    assert "2% ÷ 20%" not in text
 
 
-def test_no_skill_still_cites_the_retired_minus_eight_percent_line() -> None:
-    """「매매규칙 7」은 2026-09-02에 -10%가 됐다. -8%를 인용하는 곳이 남으면 안 된다."""
+def test_no_skill_still_cites_the_retired_rule_seven_line() -> None:
+    """「매매규칙 7」은 2026-10-21에 -10%에서 -8%가 됐다. -10% 비중 축소를 인용하는 곳이 남으면 안 된다."""
     targets = [
         SKILLS_ROOT / "advice" / "SKILL.md",
         SKILLS_ROOT / "advice" / "references" / "trend_following.md",
@@ -618,20 +625,22 @@ def test_no_skill_still_cites_the_retired_minus_eight_percent_line() -> None:
         REPO_ROOT / "template" / "stock_analysis.md",
         REPO_ROOT / "template" / "daily_digest.md",
     ]
+    retired = ("-10% 비중 축소", "「매매규칙 7」 -10%", "매매규칙 7 (-10%", "매매규칙 7(-10%")
     for path in targets:
         text = path.read_text(encoding="utf-8")
-        assert "매매규칙 7" not in text or "-8%" not in text, f"{path.name}에 -8% 인용이 남아 있다"
+        hits = [tok for tok in retired if tok in text]
+        assert not hits, f"{path.name}에 옛 -10% 인용이 남아 있다: {hits}"
 
     # 브리핑 룰 리마인드도 두 손절 티어를 모두 안내해야 한다.
     briefing = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
-    assert "매매규칙 7 (-10%" in briefing
-    assert "-20% 전량" in briefing
+    assert "매매규칙 7 (-8%" in briefing
+    assert "-15% 전량" in briefing
 
 
 def test_split_sell_rule_does_not_contradict_the_stop_tiers() -> None:
     """「매매규칙 5」의 즉시 전량 조건에 -15% 손절이 들어가면 「매매규칙 6」의 1차 분할과 정반대가 된다.
 
-    2026-09-02에 규칙 6이 -15% 1차 분할 / -20% 전량 두 티어로 바뀌었으므로 규칙 5의
+    2026-09-02에 규칙 6이 1차 분할 / 전량 두 티어로 바뀌었으므로(2026-10-21부터 -12% / -15%) 규칙 5의
     즉시 전량 사유는 아이디어 훼손과 「레버리지 규칙 3」 둘만 남는다.
     """
     rules = _my_rules()
@@ -644,7 +653,7 @@ def test_split_sell_rule_does_not_contradict_the_stop_tiers() -> None:
     assert "투자 아이디어가 깨졌거나" in immediate
     assert "레버리지 규칙 3(변동성 레버리지 청산)" in immediate
     # 손절 티어의 소유권은 규칙 6에 있다고 명시해 둔다.
-    assert "「매매규칙 6」의 -15%/-20% 손절은 그 규칙이 정한 티어" in text
+    assert "「매매규칙 6」의 -12%/-15% 손절은 그 규칙이 정한 티어" in text
 
 
 def test_portfolio_thresholds_match_my_rules() -> None:
