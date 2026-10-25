@@ -14,11 +14,14 @@ import sys
 from pathlib import Path
 
 HEADING = re.compile(r"^##\s+(.*?)\s*$", re.MULTILINE)
+# Notion fetch renders a toggle heading as the tag line, then its title on the next line.
+TOGGLE_TAG = re.compile(r"^<toggle heading=\"h\d\">\s*$")
+ANY_HEADING = re.compile(r"^(?:##\s+(.*?)|<toggle heading=\"h\d\">\n(.*?))\s*$", re.MULTILINE)
 
 
 def headings(body: str) -> list[str]:
-    """Every `## ` heading, in order, with Notion's `\\~` escape normalised away."""
-    return [h.replace("\\~", "~") for h in HEADING.findall(body)]
+    """Every `## ` and toggle heading, in order, with Notion's `\\~` escape normalised away."""
+    return [(m.group(1) or m.group(2)).replace("\\~", "~") for m in ANY_HEADING.finditer(body)]
 
 
 def assert_no_heading_loss(before: str, after: str) -> None:
@@ -36,11 +39,17 @@ WEEKLY_BULLET = "- 주간 투자 반성"
 
 
 def _weekend_heading_index(lines: list[str], weekend: str) -> int:
-    """Row of the `## {weekend}(주말)` heading, or -1. Matches Notion's `\\~` escape."""
+    """Row of the `{weekend}(주말)` heading title, or -1. Matches Notion's `\\~` escape.
+
+    For a toggle heading that is the title line under the `<toggle heading="h2">` tag.
+    """
     wanted = f"{weekend}(주말)".replace("\\~", "~")
     for i, line in enumerate(lines):
         match = HEADING.match(line)
-        if match and match.group(1).replace("\\~", "~").startswith(wanted):
+        title = match.group(1) if match else None
+        if title is None and i > 0 and TOGGLE_TAG.match(lines[i - 1]):
+            title = line.strip()
+        if title and title.replace("\\~", "~").startswith(wanted):
             return i
     return -1
 
@@ -65,7 +74,11 @@ def upsert(existing: str, proposed: str, weekend: str) -> str:
 
     block = proposed.strip("\n").split("\n")
     start = head + 1
-    while start < len(lines) and not lines[start].strip():
+    while start < len(lines) and not (
+        lines[start].strip() == WEEKLY_BULLET
+        or HEADING.match(lines[start])
+        or TOGGLE_TAG.match(lines[start])
+    ):
         start += 1
 
     if start < len(lines) and lines[start].strip() == WEEKLY_BULLET:

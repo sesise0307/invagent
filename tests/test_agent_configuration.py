@@ -918,7 +918,8 @@ def test_weekly_skill_records_the_notion_overwrite_hazard() -> None:
     assert "2026-09-20" in skill
     assert "백업" in skill
     assert "weekly_upsert.py" in skill
-    assert "전체 본문" in skill
+    # 쓰기는 update_content로 앵커 + 블록만 넣는다 — 병합 전체 본문을 넘기던 replace_content 시절 지시는 지웠다(2026-10-25).
+    assert "항상 병합된 전체 본문" not in skill
     assert "헤딩" in skill
 
 
