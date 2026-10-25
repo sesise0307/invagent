@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Merge one weekly review block into a Notion page body without losing the body.
+"""Merge one weekly review block into a backed-up Notion page body, as a check.
 
-`replace_content` on the Notion page overwrites the whole body, so the agent must
-hand it a complete merged body. This builds that body locally and refuses to emit
-one that dropped a heading.
+The page is written with `update_content` (anchor + block), not from this output.
+The merge is the dry run of that write: it finds the weekend heading, swaps in the
+weekly block, and refuses to emit a body that dropped a `## ` or toggle heading.
 """
 from __future__ import annotations
 
