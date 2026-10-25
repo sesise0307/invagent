@@ -88,6 +88,15 @@ def test_extract_urls_drops_trailing_sentence_punctuation(text, expected):
     assert LinkExtractor().extract_urls(text) == [expected]
 
 
+def test_extract_urls_drops_markdown_bold_markers():
+    """굵게 감싼 URL의 `**`는 URL이 아니다 (2026-10-25 네이버 블로그 본문이 제목만 받힘)"""
+    text = "****https://m.blog.naver.com/hungry_penguin/224452762638**"
+
+    assert LinkExtractor().extract_urls(text) == [
+        "https://m.blog.naver.com/hungry_penguin/224452762638"
+    ]
+
+
 def test_extract_urls_empty_text():
     """빈 텍스트 처리"""
     extractor = LinkExtractor()

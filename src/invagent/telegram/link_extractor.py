@@ -34,7 +34,9 @@ URL_PATTERN = re.compile(
 
 # 문장 끝 구두점은 URL에 들어가지 않는다고 본다. 메시지 본문은 URL 바로 뒤에 마침표·쉼표를
 # 붙여 쓰는 경우가 많고, 그대로 요청하면 404가 난다(2026-10-02 `vo.la/tVHYbyy.`).
-TRAILING_URL_PUNCTUATION = ".,;:!?'\"’”>]"
+# `*`는 굵게 감싼 URL의 마크다운 닫는 표시다 — 붙은 채로 요청하면 네이버 블로그가 글 대신
+# 제목만 돌려준다(2026-10-25 `224452762638**`).
+TRAILING_URL_PUNCTUATION = ".,;:!?'\"’”>]*"
 
 TELEGRAM_URL_PATTERN = re.compile(
     r'https?://t\.me/[^\s\)]*|'  # https://t.me/ 링크
