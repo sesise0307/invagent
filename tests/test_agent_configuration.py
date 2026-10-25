@@ -942,15 +942,21 @@ def test_weekly_skill_requires_the_next_week_plan() -> None:
 
 
 def test_weekly_skill_records_all_three_notion_command_behaviours() -> None:
-    """드리프트 가드 — 2026-09-20 실측 3종과 매칭 규칙을 남긴다."""
+    """드리프트 가드 — 2026-09-20 실측 3종과 매칭 규칙을 남긴다.
+
+    매칭 규칙은 2026-10-25 재실측으로 바뀌었다: 평문이 아니라 fetch 표기(불릿 `- ` 포함)로
+    매칭하고, 블록 안 부분 문자열도 매칭된다. 헤딩은 `## `와 토글 헤딩 두 형식을 합쳐 센다.
+    """
     skill = _weekly_skill()
 
     assert "insert_content" in skill
     assert "페이지 맨 끝" in skill
     assert "update_content" in skill
     assert "content_updates" in skill
-    assert "블록의 맨 앞부터" in skill
-    assert "평문" in skill
+    assert "본문 표기 그대로 매칭" in skill
+    assert "부분 문자열도 매칭" in skill
+    assert "블록의 맨 앞부터" not in skill
+    assert '<toggle heading' in skill
     assert "블록을 지우는 수단은 없다" in skill
 
 
