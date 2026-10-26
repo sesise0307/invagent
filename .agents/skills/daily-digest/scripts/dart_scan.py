@@ -45,6 +45,11 @@ def kst_today() -> date:
     return datetime.fromtimestamp(cache._now(), cache.KST).date()
 
 
+def briefing_today() -> date:
+    """raw·링크 폴더 이름의 날짜. `fetch-messages`가 로컬 시계로 짓는다 — KST가 아니다."""
+    return datetime.fromtimestamp(cache._now()).date()
+
+
 def latest_snapshot() -> Path | None:
     files = dated_files(output_dir() / "portfolio")
     return files[-1] if files else None
@@ -164,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="JSON으로 출력")
     args = parser.parse_args(argv)
 
-    asof = date.fromisoformat(args.asof) if args.asof else kst_today()
+    asof = date.fromisoformat(args.asof) if args.asof else briefing_today()
     since = window_start(args.archive or output_dir() / "daily-digest", asof)
     snapshot = args.snapshot or latest_snapshot()
     codes, gaps = universe(
@@ -175,7 +180,9 @@ def main(argv: list[str] | None = None) -> int:
         ]
     )
 
-    filings, err = opendart.fetch_filings(since, asof)
+    # 접수일은 KST다. `--asof`가 없으면 로컬 날짜가 KST보다 하루 늦을 때도 KST 오늘까지 받는다.
+    until = asof if args.asof else max(asof, kst_today())
+    filings, err = opendart.fetch_filings(since, until)
     if err:
         print(f"OpenDART 공시 목록 미수집 — {err}", file=sys.stderr)
         return 1

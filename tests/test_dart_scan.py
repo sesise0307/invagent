@@ -1,11 +1,12 @@
 """`daily-digest/scripts/dart_scan.py` — 보유·관심 종목의 OpenDART 공시 목록 대조."""
 
 import json
-from datetime import date
+import time
+from datetime import date, datetime, timezone
 
 import pytest
 
-from invagent.datafeed import opendart, tickers
+from invagent.datafeed import cache, opendart, tickers
 from tests.conftest import load_script
 
 dart_scan = load_script("daily-digest", "dart_scan")
@@ -204,6 +205,41 @@ def test_filings_already_forwarded_to_telegram_are_marked(stub, paths, capsys) -
         "20261024000102": False,
         "20261023000103": True,
     }
+
+
+@pytest.fixture
+def cet_evening_after_kst_midnight(monkeypatch, tmp_path):
+    """2026-10-26 20:00 CET = 2026-10-27 04:00 KST. 브리핑을 만드는 사용자는 아직 10/26이다."""
+    monkeypatch.setenv("TZ", "Europe/Berlin")
+    time.tzset()
+    monkeypatch.setattr(cache, "_now", lambda: datetime(2026, 10, 26, 19, 0, tzinfo=timezone.utc).timestamp())
+    monkeypatch.setenv("INVAGENT_OUTPUT_DIR", str(tmp_path / "out"))
+    yield tmp_path / "out" / "daily-digest"
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_without_asof_the_raw_of_the_local_briefing_day_is_read(stub, paths, capsys, cet_evening_after_kst_midnight) -> None:
+    """`fetch-messages`는 raw 이름을 로컬 날짜로 짓는다 — KST가 자정을 넘었다고 내일자 raw를 찾으면 수록 공시를 놓친다."""
+    digest = cet_evening_after_kst_midnight
+    (digest / "raw").mkdir(parents=True)
+    (digest / "raw" / "2026-10-26_raw.md").write_text("공시링크 : rcpNo=20261026000101\n", encoding="utf-8")
+    argv = [a for a in paths["args"] if a not in ("--asof", "2026-10-26")]
+    argv = [a for i, a in enumerate(argv) if a not in ("--raw", "--links") and argv[i - 1] not in ("--raw", "--links")]
+
+    result = run_json(capsys, argv)
+
+    assert result["asof"] == "2026-10-26"
+    assert {f["rcept_no"]: f["in_telegram"] for f in result["filings"]}["20261026000101"] is True
+
+
+def test_without_asof_the_list_still_reaches_today_in_kst(stub, paths, capsys, cet_evening_after_kst_midnight) -> None:
+    """DART 접수일은 KST다 — 로컬 날짜로 끊으면 KST 새벽(로컬 전날 저녁)에 접수된 공시가 빠진다."""
+    argv = [a for a in paths["args"] if a not in ("--asof", "2026-10-26")]
+
+    run_json(capsys, argv)
+
+    assert stub[0][1] == date(2026, 10, 27)
 
 
 @pytest.mark.parametrize(
