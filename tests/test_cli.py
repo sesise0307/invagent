@@ -127,6 +127,20 @@ def test_daily_prep_skips_a_step_whose_input_is_missing(tmp_path):
     assert "시장 신호" in names
 
 
+def test_daily_prep_scans_dart_filings_with_or_without_todays_snapshot(tmp_path):
+    """DART 대조는 오늘 스냅샷이 아직 없어도 돈다 — 최신 스냅샷을 쓴다. 있으면 그것을 넘긴다."""
+    from invagent.daily_prep import build_steps
+
+    first = {s.name: s for s in build_steps(snapshot=None, no_cache=False)}
+    assert first["DART 공시"].command[1].endswith("daily-digest/scripts/dart_scan.py")
+    assert "--snapshot" not in first["DART 공시"].command
+
+    snapshot = tmp_path / "2026-10-26.md"
+    snapshot.write_text("# 스냅샷\n", encoding="utf-8")
+    rerun = {s.name: s for s in build_steps(snapshot=snapshot, no_cache=False)}
+    assert rerun["DART 공시"].command[-2:] == ["--snapshot", str(snapshot)]
+
+
 def test_daily_prep_no_cache_reaches_every_step():
     """단계마다 `--no-cache`를 붙이면 그 플래그가 없는 스크립트(fetch_market_signals)는 조용히 캐시를 쓴다."""
     from invagent.daily_prep import build_steps

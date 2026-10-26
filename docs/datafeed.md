@@ -26,7 +26,11 @@ each failed fetch into `gaps` with the text from `stockeasy.gap_reason`, and own
 confirmed/estimate quarterly and yearly series (`quarterly`/`yearly`) and whole rows (`rows`) on the
 primary statement — every script that reads `info-tab` (`stage_scan`, `canslim_scan`, `extract_earnings`,
 `fetch_stock_info`, `market-data/fetch.py quote`) reads it through this module, so no script calls the
-private `stockeasy._fs_rows` — only `stockinfo` does) and `snapshot` (portfolio
+private `stockeasy._fs_rows` — only `stockinfo` does), `opendart` (OpenDART `list.json` with no company
+filter, every page of a date window — two business days were 1,076 filings over 11 pages on 2026-10-26 —
+keyed by `OPENDART_API_KEY`; status `013` is an empty list, any other non-`000` status arrives as HTTP 200 and is
+turned into a failure reason so a key or quota error never reads as "no filings"; filing bodies stay on the
+`opendart` MCP) and `snapshot` (portfolio
 snapshot tables). `daily.fetch_daily_bars` takes the regular-session bars from `fsc` first — KRX's
 official OHLCV, three years in one request, 10,000 requests a day — and, because that data is
 published after 13:00 on the next business day, fills only the weekdays after its last bar from the

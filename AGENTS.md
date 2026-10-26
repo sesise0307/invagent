@@ -31,7 +31,8 @@ design notes to `docs/`.
 `http.get_json` is the single request path — the response cache (`src/invagent/datafeed/cache.py`)
 and the per-host rate limit sit inside it, so every caller gets both without asking. Its modules
 are `stockeasy`, `fsc`, `naver`, `daily` (the judgement bars every price verdict reads), `cache`,
-`ratelimit`, `env`, `series`, `tickers`, `stockinfo` (the `info-tab` pair) and `snapshot`.
+`ratelimit`, `env`, `series`, `tickers`, `stockinfo` (the `info-tab` pair), `opendart` (the
+OpenDART filing list the briefing matches against holdings; bodies stay on the MCP) and `snapshot`.
 **Add a new source here, never in a skill script.** A skill script fetches nothing itself; it calls
 this package and spends its own lines on judgement and output. Nothing under `.agents/skills/` may
 import another skill's scripts — a script that needs another skill's verdict runs it by path as a
@@ -116,9 +117,9 @@ Copy `.env.example` to `.env` for local configuration. Telegram commands require
 `src/invagent/core/config.py`. `invagent.datafeed.env` reads `STOCKEASY_COOKIE`
 (StockEasy session) and `DATA_GO_KR_SERVICE_KEY` (official daily bars) from the same file, and it reads any key — not just that one — so a
 new credential needs no new parser. `INVAGENT_REPORT_ARCHIVE` (analyst-PDF root),
-`INVAGENT_HTTP_CACHE` and `INVAGENT_HTTP_CACHE_TTL` are read there too. OpenDART
-agent access requires private per-client MCP configuration; never put its
-credential in repository files.
+`INVAGENT_HTTP_CACHE` and `INVAGENT_HTTP_CACHE_TTL` are read there too, as is `OPENDART_API_KEY` for
+the filing list. OpenDART agent access additionally requires private per-client MCP configuration;
+never put its credential in repository files.
 
 ## Coding and Testing Style
 

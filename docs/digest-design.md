@@ -5,8 +5,8 @@ Design notes behind the `daily-digest` pipeline: prep, archive layout, triggers,
 ## Prep and briefing archive
 
 `uv run invagent daily-prep` (`src/invagent/daily_prep.py`) is the single entry point for the
-briefing's independent prep steps — market signals and, when today's snapshot already exists,
-the peak-drawdown scan. They do not depend on each other, so they run
+briefing's independent prep steps — market signals, the DART filing match and, when today's snapshot
+already exists, the peak-drawdown scan. They do not depend on each other, so they run
 concurrently and print as one block in a fixed order instead of costing a separate command each.
 Every step stays non-blocking exactly as its SKILL.md section requires: a failed step leaves its
 section with a reason and the command still exits 0. `--snapshot` runs the drawdown step only if
@@ -139,3 +139,16 @@ are printed as a footnote in the section itself. Renaming the section title
 requires adding the old title to `LEGACY_SECTION_TITLES` so `--append` strips it;
 `output/` is gitignored, so already-written snapshots can only be migrated by the
 code that rewrites them.
+
+## DART filings beyond Telegram
+
+The user forwards DART filings to Telegram but misses many, so step 1-5 4) — which pulls the body of every
+filing that reached the raw through the OpenDART MCP — saw only what was forwarded. Step 1-5 5)
+(`daily-digest/scripts/dart_scan.py`, user decision 2026-10-26) lists every filing from the last briefing
+day (inclusive, so an evening filing after that briefing is not lost; capped at 14 days) to today through
+`invagent.datafeed.opendart`, keeps the companies in the latest snapshot, `context/interested_stocks.md` and the 「감시 대상」 table of
+`output/watchlist/돌파선_감시.md` (added 2026-10-26; the sector-group table is not a watch list; preferred
+shares matched on the common code), and marks a filing whose receipt number already appears in
+today's raw or link files as forwarded. The list comes from one paginated `list.json` sweep instead of a
+per-company MCP call because thirty-odd daily MCP lookups were the agent's to skip and could not be tested;
+the MCP still serves every body. The notable/routine split mirrors the `quick-brief` notable-filing list.

@@ -1,10 +1,10 @@
 """브리핑 준비 단계를 한 번에 돌리는 오케스트레이터.
 
-`daily-digest` 스킬의 1-1(시장 신호) · 1-3-1(전고점 낙폭)은 서로 독립인데도 각각 별도
-명령으로 순서대로 돌았다. 두 단계 모두 네트워크를 타므로 대기 시간이 그대로 더해지고,
+`daily-digest` 스킬의 1-1(시장 신호) · 1-3-1(전고점 낙폭) · 1-5단계 5)(DART 공시 대조)는 서로 독립인데도 각각 별도
+명령으로 순서대로 돌았다. 모든 단계가 네트워크를 타므로 대기 시간이 그대로 더해지고,
 모델이 매번 결과를 받아 다음 명령을 내느라 왕복도 그만큼 든다.
 
-여기서는 둘을 동시에 돌리고 **입력 순서 그대로** 한 블록으로 찍는다. 각 단계는 스킬 문서가
+여기서는 이들을 동시에 돌리고 **입력 순서 그대로** 한 블록으로 찍는다. 각 단계는 스킬 문서가
 규정한 대로 **비블로킹**이다 — 하나가 실패해도 나머지는 그대로 출력되고 종료 코드는 0이다.
 브리핑 작성을 막는 것이 이 단계들의 목적이 아니기 때문이다.
 """
@@ -80,6 +80,12 @@ def build_steps(*, snapshot: Path | None, no_cache: bool) -> list[Step]:
             env=env,
         )
     ]
+
+    dart = [sys.executable, str(SCRIPTS / "daily-digest" / "scripts" / "dart_scan.py")]
+    if snapshot and snapshot.exists():
+        dart += ["--snapshot", str(snapshot)]
+    # 오늘 스냅샷이 아직 없어도 돈다 — 스크립트가 최신 스냅샷의 보유 종목을 쓴다.
+    steps.append(Step("DART 공시", dart, env=env))
 
     if snapshot and snapshot.exists():
         steps.append(

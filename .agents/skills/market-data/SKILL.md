@@ -48,7 +48,8 @@ StockEasy와 Naver가 함께 `<urlopen error [Errno 8] nodename nor servname pro
 | 원/달러 환율(하나은행 고시 종가, 일별) | `invagent.datafeed.naver.fetch_usdkrw` — `api.stock.naver.com/marketindex/exchange/FX_USDKRW/prices`. 페이지당 60행이 상한(61 이상은 HTTP 400)이라 5페이지(약 14개월)를 받아 52주 고저를 낸다. StockEasy 시장 API 네 개에는 환율이 없다(2026-10-11 확인). `fetch_market_signals.py`의 `[환율]` 줄이 소비한다 | 불필요 |
 | 텔레그램 저장 메시지·첨부 이미지·링크 본문 | `uv run invagent fetch-messages` | 텔레그램 세션 |
 | 보유 포트폴리오 | Google Drive MCP → `daily-digest/scripts/extract_portfolio.py` | MCP |
-| 공시·재무·지분·배당 | `opendart` 스킬 (MCP 전용) | MCP |
+| 기간 내 전체 공시 목록(접수번호·공시명·티커) | `invagent.datafeed.opendart.fetch_filings` — OpenDART `list.json`을 회사 지정 없이 페이지 순회(페이지당 100건, 두 영업일 ≈ 11페이지). status `013`은 빈 목록, 그 밖의 비정상 status(키 오류·`020` 한도 초과)는 HTTP 200이어도 실패 사유로 돌려준다. `daily-digest/scripts/dart_scan.py`가 보유·관심 종목으로 거른다. 본문은 읽지 않는다 | `OPENDART_API_KEY` (`.env`) |
+| 공시 본문·재무·지분·배당 | `opendart` 스킬 (MCP) | MCP |
 | 월간 투자일지 | Notion MCP (`monthly-investment-review`) | MCP |
 | VKOSPI | investing.com WebFetch (`daily-digest` 1-2단계) | 없음 |
 
