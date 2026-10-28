@@ -100,8 +100,10 @@ in `.agents/skills/`; `.claude/skills/` holds symlinks to them.
 | `stage-analysis` | Decides which of the four price-maturity stages a stock is in, from the 150-day moving average and operating-profit growth. Deterministic: a script fixes the stage, the model only interprets it. |
 | `advice` | Investor-perspective advice (value, trend, macro, second-level thinking) checked against the user's own rules. |
 | `daily-digest` | One briefing a day out of every daily input — saved Telegram messages, market signals, the portfolio snapshot, drawdowns — classified by sector/theme and rolled into the accumulated archive. |
+| `quick-brief` | Session-only quick brief for holdings and watched stocks — current price, registered trade triggers, notable news and OpenDART filings. Uses Naver and FSC prices only (no StockEasy) and writes no file. |
 | `opendart` | Korean disclosure lookups (financials, ownership, dividends, filings) through the OpenDART MCP server. |
 | `monthly-investment-review` | Reads the Notion investment journal for a month and writes back the retrospective. |
+| `weekly-investment-review` | Scores the week's trades against report execution lines, daily-briefing recommendations and the user's rules, sets next week's direction (new entries, sizing, cash), and writes it into the weekend block of the Notion journal. |
 | `market-data` | Not a workflow — the reference the others cite. Which source serves which value, how to refresh the StockEasy cookie, how the cache behaves, how ticker overrides work. Read it when data is missing rather than tracing the scripts. |
 
 Skills read `context/my_rules.md` (personal risk-management rules) directly, so
