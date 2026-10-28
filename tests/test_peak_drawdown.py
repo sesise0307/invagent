@@ -278,7 +278,11 @@ def test_render_lists_stock_approaches_per_axis(monkeypatch: pytest.MonkeyPatch)
     section = module.render(results, {"error": "잔고 이력 없음"})
 
     assert "⚠️ 임박(52주 시장 종가 기준): 알파전자 -9.0% → -10% 발동가 ₩90,000 (1.0%p 남음)" in section
-    assert "⚠️ 임박(계좌 스냅샷 기록 기준): 알파전자 -9.5% → -10% 발동가 ₩69,613" in section
+    # 기록 축 임박은 시트 수집가 경보다 — 종가로 재확인하기 전엔 발동 근거가 아니다
+    assert (
+        "⚠️ 임박(계좌 스냅샷 기록 기준 · 시트 수집가 경보, 종가로 재확인): "
+        "알파전자 -9.5% → -10% 발동가 ₩69,613"
+    ) in section
     # 미발동이지만 임박한 종목은 표의 경보 칸에도 표시된다
     assert "| -9.0% | ⚠️ -10% |" in section
 
@@ -556,6 +560,51 @@ def test_record_drawdown_without_prior_history_is_flat() -> None:
     }
 
 
+def test_record_drawdown_without_today_price_is_dated_and_silent() -> None:
+    """오늘 현재가가 비면(`-`·`#N/A`) 마지막 기록일 값으로 재되, 그 날짜를 달고 경보·임박은 끈다."""
+    module = load_script("daily-digest", "peak_drawdown")
+    history = {"알파전자": [("2026-08-10", 100_000.0), ("2026-08-27", 88_000.0)]}
+
+    result = module.record_drawdown("알파전자", None, "2026-08-28", history)
+
+    assert result["peak"] == 100_000.0 and result["peak_date"] == "2026-08-10"
+    assert result["drawdown"] == pytest.approx(-12.0)
+    assert result["current_date"] == "2026-08-27"
+    assert result["band"] is None
+    assert result["approach"] is None
+    assert module.record_cells(result) == "₩100,000 (2026-08-10) | -12.0% (08-27 기준)"
+
+
+def test_record_drawdown_with_today_price_is_dated_today() -> None:
+    module = load_script("daily-digest", "peak_drawdown")
+    history = {"알파전자": [("2026-08-10", 100_000.0)]}
+
+    result = module.record_drawdown("알파전자", 88_000.0, "2026-08-28", history)
+
+    assert result["current_date"] == "2026-08-28"
+    assert result["band"] == -10.0
+    assert module.record_cells(result) == "₩100,000 (2026-08-10) | -12.0% 🟡"
+
+
+def test_render_keeps_stale_record_value_out_of_alerts(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = load_script("daily-digest", "peak_drawdown")
+    monkeypatch.setattr(
+        datafeed_tickers, "resolve_stock", lambda name, overrides=None: (None, "종목 검색 결과 없음", 1)
+    )
+    stale = module.record_drawdown(
+        "알파전자", None, "2026-08-28", {"알파전자": [("2026-08-10", 100_000.0), ("2026-08-27", 70_500.0)]}
+    )
+    results = [
+        {"종목": "알파전자", "error": "종목 검색 결과 없음", "record": stale, "수익률": "-", "비중": "-"}
+    ]
+
+    section = module.render(results, {"error": "잔고 이력 없음"})
+
+    assert "-29.5% (08-27 기준)" in section
+    assert "기록 낙폭 경보(시트 수집가 기준 · 발동 판정 아님): 해당 없음" in section
+    assert "임박(계좌 스냅샷" not in section
+
+
 def test_record_axis_survives_market_data_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """네트워크가 죽어 52주 축이 비어도 계좌 기록 축은 그대로 표에 남아야 한다."""
     module = load_script("daily-digest", "peak_drawdown")
@@ -626,7 +675,9 @@ def test_render_names_both_axes_and_forbids_summing(monkeypatch: pytest.MonkeyPa
 
     # 같은 종목이 두 축에서 두 밴드만큼 다르게 걸린다 — 합쳐 세면 안 되는 이유
     assert "전고점 낙폭 판정(52주 시장 종가 기준): 알파전자 -40.0% (⛔ -30%)" in section
-    assert "기록 낙폭 판정(계좌 스냅샷 기록 기준):" in section
+    # 기록 축은 시트 수집가라 경보·관찰용이다 — 발동 판정으로 읽히면 안 된다(my_rules 「적용 방법」)
+    assert "기록 낙폭 경보(시트 수집가 기준 · 발동 판정 아님):" in section
+    assert "기록 낙폭 판정" not in section
     assert "알파전자 -12.5% (🟡 -10%)" in section
     assert "같은 룰 번호로 합산하지 않고" in section
     # 각주 = 기록 구간·개수·제외 파일 수
@@ -727,3 +778,39 @@ def test_append_section_failed_write_leaves_snapshot_intact(
 
     assert snapshot.read_text(encoding="utf-8") == PEAK_SNAPSHOT
     assert [p.name for p in tmp_path.iterdir()] == [snapshot.name]
+
+
+def test_peak_drawdown_reads_the_종목명_snapshot_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """종목 열이 `종목명`인 세대의 스냅샷도 죽지 않고 종목별로 판정한다."""
+    module = load_script("daily-digest", "peak_drawdown")
+    monkeypatch.setattr(
+        datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
+    )
+    monkeypatch.setattr(
+        module.daily,
+        "fetch_daily_bars",
+        lambda code, days, asof=None: Bars(_bars([("20260601", 100_000.0), ("20260828", 60_000.0)])),
+    )
+    snapshot = PEAK_SNAPSHOT.replace("| 종목 | 섹터 |", "| 종목명 | 섹터 |")
+
+    results = module.analyze_holdings(module.parse_holdings(snapshot), {})
+
+    assert [r["종목"] for r in results] == ["알파전자", "베타파마"]
+    assert results[0]["drawdown"] == pytest.approx(-40.0)
+
+
+def test_record_history_includes_the_종목명_snapshot_generation(tmp_path: Path) -> None:
+    """종목 열이 `종목명`인 세대의 스냅샷도 기록 축 이력에 들어간다."""
+    module = load_script("daily-digest", "peak_drawdown")
+    _write_snapshot(
+        tmp_path,
+        "2026-08-10",
+        _record_snapshot("2026-08-10", {"알파전자": 355_000}).replace("| 종목 | 섹터 |", "| 종목명 | 섹터 |"),
+    )
+    _write_snapshot(tmp_path, "2026-09-03", _record_snapshot("2026-09-03", {"알파전자": 283_000}))
+
+    history, _ = module.load_record_history(tmp_path)
+
+    assert history["알파전자"] == [("2026-08-10", 355_000.0), ("2026-09-03", 283_000.0)]

@@ -8,11 +8,13 @@
    내가 사기 전에 형성된 고점까지 포함하므로 "이 종목이 시장에서 얼마나 밀렸나"를 답한다.
 2. **계좌 기록 고점 축** — `output/portfolio/` 스냅샷 이력에 기록된 최고 **현재가**(시트 수집가)
    대비 하락률. 내가 관측을 시작한 뒤의 고점만 보므로 "내 보유 구간에 얼마나 반납했나"를
-   답하고, trailing stop이 실제로 걸리는 자리와 훨씬 가깝다. 네트워크가 필요 없어 시세
+   답한다. 시트 수집가 기준이라 경보·관찰용이며 발동 근거가 아니다. 네트워크가 필요 없어 시세
    수집이 실패한 종목에도 붙는다.
 
 두 축은 고점의 정의도 가격 기준(시장 종가 vs 시트 수집가)도 다르다. 같은 룰 번호로 합산하지
-않으며, 출력의 모든 판정 문장은 어느 축에서 걸렸는지를 명시한다.
+않으며, 출력의 모든 판정 문장은 어느 축에서 걸렸는지를 명시한다. 발동 판정은 52주 종가 축만
+한다 — 계좌 기록 축은 시트 수집가라 경보·관찰용이고(`context/my_rules.md` 「적용 방법」),
+출력도 「경보(… 발동 판정 아님)」로 표기한다.
 
 같은 실행에서 과거 스냅샷들의 잔고 최고치 대비 계좌 MDD도 계산해
 `context/my_rules.md` 「기본 원칙 13(계좌 MDD 관리)」의 -10/-15% 발동 여부를 표기한다.
@@ -24,13 +26,13 @@
 
 데이터 소스:
 - 일봉 OHLCV — `invagent.datafeed.daily` (금융위 KRX 공식 일봉 우선, 미공개 최근 봉은 StockEasy 정규장, 네이버 대체 시 꼬리표).
-- 티커 해석 — `context/ticker_overrides.md` → `analyze-stock/scripts/fetch_stock_info.py` 순.
+- 티커 해석 — `invagent.datafeed.tickers.resolve_code`: `context/ticker_overrides.md` → 6자리 티커 그대로 → 네이버 종목 검색 → (네이버 실패 시) StockEasy `stock-search` 순.
 - 계좌 기록 고점 — `output/portfolio/<yyyy>/<mm>/*.md` 스냅샷의 `## 보유` 표 (외부 조회 없음).
 
 실패 정책: 티커 미해석·시세 수집 실패는 해당 행만 사유를 표기하고 계속 진행한다(exit 0).
 브리핑을 블로킹해서는 안 된다. 스냅샷 파싱 자체가 실패할 때만 exit 1.
 
-의존성: stdlib만 사용.
+의존성: 프로젝트 환경(`invagent.core`·`invagent.datafeed`)만.
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ from pathlib import Path
 from invagent.core.archive import archive_root, dated_files
 from invagent.core.files import atomic_write
 from invagent.datafeed import cache as http_cache, daily
-from invagent.datafeed.snapshot import parse_balance, parse_holdings, to_float
+from invagent.datafeed.snapshot import holding_name, parse_balance, parse_holdings, to_float
 from invagent.datafeed.tickers import load_overrides, resolve_code
 
 # --- 판정 임계값 -----------------------------------------------------------
@@ -155,7 +157,7 @@ def analyze_holdings(
     history = record_history or {}
     results: list[dict] = []
     for row in holdings:
-        name = row["종목"]
+        name = holding_name(row)
         entry = {
             "종목": name,
             "수익률": row.get("수익률", ""),
@@ -269,7 +271,7 @@ def load_record_history(
             continue
         valid_dates.append(path.stem)
         for row in rows:
-            name = row.get("종목")
+            name = holding_name(row)
             price = to_float(row.get("현재가", ""))
             if name and price:
                 history.setdefault(name, []).append((path.stem, price))
@@ -293,6 +295,9 @@ def record_drawdown(
 
     오늘 일자 항목은 디스크 값을 버리고 호출자가 넘긴 값으로 덮어쓴다(`account_mdd`와 같은 규약).
     고점·현재가 모두 시트 수집가라 축 내부적으로는 같은 기준끼리 비교된다.
+
+    오늘 현재가가 비면(시트 `-`·`#N/A`) 마지막 기록일 값으로 낙폭을 재되 `current_date`에 그
+    날짜를 남기고, 묵은 값이라 밴드·임박 경보는 내지 않는다.
     """
     samples = [(d, p) for d, p in history.get(name, []) if d <= today and d != today]
     if today_price:
@@ -301,15 +306,18 @@ def record_drawdown(
         return {"error": "스냅샷 기록 없음"}
 
     peak_date, peak = max(samples, key=lambda item: item[1])
-    current = today_price or samples[-1][1]
+    current_date, current = (today, today_price) if today_price else max(samples)
     drawdown = (current / peak - 1) * 100 if peak else None
+    stale = current_date != today
     return {
         "peak": peak,
         "peak_date": peak_date,
         "current": current,
+        "current_date": current_date,
+        "stale": stale,
         "drawdown": drawdown,
-        "band": band_for(drawdown),
-        "approach": approaching_band(
+        "band": None if stale else band_for(drawdown),
+        "approach": None if stale else approaching_band(
             pending_bands(drawdown, peak, DRAWDOWN_BANDS), DRAWDOWN_WARN_MARGIN_PP
         ),
         "samples": len(samples),
@@ -425,10 +433,12 @@ def ymd(raw: str) -> str:
 
 
 def record_cells(record: dict) -> str:
-    """계좌 기록 축 2개 셀(고점(일자) · 낙폭). 경보·임박은 낙폭 셀에 인라인으로 붙인다."""
+    """계좌 기록 축 2개 셀(고점(일자) · 낙폭). 경보·임박은 낙폭 셀에 인라인으로, 묵은 값은 측정일을 붙인다."""
     if not record or record.get("error"):
         return "- | -"
-    if record["band"] is not None:
+    if record.get("stale"):
+        mark = f" ({record['current_date'][5:]} 기준)"
+    elif record["band"] is not None:
         mark = f" {BAND_MARK[record['band']]}"
     elif record.get("approach"):
         mark = f" ⚠️{record['approach']['band']:.0f}%"
@@ -513,12 +523,12 @@ def render(
             f"({band_label(r['record']['band'])})"
             for r in sorted(rec_hit, key=lambda r: r["record"]["drawdown"])
         )
-        lines.append(f"- 기록 낙폭 판정(계좌 스냅샷 기록 기준): {desc}")
+        lines.append(f"- 기록 낙폭 경보(시트 수집가 기준 · 발동 판정 아님): {desc}")
     else:
-        lines.append("- 기록 낙폭 판정(계좌 스냅샷 기록 기준): 해당 없음")
+        lines.append("- 기록 낙폭 경보(시트 수집가 기준 · 발동 판정 아님): 해당 없음")
 
     record_near = approach_line(
-        "계좌 스냅샷 기록 기준",
+        "계좌 스냅샷 기록 기준 · 시트 수집가 경보, 종가로 재확인",
         [
             (r["종목"], r["record"], r["record"]["approach"])
             for r in results
