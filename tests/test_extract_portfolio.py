@@ -195,3 +195,152 @@ def test_portfolio_weight_cap_is_the_valuation_axis() -> None:
     assert "매매규칙 9(평가 비중 35% 상한): 이오타 36.0% ← **위반**" in snapshot
     # 시트의 비중은 평가 비중이므로 매수원금 축 룰을 여기에 인용하지 않는다.
     assert "매수원금" not in snapshot.split("## 룰 자동 판정")[1]
+
+
+INDEX_ETF_DUMP = """|  |  |  |  |  |  |  |  |  |  |  |  |
+| :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| 구분 |  계좌 | 섹터 | 종목 | 보유 | 평단 | 현재가 | 매수금액 | 평가금액 | 수익률 | 손익 | 비중 |
+| B | 삼성 | 지수 | KODEX 200 | 10 | ₩10,000 | ₩8,700 | ₩100,000 | ₩87,000 | \\-13.00% | \\-₩13,000 | 16.0% | |
+| B | 삼성 | 지수 | KODEX 코스닥150 | 10 | ₩10,000 | ₩13,000 | ₩100,000 | ₩130,000 | 30.00% | ₩30,000 | 14.0% | |
+| B | 삼성 | 반도체 | 제타 | 10 | ₩10,000 | ₩8,700 | ₩100,000 | ₩87,000 | \\-13.00% | \\-₩13,000 | 11.0% | |
+
+|  |  |
+| :-: | :-: |
+| 종목 | 최초 투자 |
+"""
+
+
+def test_index_etf_skips_average_cost_stop_and_cushion() -> None:
+    """「지수 ETF 규칙 4」: 「매매규칙 6」 평단 손절은 지수 ETF에 적용하지 않는다. 매도는 추세 꺾임이다."""
+    module = load_script("daily-digest", "extract_portfolio")
+    findings = module.build_snapshot(INDEX_ETF_DUMP, "2026-10-28").split("## 룰 자동 판정")[1]
+
+    assert "매매규칙 6(-12% 1차 분할 매도): 제타 -13.00% (비중 11.0%) ← **위반**" in findings
+    lines = [line for line in findings.splitlines() if line.startswith("- 매매규칙")]
+    assert not any("KODEX" in line for line in lines if "종목 수" not in line)
+
+
+def test_index_etf_is_not_graded_by_the_35_percent_cap() -> None:
+    """「지수 ETF 규칙 3」이 비중 계산을 대신하므로 지수 ETF는 「매매규칙 9」 35% 줄에 오르지 않는다."""
+    module = load_script("daily-digest", "extract_portfolio")
+    dump = INDEX_ETF_DUMP.replace("| 16.0% |", "| 36.0% |")
+    findings = module.build_snapshot(dump, "2026-10-28").split("## 룰 자동 판정")[1]
+
+    assert "매매규칙 9(평가 비중 35% 상한): 해당 없음" in findings
+
+
+def etf_cap_dump(
+    kodex200: tuple[str, str, str], kosdaq150: tuple[str, str, str], cost_column: bool = True
+) -> str:
+    """ETF 두 행의 (매수금액, 평가금액, 비중)을 받아 합계 ₩1,000,000짜리 시트를 만든다.
+
+    평가금액 합계(현금 포함)가 정확히 ₩1,000,000이 되도록 현금 행이 나머지를 채운다.
+    """
+    def won(text: str) -> int:
+        return int(text.replace("₩", "").replace(",", ""))
+
+    stock_value = 270_000
+    cash = 1_000_000 - won(kodex200[1]) - won(kosdaq150[1]) - stock_value
+    rows = [
+        ("지수", "KODEX 200", *kodex200),
+        ("지수", "KODEX 코스닥150", *kosdaq150),
+        ("반도체", "제타", "₩250,000", f"₩{stock_value:,}", "27.0%"),
+        ("현금", "\\_현금", f"₩{cash:,}", f"₩{cash:,}", f"{cash / 10_000:.1f}%"),
+    ]
+    header = "| 구분 | 계좌 | 섹터 | 종목 | 보유 | 평단 | 현재가 | 매수금액 | 평가금액 | 수익률 | 손익 | 비중 |"
+    lines = ["|  " * 12 + "|", "| :-: " * 12 + "|", header]
+    for sector, name, cost, value, weight in rows:
+        lines.append(
+            f"| B | 삼성 | {sector} | {name} | 1 | ₩1 | ₩1 | {cost} | {value} | 0.00% | ₩0 | {weight} |"
+        )
+    text = "\n".join(lines) + "\n"
+    if not cost_column:
+        text = "\n".join(
+            "|".join(cell for i, cell in enumerate(line.split("|")) if i != 8)
+            for line in text.splitlines()
+        ) + "\n"
+    return text
+
+
+def etf_cap_line(dump: str) -> str:
+    module = load_script("daily-digest", "extract_portfolio")
+    findings = module.build_snapshot(dump, "2026-10-28").split("## 룰 자동 판정")[1]
+    return next(line for line in findings.splitlines() if line.startswith("- 지수 ETF 규칙 3"))
+
+
+ETF_CAP_LABEL = "- 지수 ETF 규칙 3(ETF별 매수원금 15% 상한 · 상승분 허용): "
+
+
+def test_index_etf_buy_driven_excess_is_a_violation() -> None:
+    """2026-10-28 사용자 결정: 15% 상한은 매수원금 비중(매수금액 ÷ 총자산)에 건다 — 넘기면 매수가 넘긴 것이다."""
+    line = etf_cap_line(etf_cap_dump(("₩160,000", "₩150,000", "15.0%"), ("₩50,000", "₩60,000", "6.0%")))
+
+    assert line == ETF_CAP_LABEL + "KODEX 200 15.0% ← **위반**(매수원금 16.0%)"
+
+
+def test_index_etf_rise_only_excess_is_allowed() -> None:
+    """매수 없이 주가 상승으로 평가 비중이 15%를 넘은 것은 「매매규칙 9」처럼 허용한다 — 위반이 아니다."""
+    line = etf_cap_line(etf_cap_dump(("₩120,000", "₩170,000", "17.0%"), ("₩50,000", "₩60,000", "6.0%")))
+
+    assert line == ETF_CAP_LABEL + "KODEX 200 17.0% ← 상승분 초과 · 허용(매수원금 12.0%)"
+    assert "위반" not in line
+
+
+def test_index_etf_cap_marks_reaching_and_nearing_on_the_cost_axis() -> None:
+    """도달·근접(13%↑)은 남은 매수 여유를 보는 것이라 매수원금 비중으로 판정하고, 여유 있는 ETF는 생략한다."""
+    line = etf_cap_line(etf_cap_dump(("₩150,000", "₩140,000", "14.0%"), ("₩135,000", "₩120,000", "12.0%")))
+
+    assert line == ETF_CAP_LABEL + (
+        "KODEX 200 14.0% ← 상한 도달(매수원금 15.0%), KODEX 코스닥150 12.0% ← 근접(매수원금 13.5%)"
+    )
+
+
+def test_index_etf_line_says_none_when_all_have_room() -> None:
+    line = etf_cap_line(etf_cap_dump(("₩50,000", "₩60,000", "6.0%"), ("₩90,000", "₩140,000", "14.0%")))
+
+    assert line == ETF_CAP_LABEL + "해당 없음"
+
+
+def test_index_etf_excess_without_cost_column_is_not_called_a_violation() -> None:
+    """매수금액 열은 선택이다. 없으면 매수로 넘었는지 상승으로 넘었는지 가를 수 없어 위반이라 하지 않는다."""
+    line = etf_cap_line(
+        etf_cap_dump(("₩160,000", "₩170,000", "17.0%"), ("₩50,000", "₩60,000", "6.0%"), cost_column=False)
+    )
+
+    assert line == ETF_CAP_LABEL + "KODEX 200 17.0% ← 초과(매수·상승 구분 불가 — 매수금액 열 없음)"
+
+
+def test_index_etf_near_cap_without_cost_column_falls_back_to_evaluation_weight() -> None:
+    line = etf_cap_line(
+        etf_cap_dump(("₩160,000", "₩140,000", "14.0%"), ("₩50,000", "₩60,000", "6.0%"), cost_column=False)
+    )
+
+    assert line == ETF_CAP_LABEL + "KODEX 200 14.0% ← 근접(평가 비중 기준 — 매수금액 열 없음)"
+
+
+def test_index_etf_lines_are_omitted_without_index_etfs() -> None:
+    module = load_script("daily-digest", "extract_portfolio")
+    findings = module.build_snapshot(WEIGHT_DUMP, "2026-09-05").split("## 룰 자동 판정")[1]
+
+    assert "지수 ETF" not in findings
+
+
+def test_leveraged_index_etf_keeps_individual_stock_rules() -> None:
+    """「지수 ETF 규칙 1」: 레버리지·인버스는 대상이 아니다 — 섹터가 `지수`여도 평단 손절 줄에 남는다."""
+    module = load_script("daily-digest", "extract_portfolio")
+    dump = INDEX_ETF_DUMP.replace("| KODEX 200 |", "| KODEX 코스닥150레버리지 |")
+    findings = module.build_snapshot(dump, "2026-10-28").split("## 룰 자동 판정")[1]
+
+    assert "매매규칙 6(-12% 1차 분할 매도): KODEX 코스닥150레버리지 -13.00%" in findings
+    assert "지수 ETF 규칙 4(매도 = 평단 +8% 후 최고 종가 -3%): KODEX 코스닥150 +30.00% " in findings
+
+
+def test_index_etf_sell_is_pointed_to_rule_4() -> None:
+    """평단 손절을 빼는 대신, 매도 판정이 「지수 ETF 규칙 4」(종가 이력 필요)라는 안내를 남긴다."""
+    module = load_script("daily-digest", "extract_portfolio")
+    findings = module.build_snapshot(INDEX_ETF_DUMP, "2026-10-28").split("## 룰 자동 판정")[1]
+
+    assert (
+        "- 지수 ETF 규칙 4(매도 = 평단 +8% 후 최고 종가 -3%): KODEX 200 -13.00%, KODEX 코스닥150 +30.00% "
+        "— 평단 손절·익절 쿠션 미적용, 종가 이력으로 별도 판정"
+    ) in findings

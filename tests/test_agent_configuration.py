@@ -670,7 +670,18 @@ def test_portfolio_thresholds_match_my_rules() -> None:
     cushion = re.search(r"수익이 (\d+)-(\d+)% 정도 발생하면", rules)
     weight = re.search(r"최대 (\d+)%를 넘지 않도록", rules)
     holdings = re.search(r"종목 수는 (\d+)~(\d+)종목", rules)
+    etf_weight = re.search(r"최종 비중은 ETF마다 최대 (\d+)%", rules)
+    etf_trend = re.search(r"평단\(현재 보유분 기준\) 대비 \+(\d+)% 이상 오른 뒤, 그 이후 최고 종가 대비 (-\d+)%", rules)
     assert trim and stop and cushion and weight and holdings, "룰 원문 형식이 바뀌었다"
+    assert etf_weight and etf_trend, "「지수 ETF 규칙 3·4」 원문 형식이 바뀌었다"
+
+    assert module.INDEX_ETF_MAX_WEIGHT_PCT == float(etf_weight.group(1))
+    # 2026-10-28: 15% 상한은 매수원금 비중 축이고 주가 상승분 초과는 허용한다 — 스크립트가 그 축으로 판정한다.
+    etf_rule = re.search(r"^3\. \*\*비중\*\*:.*$", rules, re.MULTILINE)
+    assert etf_rule and "매수 없이 주가 상승으로 15%를 넘는 것은 허용" in etf_rule.group(0)
+    assert "매수원금 비중에 적용" in etf_rule.group(0)
+    assert module.INDEX_ETF_TREND_GAIN_PCT == float(etf_trend.group(1))
+    assert module.INDEX_ETF_TREND_PULLBACK_PCT == float(etf_trend.group(2))
 
     assert module.TRIM_PCT == float(trim.group(1))
     assert module.STOP_LOSS_PCT == float(stop.group(1))
@@ -752,6 +763,9 @@ def test_daily_digest_documents_peak_drawdown_step() -> None:
     assert "계좌 기록 고점" in skill
     assert "52주 시장 고점" in skill
     assert "어느 축에서 걸렸는지를 반드시 밝힌다" in skill
+    # 계좌 기록 축은 시트 수집가라 경보 전용이다(my_rules 「적용 방법」) — 발동 판정은 52주 종가 축만
+    assert "발동 판정은 52주 종가 축만" in skill
+    assert "기록 낙폭 판정" not in skill
 
 
 def test_daily_digest_checks_breakout_watchlist_every_day() -> None:

@@ -9,7 +9,11 @@ briefing's independent prep steps — market signals, the DART filing match and,
 already exists, the peak-drawdown scan. They do not depend on each other, so they run
 concurrently and print as one block in a fixed order instead of costing a separate command each.
 Every step stays non-blocking exactly as its SKILL.md section requires: a failed step leaves its
-section with a reason and the command still exits 0. `--snapshot` runs the drawdown step only if
+section with a reason and the command still exits 0. Each step has a `STEP_TIMEOUT` of 300 s, sized from
+StockEasy's shared 8 s pacing (16 paced requests at the 12-holding cap plus one exhausted retry run,
+~250 s; the arithmetic is in the constant's comment). A step that times out keeps whatever it had
+printed under a `(시간 초과 — 부분 출력)` label instead of the old truncated exception
+text, whose 200 characters were all command path. `--snapshot` runs the drawdown step only if
 that file is already there, so a first run skips it (the snapshot is created later, in step 1-3)
 and a same-day re-run picks it up. The per-step commands stay documented in the skill for
 re-running one step alone, and each section remains the authority on how to read its output.
@@ -83,7 +87,12 @@ position that ran up and then rolled over stays silent while it is still in
 profit. `.agents/skills/daily-digest/scripts/peak_drawdown.py` adds the
 **peak** axis: it reads the snapshot that script just wrote, computes each
 holding's drawdown from its highest close over the last 250 trading days, and
-flags the -10 / -15 / -20 / -30% bands that map to 「매매규칙 3·15」. The same run
+flags the -10 / -15 / -20 / -30% bands that map to 「매매규칙 3·15」. A second
+axis, the highest `현재가` recorded across past snapshots, is printed beside it
+but is alert-only: that price is the Sheet's collected (intraday/delayed) quote,
+and `context/my_rules.md` 「적용 방법」 bars it from triggering any rule, so the
+script labels its hits 「기록 낙폭 경보(시트 수집가 기준 · 발동 판정 아님)」 and
+only the 52-week close axis drives band responses (user decision, 2026-09-09/09-28). The same run
 derives the account MDD of 「기본 원칙 13」 from the balance line of every past
 snapshot in `output/portfolio/`, noting that this peak covers only the snapshot
 window and is not adjusted for deposits or withdrawals. That rule's responses —

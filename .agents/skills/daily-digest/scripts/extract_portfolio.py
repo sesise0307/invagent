@@ -7,7 +7,7 @@
 보유 행 합계를 시트 잔고와 대조하고(잘린 입력 거부), `context/my_rules.md` 임계값 기준으로
 룰 위반·근접 항목을 계산한다.
 
-네트워크 접근 없음. 의존성: stdlib만 사용.
+네트워크 접근 없음. 의존성: 프로젝트 환경(`invagent.datafeed`)만.
 실패 시 stderr에 에러 출력 후 exit 1 — 호출측(스킬)은 실패해도 브리핑을 계속 진행한다.
 """
 
@@ -38,8 +38,26 @@ PROFIT_CUSHION_PCT = 24.0  # 매매규칙 11: 24~30% 수익 시 보유량 10~30%
 # 매수원금 비중 상한(= 2% ÷ 계획 손절률)은 스냅샷이 아니라 진입 판단에서 계산한다.
 MAX_WEIGHT_PCT = 35.0
 WEIGHT_WARN_PCT = 30.0  # 상한 근접 경고선
+# 지수 ETF 규칙 3: ETF마다 최종 비중 최대 15% (2%룰 비중 계산·매매규칙 16 섹터 상한 대신).
+# 2026-10-28 사용자 결정: 「매매규칙 9」처럼 축을 나눈다 — 상한은 **매수원금 비중**(매수금액 ÷
+# 총자산)에 걸고, 매수 없이 주가 상승으로 평가 비중이 15%를 넘는 것은 허용한다.
+INDEX_ETF_MAX_WEIGHT_PCT = 15.0
+# 근접 경고선 — 35% 상한의 30% 경고와 같은 비율(약 86%)을 15%에 적용해 13%로 둔다.
+# 분할 매수 한 번(수 %p)이면 상한을 넘는 거리라 그 전에 남은 매수 여유를 보게 한다(매수원금 축).
+INDEX_ETF_WEIGHT_WARN_PCT = 13.0
+# 지수 ETF 규칙 4: 평단 +8% 이후 최고 종가 대비 -3% = 추세 꺾임 매도. 판정은 종가 이력이 필요해
+# 여기서 하지 않고, 판정 줄 라벨에 기준만 인용한다.
+INDEX_ETF_TREND_GAIN_PCT = 8.0
+INDEX_ETF_TREND_PULLBACK_PCT = -3.0
 MIN_HOLDINGS = 5  # 매매규칙 9: 5~12종목
 MAX_HOLDINGS = 12
+
+# 「지수 ETF 규칙 1」 대상 식별. 시트가 KODEX 200·KODEX 코스닥150 같은 시장 전체 지수 ETF에
+# 섹터 `지수`를 달고, 섹터·테마 ETF(예: 전고체배터리ESS → `2차전지`)는 업종 섹터를 단다.
+# 그래서 섹터가 정본이다. 다만 레버리지·인버스는 「레버리지 규칙」 대상이라 섹터가 `지수`여도
+# 이름으로 한 번 더 걸러 낸다(KODEX 코스닥150레버리지·KODEX 200선물인버스2X 등).
+INDEX_ETF_SECTOR = "지수"
+LEVERAGED_ETF_RE = re.compile(r"레버리지|인버스|2X", re.IGNORECASE)
 
 # 보유 행 평가금액 합계와 시트 잔고의 허용 오차(%). 반올림·수집 시차만 흡수한다.
 BALANCE_TOLERANCE_PCT = 0.5
@@ -165,15 +183,22 @@ def parse_sectors(block: list[str]) -> list[dict]:
     return sectors
 
 
+def is_index_etf(holding: dict) -> bool:
+    """「지수 ETF 규칙 1」 대상(레버리지가 아닌 시장 전체 지수 ETF)인지."""
+    return holding["섹터"] == INDEX_ETF_SECTOR and not LEVERAGED_ETF_RE.search(holding["종목"])
+
+
 def rule_findings(holdings: list[dict]) -> list[str]:
     """보유 현황을 my_rules.md 임계값과 대조해 판정 문구 생성."""
     positions = [h for h in holdings if h["섹터"] != CASH_SECTOR]
+    # 지수 ETF는 「매매규칙 6·7·11」과 평가 비중 35% 대신 「지수 ETF 규칙 3·4」를 따른다.
+    stocks = [h for h in positions if not is_index_etf(h)]
     findings: list[str] = []
 
     def names(pred) -> list[str]:
         return [
             f"{h['종목']} {h['수익률_v']:+.2f}% (비중 {h['비중']})"
-            for h in positions
+            for h in stocks
             if h["수익률_v"] is not None and pred(h["수익률_v"])
         ]
 
@@ -207,10 +232,10 @@ def rule_findings(holdings: list[dict]) -> list[str]:
         else "- 매매규칙 11(24~30%↑ 익절 쿠션): 해당 없음"
     )
 
-    over = [h for h in positions if h["비중_v"] is not None and h["비중_v"] > MAX_WEIGHT_PCT]
-    at_cap = [h for h in positions if h["비중_v"] == MAX_WEIGHT_PCT]
+    over = [h for h in stocks if h["비중_v"] is not None and h["비중_v"] > MAX_WEIGHT_PCT]
+    at_cap = [h for h in stocks if h["비중_v"] == MAX_WEIGHT_PCT]
     near = [
-        h for h in positions
+        h for h in stocks
         if h["비중_v"] is not None and MAX_WEIGHT_PCT > h["비중_v"] >= WEIGHT_WARN_PCT
     ]
     def weight_desc(rows: list[dict]) -> str:
@@ -224,6 +249,56 @@ def rule_findings(holdings: list[dict]) -> list[str]:
         findings.append(f"- 매매규칙 9(평가 비중 35% 상한): {weight_desc(near)} ← 근접")
     else:
         findings.append("- 매매규칙 9(평가 비중 35% 상한): 해당 없음")
+
+    etfs = [h for h in positions if is_index_etf(h)]
+    if etfs:
+        etf_label = (
+            f"- 지수 ETF 규칙 3(ETF별 매수원금 {INDEX_ETF_MAX_WEIGHT_PCT:.0f}% 상한 · 상승분 허용)"
+        )
+        # 분모 = 현금 행을 포함한 전체 평가금액 합계. 시트의 비중 열이 바로 이 합계(= 잔고)로
+        # 나눈 값이라(10/28: 코스닥150 ₩73,560,000 ÷ 잔고 ₩478,906,000 = 15.4%) 같은 분모를 써야
+        # 매수원금 비중과 평가 비중이 한 줄에서 비교된다. 잔고 총계는 시트에 없을 수 있지만 평가금액은
+        # 필수 열이고, `check_balance`가 둘이 1% 안에서 맞는지 이미 확인한다.
+        account_total = sum(to_float(h["평가금액"]) or 0.0 for h in holdings)
+        flagged = []
+        for h in etfs:
+            weight = h["비중_v"]
+            cost = to_float(h["매수금액"])
+            if cost is None or not account_total:
+                if weight is None or weight < INDEX_ETF_WEIGHT_WARN_PCT:
+                    continue
+                if weight > INDEX_ETF_MAX_WEIGHT_PCT:
+                    state = "← 초과(매수·상승 구분 불가 — 매수금액 열 없음)"
+                elif weight == INDEX_ETF_MAX_WEIGHT_PCT:
+                    state = "← 상한 도달(평가 비중 기준 — 매수금액 열 없음)"
+                else:
+                    state = "← 근접(평가 비중 기준 — 매수금액 열 없음)"
+                flagged.append(f"{h['종목']} {h['비중']} {state}")
+                continue
+            cost_pct = round(cost / account_total * 100, 1)
+            cost_note = f"매수원금 {cost_pct:.1f}%"
+            if cost_pct > INDEX_ETF_MAX_WEIGHT_PCT:
+                state = f"← **위반**({cost_note})"
+            elif cost_pct == INDEX_ETF_MAX_WEIGHT_PCT:
+                state = f"← 상한 도달({cost_note})"
+            elif weight is not None and weight > INDEX_ETF_MAX_WEIGHT_PCT:
+                state = f"← 상승분 초과 · 허용({cost_note})"
+            elif cost_pct >= INDEX_ETF_WEIGHT_WARN_PCT:
+                state = f"← 근접({cost_note})"
+            else:
+                continue
+            flagged.append(f"{h['종목']} {h['비중']} {state}")
+        findings.append(f"{etf_label}: {', '.join(flagged) if flagged else '해당 없음'}")
+        # 「지수 ETF 규칙 4」 추세 꺾임은 평단 +8% 이후 최고 종가가 필요해 스냅샷만으로는 못 낸다.
+        held = ", ".join(
+            f"{h['종목']} {h['수익률_v']:+.2f}%" if h["수익률_v"] is not None else h["종목"]
+            for h in etfs
+        )
+        findings.append(
+            f"- 지수 ETF 규칙 4(매도 = 평단 {INDEX_ETF_TREND_GAIN_PCT:+.0f}% 후 "
+            f"최고 종가 {INDEX_ETF_TREND_PULLBACK_PCT:.0f}%): {held} "
+            "— 평단 손절·익절 쿠션 미적용, 종가 이력으로 별도 판정"
+        )
 
     count = len(positions)
     if count > MAX_HOLDINGS:
