@@ -25,7 +25,7 @@
 
 실패 응답은 캐시하지 않는다 — 일시적인 401·타임아웃이 TTL 동안 고착되면 안 된다.
 
-의존성: stdlib만 사용.
+의존성: stdlib + `invagent.core.files`(`atomic_write`)·`invagent.datafeed.env`(`repo_root`).
 """
 
 from __future__ import annotations
@@ -250,7 +250,13 @@ def get_or_fetch(
 
 
 def purge(older_than: int = RETENTION_SECONDS) -> int:
-    """오래된 항목을 지운다. 지운 개수를 반환한다."""
+    """오래된 항목을 지운다. 지운 파일 수(본문 + 잠금 파일)를 반환한다.
+
+    잠금 파일(`_key_lock`)은 URL마다 하나씩 생겨 본문만 지우면 끝없이 쌓인다. 그래서
+    `older_than`보다 오래됐고 짝 본문이 없는(이번에 지운 것 포함) 잠금 파일도 지운다.
+    다른 프로세스가 쥔 잠금 파일을 지우면 다음 프로세스가 새 inode를 잠가 상호 배제가
+    깨지므로, 비차단 `flock`을 얻은 것만 쥔 채로 지운다. `fcntl`이 없으면 잠금 파일은 둔다.
+    """
     now, removed = _now(), 0
     if not CACHE_ROOT.exists():
         return 0
@@ -261,4 +267,31 @@ def purge(older_than: int = RETENTION_SECONDS) -> int:
                 removed += 1
         except OSError:
             continue
+    if fcntl is None:
+        return removed
+    for path in CACHE_ROOT.rglob("*.lock"):
+        if _remove_stale_lock(path, now, older_than):
+            removed += 1
     return removed
+
+
+def _remove_stale_lock(path: Path, now: float, older_than: int) -> bool:
+    """짝 본문이 없고 아무도 쥐지 않은 오래된 잠금 파일 하나를 지운다."""
+    try:
+        if now - path.stat().st_mtime <= older_than or path.with_suffix(".body").exists():
+            return False
+        handle = path.open("a+b")
+    except OSError:
+        return False
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:  # BlockingIOError 포함 — 다른 프로세스가 쥐고 있다.
+            return False
+        try:
+            path.unlink()
+            return True
+        except OSError:
+            return False
+    finally:
+        handle.close()

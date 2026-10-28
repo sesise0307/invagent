@@ -71,8 +71,10 @@ ended in `0` without exception, and 삼성물산우B `02826K` → `028260` (삼�
 cross-checked against that same data. The rule is a pure string operation, so detection
 costs no request and cannot disagree with itself across skills; it also leaves the
 new-format **common** codes (에임드바이오 `0009K0`) alone, since those end in `0`.
-Note that `TICKER_RE` is still `^\d{6}$` and so rejects both those and the new
-preferreds — widening it is separate work.
+`TICKER_RE` (defined in `stockeasy`, re-exported by `tickers`) is `^\d[0-9A-Z]{5}$`:
+six characters, digits and uppercase letters, the first always a digit — so the new-format
+codes (`0009K0`, `02826K`, the ETF `0209D0`) are tickers and pin through
+`context/ticker_overrides.md`, while a Latin stock name is never mistaken for one.
 
 ## Response cache
 
@@ -96,7 +98,8 @@ and pre-dawn re-runs off the network: a quote URL (`info-tab`, Naver `siseJson`)
 market is closed — weekdays after the 20:00 NXT close until 09:00 KST, and weekends — stays fresh
 until the next weekday open, since nothing it carries can change before then. News, filings and
 reports are not extended, because they keep arriving after the close. Entries are kept four days so
-a Friday-evening quote survives to Monday. Judgement bars pull that window forward: `daily.fetch_daily_bars`
+a Friday-evening quote survives to Monday; the purge also drops a per-key `.lock` file past that age once
+its `.body` is gone, skipping any lock another process holds (a non-blocking `flock` probe). Judgement bars pull that window forward: `daily.fetch_daily_bars`
 passes `closed_from=cache.REGULAR_SESSION_SETTLED` (15:40), since regular-session bars stop changing at the
 15:30 close, so an afternoon re-run does not fetch `info-tab` again; other callers of the same URL keep the
 20:00 rule because they print the after-hours quote. Change the constant and the time quoted here together.

@@ -86,3 +86,51 @@ def test_quotes_fetched_after_the_close_stay_fresh_until_the_next_open(
     os.utime(cache.cache_path(url, authed=True), (stored, stored))
 
     assert (cache.load(url, authed=True) is not None) is fresh
+
+
+def _aged(path, mtime: float, body: bytes = b"") -> None:
+    import os
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body)
+    os.utime(path, (mtime, mtime))
+
+
+def test_purge_removes_an_old_lock_whose_body_is_gone(tmp_path, monkeypatch) -> None:
+    """잠금 파일은 URL마다 하나씩 생긴다. 본문이 사라진 뒤에도 남으면 끝없이 쌓인다."""
+    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
+    now = 1_800_000_000.0
+    monkeypatch.setattr(cache, "_now", lambda: now)
+    lock = tmp_path / "aa" / "aaaa.lock"
+    _aged(lock, now - cache.RETENTION_SECONDS - 60)
+
+    assert cache.purge() == 1
+    assert not lock.exists()
+
+
+def test_purge_keeps_an_old_lock_whose_body_is_still_fresh(tmp_path, monkeypatch) -> None:
+    """잠금 파일 mtime은 처음 만든 때에 머문다. 본문이 살아 있으면 그 키는 아직 쓰인다."""
+    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
+    now = 1_800_000_000.0
+    monkeypatch.setattr(cache, "_now", lambda: now)
+    lock = tmp_path / "aa" / "aaaa.lock"
+    _aged(lock, now - cache.RETENTION_SECONDS - 60)
+    _aged(tmp_path / "aa" / "aaaa.body", now - 60, b"fresh")
+
+    assert cache.purge() == 0
+    assert lock.exists()
+
+
+def test_purge_never_unlinks_a_lock_another_holder_has(tmp_path, monkeypatch) -> None:
+    """쥔 잠금 파일을 지우면 다음 프로세스가 새 inode를 잠가 상호 배제가 깨진다."""
+    fcntl = pytest.importorskip("fcntl")
+    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
+    now = 1_800_000_000.0
+    monkeypatch.setattr(cache, "_now", lambda: now)
+    lock = tmp_path / "aa" / "aaaa.lock"
+    _aged(lock, now - cache.RETENTION_SECONDS - 60)
+
+    with lock.open("a+b") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+        assert cache.purge() == 0
+        assert lock.exists()
