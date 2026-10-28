@@ -11,7 +11,7 @@ def upsert(existing: str, proposed: str, month: str) -> str:
     end = f"<!-- invagent-review:{month}:end -->"
     block = f"{begin}\n{proposed.strip()}\n{end}"
     pattern = re.compile(re.escape(begin) + r".*?" + re.escape(end), re.S)
-    return pattern.sub(block, existing, count=1) if pattern.search(existing) else existing.rstrip() + "\n\n" + block + "\n"
+    return pattern.sub(lambda _: block, existing, count=1) if pattern.search(existing) else existing.rstrip() + "\n\n" + block + "\n"
 
 def main(argv=None):
     p=argparse.ArgumentParser(); p.add_argument("--existing",required=True,type=Path); p.add_argument("--proposed",required=True,type=Path); p.add_argument("--month",required=True); p.add_argument("--prepared-out",required=True,type=Path); p.add_argument("--json",action="store_true"); a=p.parse_args(argv)

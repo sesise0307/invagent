@@ -2,7 +2,7 @@
 """두 포트폴리오 스냅샷의 실제 보유 수량 차이를 구조화한다.
 
 변화를 매매나 입출금으로 추정하지 않는다. 사용자가 제공한 이벤트만 별도 태그로 연결한다.
-네트워크 접근 없음. 의존성: stdlib만 사용.
+네트워크 접근 없음. 의존성: 프로젝트 환경(`invagent.datafeed`)만.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import re
 import sys
 from pathlib import Path
 
-from invagent.datafeed.snapshot import parse_holdings
+from invagent.datafeed.snapshot import holding_name, parse_holdings
 from invagent.datafeed.snapshot import to_float as number
 from invagent.datafeed.tickers import TICKER_RE
 
@@ -29,7 +29,7 @@ def parse_snapshot(text: str) -> list[dict]:
     rows = parse_holdings(text, require_rows=False)
     out: list[dict] = []
     for row in rows:
-        name = row.get("종목") or row.get("종목명")
+        name = holding_name(row)
         quantity = number(row.get("보유") or row.get("보유수량") or row.get("수량") or "")
         if quantity is None:
             raise ValueError(f"{name}: 보유 수량을 파싱하지 못했다")
@@ -49,6 +49,30 @@ def parse_snapshot(text: str) -> list[dict]:
 def identity(row: dict) -> str:
     ticker = row.get("ticker", "").strip()
     return f"ticker:{ticker}" if TICKER_RE.fullmatch(ticker) else f"name:{row['name']}"
+
+
+def reconcile_tickers(before_rows: list[dict], after_rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    """티커 없는 행에 양쪽 스냅샷에서 같은 이름으로 확인된 티커를 채운다.
+
+    티커 열은 시트에 있을 때만 나오므로, 열 유무가 다른 두 스냅샷을 그대로 비교하면
+    같은 보유가 `name:` 청산 + `ticker:` 신규로 갈라진다. 이름에 티커가 하나로만 대응할 때만 채운다.
+    """
+    tickers: dict[str, set[str]] = {}
+    for row in [*before_rows, *after_rows]:
+        ticker = (row.get("ticker") or "").strip()
+        if TICKER_RE.fullmatch(ticker):
+            tickers.setdefault(row["name"], set()).add(ticker)
+
+    def fill(rows: list[dict]) -> list[dict]:
+        out = []
+        for row in rows:
+            known = tickers.get(row["name"], set())
+            if not TICKER_RE.fullmatch((row.get("ticker") or "").strip()) and len(known) == 1:
+                row = {**row, "ticker": next(iter(known))}
+            out.append(row)
+        return out
+
+    return fill(before_rows), fill(after_rows)
 
 
 def group_positions(rows: list[dict]) -> dict[str, dict]:
@@ -103,7 +127,12 @@ def matching_events(item: dict, events: list[dict]) -> list[dict]:
     ]
 
 
+def account_quantities(item: dict | None) -> dict[str, float]:
+    return {name: account["quantity"] for name, account in (item or {}).get("accounts", {}).items()}
+
+
 def diff_portfolios(before_rows: list[dict], after_rows: list[dict], events: list[dict] | None = None) -> dict:
+    before_rows, after_rows = reconcile_tickers(before_rows, after_rows)
     before = group_positions(before_rows)
     after = group_positions(after_rows)
     explicit = events or []
@@ -113,7 +142,8 @@ def diff_portfolios(before_rows: list[dict], after_rows: list[dict], events: lis
         new = after.get(key)
         old_quantity = old["quantity"] if old else 0.0
         new_quantity = new["quantity"] if new else 0.0
-        if old_quantity == new_quantity and (old or {}).get("accounts") == (new or {}).get("accounts"):
+        # 매수금액은 시트 재계산·반올림으로도 바뀌므로 변화 판정은 계좌별 수량만 본다.
+        if old_quantity == new_quantity and account_quantities(old) == account_quantities(new):
             continue
         item = new or old
         if old_quantity == 0 and new_quantity != 0:
