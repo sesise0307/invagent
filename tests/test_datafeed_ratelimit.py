@@ -366,18 +366,18 @@ def test_login_requests_stop_at_the_budget_until_the_oldest_leaves_the_window(mo
     assert http.get_json(f"{STOCKEASY}/c", authed=True)[0] == {"ok": 1}
 
 
-def test_stockeasy_allows_eighty_login_requests_per_six_hours(monkeypatch) -> None:
-    """60건에서 2026-10-19 70건, 2026-10-21 80건으로 올렸다(사용자 결정) — 종목 분석이 예산 끝에서 끊겼다."""
+def test_stockeasy_allows_ninety_login_requests_per_six_hours(monkeypatch) -> None:
+    """60건에서 2026-10-19 70건, 2026-10-21 80건, 2026-10-28 90건으로 올렸다(사용자 결정) — 종목 분석이 예산 끝에서 끊겼다."""
     clock = _Clock(1_000_000.0)
     monkeypatch.setattr(ratelimit, "_now", clock)
-    calls = _scripted(monkeypatch, [b'{"ok": 1}'] * 81)
+    calls = _scripted(monkeypatch, [b'{"ok": 1}'] * 91)
 
-    for i in range(80):
+    for i in range(90):
         clock.now += 60
         assert http.get_json(f"{STOCKEASY}/r{i}", authed=True)[0] == {"ok": 1}
-    payload, err = http.get_json(f"{STOCKEASY}/r80", authed=True)
-    assert payload is None and "최근 6시간 80/80건" in err
-    assert len(calls) == 80
+    payload, err = http.get_json(f"{STOCKEASY}/r90", authed=True)
+    assert payload is None and "최근 6시간 90/90건" in err
+    assert len(calls) == 90
 
 
 def test_every_stockeasy_request_is_logged_with_its_outcome(monkeypatch) -> None:

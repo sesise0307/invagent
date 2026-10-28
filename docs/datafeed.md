@@ -116,7 +116,7 @@ sequential scan at the 3-second interval was still cut off around the twelfth re
 Cool-downs are counted separately for login (cookie-carrying) and anonymous requests — on 2026-10-16
 StockEasy dropped every login `info-tab` call while still serving the anonymous market endpoints, so the
 limit sits on the login session rather than the IP. Login requests to StockEasy also
-carry a rolling budget (`login_budget` 80 per `login_window` six hours, retries included; raised from 60 to 70 on 2026-10-19 and to 80 on 2026-10-21 by user decision, each time after a stock analysis ran into the cap). It was a KST
+carry a rolling budget (`login_budget` 90 per `login_window` six hours, retries included; raised from 60 to 70 on 2026-10-19 and to 80 on 2026-10-21 by user decision, each time after a stock analysis ran into the cap, and to 90 on 2026-10-28 by user decision). It was a KST
 daily budget for one afternoon — the same day the browser opened again, so the limit does not reset at
 midnight; whether it is a timed lock-out or a rolling count is still unknown, and both are set off by a
 burst. Once spent, requests fail fast with a 「요청 예산 소진」 reason and take the kept-response fallback.
