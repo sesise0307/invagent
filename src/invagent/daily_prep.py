@@ -21,7 +21,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO_ROOT / ".agents" / "skills"
 
-STEP_TIMEOUT = 180
+# 단계 하나가 넘기면 죽이는 상한(초). 길이를 정하는 것은 StockEasy다 — 8초 간격·동시 1건이 프로세스를
+# 넘어 공유되므로 시장 신호(무인증 4건)와 전고점 낙폭(보유 종목당 `info-tab` 1건, 금융위 일봉이 빈
+# 평일 오전·15:40 뒤)이 한 줄로 선다. 보유 상한 12종목(매매규칙 9) + 4건 = 16건 × 8초 = 128초에,
+# 한 요청이 재시도를 다 쓰는 경우(3회 × HTTP 20초 + 대기 최대 30초 × 2 ≈ 120초, 그 뒤엔 cool-down이라
+# 나머지는 즉시 실패)를 더해 약 250초 — 여유를 두고 300초. 2026-10-28 실측: 8종목·캐시 미스면 StockEasy
+# 요청 간격 중앙값 8.0초로 12건이 약 90초. 180초는 정상 경로는 덮지만 재시도 한 번이면 넘었다.
+STEP_TIMEOUT = 300
 
 
 @dataclass(frozen=True)
@@ -44,6 +50,14 @@ class StepResult:
     ok: bool
     stdout: str
     stderr: str
+    timed_out: bool = False
+
+
+def _text(output: bytes | str | None) -> str:
+    """`TimeoutExpired`의 출력은 `text=True`여도 POSIX에서는 bytes로 온다."""
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return output or ""
 
 
 def _run(step: Step) -> StepResult:
@@ -56,6 +70,9 @@ def _run(step: Step) -> StepResult:
             cwd=REPO_ROOT,
             env={**os.environ, **step.env} if step.env else None,
         )
+    except subprocess.TimeoutExpired as e:
+        # 죽기 전까지 받은 출력은 남긴다. 예외 문자열은 명령 경로가 앞을 다 먹어 사유가 안 보인다.
+        return StepResult(step.name, False, _text(e.stdout), _text(e.stderr), timed_out=True)
     except (OSError, subprocess.SubprocessError) as e:
         return StepResult(step.name, False, "", str(e)[:200])
     return StepResult(step.name, proc.returncode == 0, proc.stdout, proc.stderr)
@@ -108,7 +125,14 @@ def render(results: list[StepResult]) -> str:
     out: list[str] = []
     for r in results:
         out.append(f"### {r.name}")
-        if r.ok:
+        if r.timed_out:
+            label = "부분 출력" if r.stdout.strip() else f"{STEP_TIMEOUT:.0f}초 안에 출력 없음"
+            out.append(f"(시간 초과 — {label})")
+            if r.stdout.strip():
+                out.append(r.stdout.rstrip())
+            if r.stderr.strip():
+                out.append(f"[누락] {r.stderr.strip()[:300]}")
+        elif r.ok:
             out.append(r.stdout.rstrip() or "(출력 없음)")
             if r.stderr.strip():
                 out.append(f"[누락] {r.stderr.strip()}")

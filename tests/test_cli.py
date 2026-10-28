@@ -227,3 +227,55 @@ def test_fetch_messages_passes_todays_link_dir(tmp_path):
     assert result.exit_code == 0, result.output
     assert captured["link_dir"] == tmp_path / "daily-digest/links" / today
     assert "Links saved: 0" in result.output
+
+
+def test_fetch_messages_no_fetch_links_disables_link_fetching(tmp_path):
+    """--no-fetch-links는 링크 추출을 끄고 links 폴더도 넘기지 않는다"""
+    from invagent.core.config import Config
+
+    config = Config(api_id=1, api_hash="h", session_path=tmp_path / "s", output_dir=tmp_path)
+    captured = {}
+
+    class FakeFetcher:
+        def __init__(self, config, client_manager):
+            pass
+
+        async def fetch_saved_messages(self, days, **kwargs):
+            captured.update(kwargs)
+            return []
+
+        def format_messages_markdown(self, messages):
+            return ""
+
+    with patch("invagent.cli.Config.from_env", return_value=config), \
+         patch("invagent.cli.MessageFetcher", FakeFetcher), \
+         patch("invagent.cli.TelegramClientManager") as manager_cls:
+        manager_cls.return_value.disconnect = AsyncMock()
+        result = CliRunner().invoke(cli, ["fetch-messages", "--no-fetch-links"])
+
+    assert result.exit_code == 0, result.output
+    assert captured["fetch_links"] is False
+    assert captured["link_dir"] is None
+    assert "Links fetched: no" in result.output
+
+
+def test_daily_prep_timed_out_step_keeps_its_partial_output(monkeypatch):
+    """시간 초과로 죽은 단계도 받은 출력은 남기고 시간 초과라고 밝힌다.
+
+    예전에는 `TimeoutExpired` 문자열 앞 200자만 남았는데, 명령 경로가 그 자리를 다 먹어
+    「timed out」조차 보이지 않았다.
+    """
+    from invagent import daily_prep
+
+    monkeypatch.setattr(daily_prep, "STEP_TIMEOUT", 1.0)
+    results = daily_prep.run_steps([
+        daily_prep.Step(
+            "전고점 낙폭",
+            [sys.executable, "-c", "import time; print('SK하이닉스 -3.1%', flush=True); time.sleep(30)"],
+        ),
+    ])
+    text = daily_prep.render(results)
+
+    assert results[0].ok is False
+    assert "(시간 초과 — 부분 출력)" in text
+    assert "SK하이닉스 -3.1%" in text

@@ -55,7 +55,11 @@ async def _authenticate_and_report(config: Config) -> None:
 
 @cli.command()
 @click.option("--days", type=int, default=1, help="Fetch messages from last N days (default: 1)")
-@click.option("--fetch-links", is_flag=True, default=True, help="Extract and include link content (default: enabled)")
+@click.option(
+    "--fetch-links/--no-fetch-links",
+    default=True,
+    help="Extract and include link content (default: enabled)",
+)
 @click.option(
     "--download-images/--no-download-images",
     default=True,
