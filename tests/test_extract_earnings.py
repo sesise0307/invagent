@@ -98,6 +98,16 @@ EARNINGS_RAW_CONFIRMED = """**[포워드]** 2026-08-14 09:38
 """
 
 
+def test_extract_earnings_keeps_an_alphanumeric_krx_code() -> None:
+    """신형 KRX 코드(에임드바이오 `0009K0`)도 회사정보 링크에서 그대로 읽는다."""
+    module = load_script("daily-digest", "extract_earnings")
+    raw = EARNINGS_RAW_LG_PRELIM.replace("code=066570", "code=0009K0")
+
+    entries = module.parse_earnings(raw)
+
+    assert entries[0]["code"] == "0009K0"
+
+
 def test_extract_earnings_takes_confirmed_reports_by_their_period() -> None:
     module = load_script("daily-digest", "extract_earnings")
 

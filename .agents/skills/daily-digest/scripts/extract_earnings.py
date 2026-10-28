@@ -24,7 +24,7 @@ TITLE_RE = re.compile(r"^📁 (.+)$", re.M)
 COMPANY_RE = re.compile(r"^\S+ (.+?)\(시가총액")
 DISCLOSED_RE = re.compile(r"^(\d{4})\.(\d{2})\.(\d{2}) \d{2}:\d{2}$", re.M)
 RCP_RE = re.compile(r"rcpNo=(\d+)")
-CODE_RE = re.compile(r"code=(\d{6})")
+CODE_RE = re.compile(r"code=(\d[0-9A-Z]{5})")  # 신형 KRX 코드(`0009K0`)도 받는다
 AMOUNT = r"(-?[\d,]+)억"
 LINE_RE = {
     "revenue": re.compile(r"^(?:\(연간\))?매출액 : " + AMOUNT + r"(.*)$", re.M),

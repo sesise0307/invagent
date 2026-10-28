@@ -39,7 +39,9 @@ MARKET_ENDPOINTS = {
 }
 
 TIMEOUT = http.TIMEOUT
-TICKER_RE = re.compile(r"^\d{6}$")
+# 6자리 KRX 단축코드. 첫 자리는 숫자, 나머지는 숫자·대문자 (신형 `0009K0`·`02826K`).
+# `tickers.TICKER_RE`가 이 객체를 그대로 쓴다 — tickers가 이 모듈을 import하므로 정의는 여기 둔다.
+TICKER_RE = re.compile(r"^\d[0-9A-Z]{5}$")
 COOKIE_ENV = "STOCKEASY_COOKIE"
 
 

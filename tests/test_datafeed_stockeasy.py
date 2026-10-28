@@ -55,6 +55,31 @@ def test_a_six_digit_query_is_a_ticker_and_costs_no_call(monkeypatch) -> None:
     assert (hit["stock_code"], err, code) == ("005930", None, 0)
 
 
+def test_an_alphanumeric_krx_code_is_a_ticker_and_costs_no_call(monkeypatch) -> None:
+    """신형 코드(ESS ETF `0209D0`)도 이름 검색으로 새지 않는다."""
+    def boom(*a, **k):
+        raise AssertionError("티커는 검색 없이 그대로 쓴다")
+
+    monkeypatch.setattr(http, "read_url", boom)
+
+    hit, err, code = stockeasy.resolve_stock("0209D0")
+
+    assert (hit["stock_code"], err, code) == ("0209D0", None, 0)
+
+
+def test_a_name_starting_with_a_letter_is_never_a_ticker(monkeypatch) -> None:
+    """영문 종목명이 여섯 글자여도 첫 자리가 숫자가 아니면 검색한다."""
+    monkeypatch.setattr(
+        stockeasy,
+        "fetch_stock_json",
+        lambda *a, **k: ([{"stock_code": "035420", "stock_name": "NAVERX", "market": "KR"}], None),
+    )
+
+    hit, err, code = stockeasy.resolve_stock("NAVERX")
+
+    assert (hit["stock_code"], err, code) == ("035420", None, 0)
+
+
 def test_an_ambiguous_name_exits_two_and_names_the_candidates(monkeypatch) -> None:
     monkeypatch.setattr(
         stockeasy,

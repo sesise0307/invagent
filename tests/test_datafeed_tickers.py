@@ -177,3 +177,22 @@ def test_a_caller_can_forbid_the_stockeasy_fallback(monkeypatch) -> None:
     hit, err, code = tickers.resolve_stock("대덕전자", {}, stockeasy_fallback=False)
 
     assert hit is None and "timed out" in err and code == 1
+
+
+def test_load_overrides_keeps_an_alphanumeric_krx_code(tmp_path) -> None:
+    """신형 KRX 코드는 알파벳을 섞는다 — 에임드바이오 `0009K0`, 삼성물산우B `02826K`."""
+    path = tmp_path / "ticker_overrides.md"
+    path.write_text("에임드바이오 = 0009K0\n삼성물산우B = 02826K\n", encoding="utf-8")
+
+    assert tickers.load_overrides(path) == {"에임드바이오": "0009K0", "삼성물산우B": "02826K"}
+
+
+def test_an_alphanumeric_ticker_query_needs_no_search(monkeypatch) -> None:
+    def boom(url, headers, timeout):
+        raise AssertionError("티커는 검색하지 않는다")
+
+    monkeypatch.setattr(http, "read_url", boom)
+
+    hit, err, code = tickers.resolve_stock("0209D0", {})
+
+    assert (hit["stock_code"], err, code) == ("0209D0", None, 0)

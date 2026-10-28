@@ -14,7 +14,9 @@ from pathlib import Path
 from invagent.datafeed import naver, stockeasy
 from invagent.datafeed.env import repo_root
 
-TICKER_RE = re.compile(r"^\d{6}$")
+# 신형 KRX 코드는 알파벳 대문자를 섞는다 (에임드바이오 `0009K0`, 삼성물산우B `02826K`).
+# 첫 자리는 늘 숫자라, 영문 종목명이 티커로 오인되지 않는다.
+TICKER_RE = stockeasy.TICKER_RE
 OVERRIDES_REL = Path("context") / "ticker_overrides.md"
 
 # 종목코드 6자리의 마지막 자리는 주권 종류다 — 보통주 `0`, 구형 우선주 `5`·`7`·`9`,
