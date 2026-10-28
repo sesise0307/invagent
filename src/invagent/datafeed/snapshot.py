@@ -55,6 +55,14 @@ def to_float(text: str | None) -> float | None:
         return None
 
 
+def holding_name(row: dict) -> str | None:
+    """보유 행의 종목명. 세대마다 다른 열 이름(`NAME_KEYS`) 중 처음 채워진 값, 없으면 None."""
+    for key in NAME_KEYS:
+        if row.get(key):
+            return row[key]
+    return None
+
+
 def parse_holdings(text: str, *, require_rows: bool = True) -> list[dict]:
     """스냅샷의 `## 보유` 표 → 종목 dict 리스트 (현금 행 제외).
 

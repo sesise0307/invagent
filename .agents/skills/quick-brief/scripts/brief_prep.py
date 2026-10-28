@@ -20,7 +20,7 @@ from pathlib import Path
 from invagent.core.archive import dated_files
 from invagent.datafeed import cache, fsc, naver, tickers
 from invagent.datafeed.env import output_dir, repo_root
-from invagent.datafeed.snapshot import parse_holdings, parse_rule_checks, to_float
+from invagent.datafeed.snapshot import holding_name, parse_holdings, parse_rule_checks, to_float
 
 WATCHLIST_REL = Path("context") / "interested_stocks.md"
 NEWS_PER_STOCK = 5
@@ -86,7 +86,7 @@ def holdings(path: Path | None) -> list[dict]:
     for row in parse_holdings(path.read_text(encoding="utf-8"), require_rows=False):
         out.append(
             {
-                "name": row.get("종목") or row.get("종목명"),
+                "name": holding_name(row),
                 "quantity": to_float(row.get("보유")),
                 "average_cost": to_float(row.get("평단")),
                 "weight": row.get("비중") or None,

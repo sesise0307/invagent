@@ -21,7 +21,7 @@ from pathlib import Path
 from invagent.core.archive import dated_files
 from invagent.datafeed import cache, opendart, tickers
 from invagent.datafeed.env import output_dir, repo_root
-from invagent.datafeed.snapshot import parse_holdings, split_row
+from invagent.datafeed.snapshot import holding_name, parse_holdings, split_row
 
 WATCHLIST_REL = Path("context") / "interested_stocks.md"
 BREAKOUT_REL = Path("watchlist") / "돌파선_감시.md"
@@ -77,7 +77,7 @@ def held_names(path: Path | None) -> list[str]:
     if path is None:
         return []
     rows = parse_holdings(path.read_text(encoding="utf-8"), require_rows=False)
-    return [row.get("종목") or row.get("종목명") for row in rows]
+    return [holding_name(row) for row in rows]
 
 
 def load_watchlist(path: Path) -> list[str]:
@@ -159,7 +159,7 @@ def render(result: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--asof", help="기준일 YYYY-MM-DD (기본 KST 오늘)")
+    parser.add_argument("--asof", help="기준일 YYYY-MM-DD (기본 로컬 오늘 = raw·링크 폴더 날짜; 공시 목록은 KST 오늘까지)")
     parser.add_argument("--snapshot", type=Path, help="포트폴리오 스냅샷 (기본 최신)")
     parser.add_argument("--watchlist", type=Path, help="관심 종목 파일 (기본 context/interested_stocks.md)")
     parser.add_argument("--breakout", type=Path, help="돌파선 감시 파일 (기본 output/watchlist/돌파선_감시.md)")

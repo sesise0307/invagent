@@ -73,3 +73,11 @@ def test_parse_holdings_can_tolerate_an_empty_table() -> None:
     assert snapshot.parse_holdings(text, require_rows=False) == []
     with pytest.raises(ValueError, match="하나도"):
         snapshot.parse_holdings(text)
+
+
+def test_holding_name_reads_either_snapshot_generation() -> None:
+    """스냅샷 세대에 따라 종목 열이 `종목` 또는 `종목명`이다."""
+    assert snapshot.holding_name({"종목": "SK하이닉스"}) == "SK하이닉스"
+    assert snapshot.holding_name({"종목명": "리브스메디"}) == "리브스메디"
+    assert snapshot.holding_name({"종목": "", "종목명": "리브스메디"}) == "리브스메디"
+    assert snapshot.holding_name({"티커": "000660"}) is None
