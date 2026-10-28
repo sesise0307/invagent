@@ -29,7 +29,7 @@ WATCHLIST = """# 관심 종목
 - 대덕전자
 """
 
-BREAKOUT = """# 돌파선 감시 리스트
+BUY_TRIGGERS = """# 매수 트리거
 
 > 머리말 표가 아니다 | 이 줄은 무시한다
 
@@ -46,6 +46,10 @@ BREAKOUT = """# 돌파선 감시 리스트
 | # | 종목 | 상태 |
 |---|---|---|
 | 1 | HD현대중공업 | 하락 중 |
+
+## 하나마이크론 (067310) — 가격·가치 대기
+
+- 36,000원 이하 눌림·반등.
 """
 
 CODES = {
@@ -98,14 +102,14 @@ def paths(tmp_path):
     snapshot.write_text(SNAPSHOT, encoding="utf-8")
     watchlist = tmp_path / "watch.md"
     watchlist.write_text(WATCHLIST, encoding="utf-8")
-    breakout = tmp_path / "breakout.md"
-    breakout.write_text(BREAKOUT, encoding="utf-8")
+    buy_triggers = tmp_path / "buy.md"
+    buy_triggers.write_text(BUY_TRIGGERS, encoding="utf-8")
     return {
         "tmp": tmp_path,
         "args": [
             "--snapshot", str(snapshot),
             "--watchlist", str(watchlist),
-            "--breakout", str(breakout),
+            "--buy-triggers", str(buy_triggers),
             "--archive", str(tmp_path / "archive"),
             "--raw", str(tmp_path / "raw.md"),
             "--links", str(tmp_path / "links"),
@@ -131,8 +135,8 @@ def test_only_held_and_watched_companies_are_kept_preferred_shares_as_the_common
     assert [f["held"] for f in result["filings"]] == [True, True, False]
 
 
-def test_breakout_watch_names_are_matched_too(stub, paths, capsys, monkeypatch) -> None:
-    """`돌파선_감시.md` 「감시 대상」 표의 종목도 대조한다. 관심과 겹치면 관심으로 남는다.
+def test_buy_candidate_names_are_matched_too(stub, paths, capsys, monkeypatch) -> None:
+    """`매수_트리거.md` 「감시 대상」 표의 종목도 대조한다. 관심과 겹치면 관심으로 남는다.
 
     괄호 안 코드는 그대로 쓴다 — 신형 코드(0209D0)는 이름 검색이 안 된다. 섹터 그룹 표는 감시 대상이 아니다.
     """
@@ -151,11 +155,44 @@ def test_breakout_watch_names_are_matched_too(stub, paths, capsys, monkeypatch) 
 
     result = run_json(capsys, paths["args"])
 
-    assert [(f["name"], f["source"]) for f in result["filings"]] == [("GS건설", "돌파선"), ("삼양식품", "관심")]
+    assert [(f["name"], f["source"]) for f in result["filings"]] == [("GS건설", "매수후보"), ("삼양식품", "관심")]
     assert result["gaps"] == []
 
     assert dart_scan.main(paths["args"]) == 0
-    assert "[돌파선] GS건설 2026-10-26 단일판매ㆍ공급계약체결" in capsys.readouterr().out
+    assert "[매수후보] GS건설 2026-10-26 단일판매ㆍ공급계약체결" in capsys.readouterr().out
+
+
+def test_a_name_with_its_own_section_is_matched_without_a_table_row(stub, paths, capsys, monkeypatch) -> None:
+    """`## 종목명 (티커) — 설명` 절만 있고 표에 없는 매수 후보도 대조한다. 티커 없는 절 제목은 종목이 아니다."""
+    monkeypatch.setattr(
+        opendart,
+        "fetch_filings",
+        lambda begin, end: ([filing("20261026000301", "하나마이크론", "067310", "연결재무제표기준영업(잠정)실적(공정공시)")], None),
+    )
+
+    result = run_json(capsys, paths["args"])
+
+    assert [(f["name"], f["rcept_no"]) for f in result["filings"]] == [("하나마이크론", "20261026000301")]
+    assert result["gaps"] == []
+
+
+def test_buy_triggers_default_to_the_watchlist_file(stub, paths, capsys, monkeypatch) -> None:
+    """플래그가 없으면 `output/watchlist/매수_트리거.md`를 읽는다."""
+    out = paths["tmp"] / "out"
+    (out / "watchlist").mkdir(parents=True)
+    (out / "watchlist" / "매수_트리거.md").write_text(BUY_TRIGGERS, encoding="utf-8")
+    monkeypatch.setenv("INVAGENT_OUTPUT_DIR", str(out))
+    monkeypatch.setattr(
+        opendart,
+        "fetch_filings",
+        lambda begin, end: ([filing("20261026000401", "GS건설", "006360", "단일판매ㆍ공급계약체결")], None),
+    )
+    i = paths["args"].index("--buy-triggers")
+    argv = paths["args"][:i] + paths["args"][i + 2 :]
+
+    result = run_json(capsys, argv)
+
+    assert [(f["name"], f["source"]) for f in result["filings"]] == [("GS건설", "매수후보")]
 
 
 def _briefing(root, day):

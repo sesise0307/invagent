@@ -3,7 +3,7 @@
 
 텔레그램 포워드는 공시를 자주 놓친다. 그래서 직전 브리핑일부터 오늘까지의 전체 공시 목록
 (`opendart.fetch_filings`)을 보유(최신 스냅샷)·관심(`context/interested_stocks.md`) 종목의 티커로
-거르고(`output/watchlist/돌파선_감시.md` 「감시 대상」 표의 종목도 함께), 오늘 raw·링크 파일에 이미 접수번호가 있는 공시는 「텔레그램 수록」으로 따로 센다. 우선주는
+거르고(`output/watchlist/매수_트리거.md` 「감시 대상」 표와 `## 종목명 (티커)` 절의 매수 후보도 함께), 오늘 raw·링크 파일에 이미 접수번호가 있는 공시는 「텔레그램 수록」으로 따로 센다. 우선주는
 본주 티커로 대조한다 — DART에 공시하는 것은 본주다. 본문은 읽지 않는다 — 그것은 MCP의 몫이다.
 
 의존성: 프로젝트 환경(`invagent.datafeed`)만.
@@ -24,10 +24,12 @@ from invagent.datafeed.env import output_dir, repo_root
 from invagent.datafeed.snapshot import holding_name, parse_holdings, split_row
 
 WATCHLIST_REL = Path("context") / "interested_stocks.md"
-BREAKOUT_REL = Path("watchlist") / "돌파선_감시.md"
-BREAKOUT_TABLE = "## 감시 대상"
+BUY_TRIGGERS_REL = Path("watchlist") / "매수_트리거.md"
+BUY_TRIGGERS_TABLE = "## 감시 대상"
 # 표 셀의 `종목명 (0209D0)` — 이름 검색이 안 되는 신형 코드라 괄호 안 코드를 그대로 쓴다.
 NAME_CODE_RE = re.compile(r"^(?P<name>.+?)\s*\((?P<code>[0-9A-Z]{6})\)$")
+# 표 밖 종목별 절 `## 종목명 (티커) — 설명`. 티커가 없는 절(섹터 그룹·읽는 법)은 종목이 아니다.
+SECTION_RE = re.compile(r"^## (?P<name>[^—(]+?)\s*\((?P<code>[0-9A-Z]{6})\)")
 # 브리핑을 오래 쉬었을 때 거슬러 올라갈 한도. 두 영업일이 11페이지라 2주면 70페이지 안팎이다.
 MAX_WINDOW = timedelta(days=14)
 # 판단을 움직이는 공시. `quick-brief` 2단계의 특이 공시 기준 — 계약·증자·사채·지분·실적·자사주·합병·분할·
@@ -91,15 +93,18 @@ def load_watchlist(path: Path) -> list[str]:
     ]
 
 
-def load_breakout(path: Path) -> list[str]:
-    """`돌파선_감시.md` 「감시 대상」 표의 첫 열. 섹터 그룹 표 등 다른 절의 표는 읽지 않는다."""
+def load_buy_triggers(path: Path) -> list[str]:
+    """`매수_트리거.md` 「감시 대상」 표의 첫 열과 `## 종목명 (티커)` 절 제목. 섹터 그룹 표 등 다른 절의 표는 읽지 않는다."""
     if not path.is_file():
         return []
     names: list[str] = []
     in_table = header_seen = False
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.startswith("## "):
-            in_table = line.strip() == BREAKOUT_TABLE
+            in_table = line.strip() == BUY_TRIGGERS_TABLE
+            section = SECTION_RE.match(line)
+            if section:
+                names.append(f"{section['name']} ({section['code']})")
             continue
         if not in_table or not line.strip().startswith("|"):
             continue
@@ -162,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--asof", help="기준일 YYYY-MM-DD (기본 로컬 오늘 = raw·링크 폴더 날짜; 공시 목록은 KST 오늘까지)")
     parser.add_argument("--snapshot", type=Path, help="포트폴리오 스냅샷 (기본 최신)")
     parser.add_argument("--watchlist", type=Path, help="관심 종목 파일 (기본 context/interested_stocks.md)")
-    parser.add_argument("--breakout", type=Path, help="돌파선 감시 파일 (기본 output/watchlist/돌파선_감시.md)")
+    parser.add_argument("--buy-triggers", type=Path, help="매수 후보 트리거 파일 (기본 output/watchlist/매수_트리거.md)")
     parser.add_argument("--archive", type=Path, help="브리핑 아카이브 루트 (기본 output/daily-digest)")
     parser.add_argument("--raw", type=Path, help="오늘 raw (기본 output/daily-digest/raw/<오늘>_raw.md)")
     parser.add_argument("--links", type=Path, help="오늘 링크 폴더 (기본 output/daily-digest/links/<오늘>)")
@@ -176,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
         [
             ("보유", held_names(snapshot)),
             ("관심", load_watchlist(args.watchlist or repo_root() / WATCHLIST_REL)),
-            ("돌파선", load_breakout(args.breakout or output_dir() / BREAKOUT_REL)),
+            ("매수후보", load_buy_triggers(args.buy_triggers or output_dir() / BUY_TRIGGERS_REL)),
         ]
     )
 

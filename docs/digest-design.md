@@ -45,8 +45,10 @@ Holding-specific buy and sell triggers — add-on tranches, lifted buying freeze
 trend-exit lines, remaining profit-taking, earnings-based invalidation — live in
 `output/watchlist/보유_트리거.md`. `analyze-stock` step 11 and user-confirmed briefing decisions register
 them, and `daily-digest` step 1-3-2 checks every entry each day against `turn_scan`/`stage_scan` closes
-and reports sells before buys in the decision section; holdings without their own triggers are skipped. Non-held names that cleared the value gate but are blocked only on timing sit in
-`output/watchlist/돌파선_감시.md`, which step 1-3-3 re-scans each day with `turn_scan` closes; a sector group
+and reports sells before buys in the decision section; holdings without their own triggers are skipped. Non-held buy candidates sit in `output/watchlist/매수_트리거.md` (renamed from `돌파선_감시.md` on 2026-10-28:
+the entry condition is not always a breakout — pullback windows, price caps and event pre-accumulation sit
+there too), which step 1-3-3 re-scans each day with `turn_scan` closes against the condition written on each entry;
+a candidate moves to `보유_트리거.md` on its first fill; a sector group
 defined there (조선·엔진, user decision 2026-10-04) needs its sector confirmation as well as the breakout. The
 file is gitignored working data; its price lines come from the report's target range as of a stated
 date, so the briefing flags them for recalculation once they age. `context/my_rules.md`
@@ -169,8 +171,9 @@ The user forwards DART filings to Telegram but misses many, so step 1-5 4) — w
 filing that reached the raw through the OpenDART MCP — saw only what was forwarded. Step 1-5 5)
 (`daily-digest/scripts/dart_scan.py`, user decision 2026-10-26) lists every filing from the last briefing
 day (inclusive, so an evening filing after that briefing is not lost; capped at 14 days) to today through
-`invagent.datafeed.opendart`, keeps the companies in the latest snapshot, `context/interested_stocks.md` and the 「감시 대상」 table of
-`output/watchlist/돌파선_감시.md` (added 2026-10-26; the sector-group table is not a watch list; preferred
+`invagent.datafeed.opendart`, keeps the companies in the latest snapshot, `context/interested_stocks.md` and the 「감시 대상」 table and the `## 종목명 (티커)` sections of
+`output/watchlist/매수_트리거.md` (added 2026-10-26; per-name sections since 2026-10-28, after 하나마이크론 sat
+only in its own section and was missed; the sector-group table is not a watch list; preferred
 shares matched on the common code), and marks a filing whose receipt number already appears in
 today's raw or link files as forwarded. The list comes from one paginated `list.json` sweep instead of a
 per-company MCP call because thirty-odd daily MCP lookups were the agent's to skip and could not be tested;
