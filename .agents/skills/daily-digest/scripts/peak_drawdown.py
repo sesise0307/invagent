@@ -198,6 +198,22 @@ def analyze_holdings(
 # --- 계좌 MDD --------------------------------------------------------------
 
 
+def closing_balance(sheet_balance: float | None, holdings: list[dict], results: list[dict]) -> float | None:
+    """오늘 잔고 = 현금 + Σ 보유 수량 × 종가. 종가를 못 받은 종목만 스냅샷 평가금액을 쓴다.
+
+    시트 현재가는 장중·지연·시간외가가 섞여 계좌 MDD에 쓰지 않는다(2026-10-28 사용자 지시).
+    현금은 스냅샷 잔고에서 보유 행 평가금액을 뺀 값이다 — 현금 행은 `parse_holdings`가 버린다.
+    """
+    if not sheet_balance:
+        return None
+    sheet_positions = sum(to_float(row.get("평가금액", "")) or 0.0 for row in holdings)
+    total = sheet_balance - sheet_positions
+    for row, entry in zip(holdings, results):
+        qty, close = to_float(row.get("보유", "")), entry.get("close")
+        total += qty * close if qty and close else to_float(row.get("평가금액", "")) or 0.0
+    return total
+
+
 def account_mdd(snapshot_dir: Path, today_balance: float | None, today: str) -> dict:
     """과거 스냅샷들의 잔고 최고치 대비 오늘 잔고의 MDD."""
     history: list[tuple[str, float]] = []
@@ -662,7 +678,9 @@ def main(argv: list[str] | None = None) -> int:
     results = analyze_holdings(
         holdings, load_overrides(args.overrides), history, args.snapshot.stem
     )
-    account = account_mdd(snapshot_dir, parse_balance(text), args.snapshot.stem)
+    account = account_mdd(
+        snapshot_dir, closing_balance(parse_balance(text), holdings, results), args.snapshot.stem
+    )
     try:
         state_path = args.state_file or snapshot_dir / ".peak_drawdown_state.json"
         state, should_save = update_mdd_state(

@@ -95,7 +95,21 @@ script labels its hits 「기록 낙폭 경보(시트 수집가 기준 · 발동
 only the 52-week close axis drives band responses (user decision, 2026-09-09/09-28). The same run
 derives the account MDD of 「기본 원칙 13」 from the balance line of every past
 snapshot in `output/portfolio/`, noting that this peak covers only the snapshot
-window and is not adjusted for deposits or withdrawals. That rule's responses —
+window and is not adjusted for deposits or withdrawals. Today's balance is not
+that line but cash plus each holding's quantity times its regular-session close
+from the bars already fetched for the 52-week axis; a holding whose bars failed
+keeps its snapshot valuation. Past peaks stay as recorded (user decision,
+2026-10-28: only today is re-priced, so no extra fetches for sold names).
+
+The Sheet's `현재가` is no longer trusted at all (user decision, 2026-10-28): on
+10/28 it first lagged the day's +6.6% rally (balance ₩478.9M, MDD -15.6%) and,
+once refreshed, carried after-hours quotes (SK하이닉스 1,507,000 vs a 1,487,000
+close). `extract_portfolio.py` therefore keeps only quantity, average cost and
+cash from the Sheet and re-prices every holding at its last regular-session close
+through `invagent.datafeed.daily` before grading the rules, rewriting price,
+valuation, return, weight and the balance line, and naming any holding it could
+not price. The 0.5% truncation guard still compares Sheet values with each other,
+before re-pricing. That rule's responses —
 clearing leverage and holding 30% cash at -10%, a five-session buying freeze and
 a rule-violation review at -15% — cannot be prepared after the band is already
 hit, so the script prints the balance that triggers each un-hit band and the

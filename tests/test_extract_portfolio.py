@@ -344,3 +344,47 @@ def test_index_etf_sell_is_pointed_to_rule_4() -> None:
         "- 지수 ETF 규칙 4(매도 = 평단 +8% 후 최고 종가 -3%): KODEX 200 -13.00%, KODEX 코스닥150 +30.00% "
         "— 평단 손절·익절 쿠션 미적용, 종가 이력으로 별도 판정"
     ) in findings
+
+
+def test_rules_are_graded_on_closing_price_not_sheet_price() -> None:
+    """시트 현재가가 아니라 넘겨받은 종가로 수익률을 다시 매겨 판정한다 (2026-10-28 사용자 지시)."""
+    module = load_script("daily-digest", "extract_portfolio")
+    # 베타파마 시트 ₩57,500(-16.48%) → 종가 ₩61,000이면 평단 ₩68,845 대비 -11.40%
+    snapshot = module.build_snapshot(PORTFOLIO_DUMP, "2026-08-09", closes={"베타파마": 61_000})
+
+    assert "매매규칙 6(-15% 전량 매도): 해당 없음" in snapshot
+    assert "베타파마 -11.40%" in snapshot
+    assert "| 베타파마 | 바이오 | 900 | ₩68,845 | ₩61,000 |" in snapshot
+
+
+def test_balance_and_weights_follow_closing_price() -> None:
+    """잔고 줄과 비중은 종가 평가금액 합계 기준이다 — 계좌 MDD가 이 잔고를 읽는다."""
+    module = load_script("daily-digest", "extract_portfolio")
+    snapshot = module.build_snapshot(PORTFOLIO_DUMP, "2026-08-09", closes={"베타파마": 61_000})
+
+    # 139,270,000 + 900 × 61,000 + 14,200,000 + 5,000,000 = 213,370,000
+    assert "> 잔고 ₩213,370,000" in snapshot
+    # 베타파마 54,900,000 ÷ 213,370,000 = 25.7%
+    assert "베타파마 -11.40% (비중 25.7%)" in snapshot
+
+
+def test_total_profit_follows_closing_balance(tmp_path: Path) -> None:
+    """투자금이 있으면 총손익·수익률도 종가 잔고에서 다시 계산한다."""
+    module = load_script("daily-digest", "extract_portfolio")
+    dump = tmp_path / "portfolio.csv"
+    dump.write_text(PORTFOLIO_CSV, encoding="utf-8")
+
+    snapshot = module.build_snapshot(
+        module.load_content(dump), "2026-09-28", closes={"알파전자": 1_200_000}
+    )
+
+    # 현금 5,000,000 + 10 × 1,200,000 + 오메가기판 5,000,000 = 22,000,000 · 투자금 20,000,000
+    assert "잔고 ₩22,000,000 · 총손익 ₩2,000,000 · 투자금 ₩20,000,000 · 수익률 10.00%" in snapshot
+
+
+def test_snapshot_names_price_basis_and_sheet_fallbacks() -> None:
+    """종가를 못 받은 종목은 시트 현재가로 남기고, 출처 줄에 그 종목을 적는다."""
+    module = load_script("daily-digest", "extract_portfolio")
+    snapshot = module.build_snapshot(PORTFOLIO_DUMP, "2026-08-09", closes={"베타파마": 61_000})
+
+    assert "> 가격: 정규장 종가 × 보유 수량 · 시트 현재가 사용 = 알파전자, 감마엔터" in snapshot

@@ -814,3 +814,26 @@ def test_record_history_includes_the_종목명_snapshot_generation(tmp_path: Pat
     history, _ = module.load_record_history(tmp_path)
 
     assert history["알파전자"] == [("2026-08-10", 355_000.0), ("2026-09-03", 283_000.0)]
+
+
+def test_account_mdd_today_balance_is_closing_price_times_quantity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """오늘 잔고는 스냅샷 잔고 줄(시트)이 아니라 종가 × 보유 수량 + 현금이다 (2026-10-28 사용자 지시)."""
+    module = load_script("daily-digest", "peak_drawdown")
+    monkeypatch.setattr(
+        datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
+    )
+    monkeypatch.setattr(
+        module.daily,
+        "fetch_daily_bars",
+        lambda code, days, asof=None: Bars(_bars([("20260601", 100_000.0), ("20260828", 90_000.0)])),
+    )
+    snapshot = tmp_path / "2026-08-28.md"
+    snapshot.write_text(PEAK_SNAPSHOT, encoding="utf-8")
+
+    assert module.main([str(snapshot), "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    # 현금 9,000,000 + 알파전자 100 × 90,000 + 베타파마 200 × 90,000 (시트 잔고 줄은 90,000,000)
+    assert payload["account"]["current"] == pytest.approx(36_000_000)

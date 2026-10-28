@@ -7,7 +7,12 @@
 보유 행 합계를 시트 잔고와 대조하고(잘린 입력 거부), `context/my_rules.md` 임계값 기준으로
 룰 위반·근접 항목을 계산한다.
 
-네트워크 접근 없음. 의존성: 프로젝트 환경(`invagent.datafeed`)만.
+시트 현재가는 장중·지연·시간외가가 섞여 판정에 쓰지 않는다(2026-10-28 사용자 지시). 시트에서는
+수량·평단·현금만 읽고, 현재가·평가금액·수익률·비중·잔고는 `invagent.datafeed.daily`의 정규장
+종가로 다시 계산한다. 종가를 못 받은 종목만 시트 값을 쓰고 출처 줄에 이름을 남긴다.
+`--sheet-prices`면 종가를 받지 않는다(네트워크 없음).
+
+의존성: 프로젝트 환경(`invagent.datafeed`)만.
 실패 시 stderr에 에러 출력 후 exit 1 — 호출측(스킬)은 실패해도 브리핑을 계속 진행한다.
 """
 
@@ -21,7 +26,9 @@ import re
 import sys
 from pathlib import Path
 
+from invagent.datafeed import daily
 from invagent.datafeed.snapshot import CASH_SECTOR, to_float, unescape
+from invagent.datafeed.tickers import load_overrides, resolve_code
 from invagent.datafeed.snapshot import split_row as _split_row
 
 # 「포트폴리오」 시트 다음 시트(매매기록)의 헤더 표식 — 여기서부터는 버린다
@@ -58,6 +65,9 @@ MAX_HOLDINGS = 12
 # 이름으로 한 번 더 걸러 낸다(KODEX 코스닥150레버리지·KODEX 200선물인버스2X 등).
 INDEX_ETF_SECTOR = "지수"
 LEVERAGED_ETF_RE = re.compile(r"레버리지|인버스|2X", re.IGNORECASE)
+
+# 종가 하나만 필요하지만 연휴·공식 일봉 지연을 넘기도록 달력일로 넉넉히 받는다.
+CLOSE_FETCH_DAYS = 14
 
 # 보유 행 평가금액 합계와 시트 잔고의 허용 오차(%). 반올림·수집 시차만 흡수한다.
 BALANCE_TOLERANCE_PCT = 0.5
@@ -317,7 +327,9 @@ def rule_findings(holdings: list[dict]) -> list[str]:
     return findings
 
 
-def render(holdings: list[dict], sectors: list[dict], totals: dict[str, str], today: str) -> str:
+def render(
+    holdings: list[dict], sectors: list[dict], totals: dict[str, str], today: str, price_note: str = ""
+) -> str:
     positions = [h for h in holdings if h["섹터"] != CASH_SECTOR]
     has_cash = len(positions) != len(holdings)
     total_line = " · ".join(f"{k} {v}" for k, v in totals.items()) or "(총계 없음)"
@@ -335,6 +347,7 @@ def render(holdings: list[dict], sectors: list[dict], totals: dict[str, str], to
         "",
         f"> 출처: Google Sheets '주식 포트폴리오' / 「포트폴리오」 시트 · 수집 {dt.datetime.now().isoformat(timespec='seconds')}",
         f"> {total_line}",
+        *([f"> {price_note}"] if price_note else []),
         "",
         f"## 보유 ({len(positions)}종목{' + 현금' if has_cash else ''})",
         "",
@@ -378,8 +391,32 @@ def check_balance(holdings: list[dict], totals: dict[str, str]) -> None:
         )
 
 
-def build_snapshot(content: str, today: str) -> str:
-    """덤프 본문 → 스냅샷 마크다운."""
+def revalue(holdings: list[dict], closes: dict[str, float]) -> float:
+    """종가가 있는 보유 행의 현재가·평가금액·수익률을 종가로 바꾸고, 전 행 비중을 다시 계산한다.
+
+    시트 현재가는 장중·지연·시간외가가 섞여 판정에 쓰지 않는다(2026-10-28 사용자 지시) —
+    시트에서는 수량·평단·현금만 믿는다.
+    """
+    for h in holdings:
+        close = closes.get(h["종목"])
+        qty, cost = to_float(h["보유"]), to_float(h["평단"])
+        if h["섹터"] == CASH_SECTOR or not close or not qty or not cost:
+            continue
+        h["현재가"] = f"₩{close:,.0f}"
+        h["평가금액"] = f"₩{qty * close:,.0f}"
+        h["수익률_v"] = (close / cost - 1) * 100
+        h["수익률"] = f"{h['수익률_v']:.2f}%"
+    total = sum(to_float(h["평가금액"]) or 0.0 for h in holdings)
+    if not total:
+        return total
+    for h in holdings:
+        h["비중_v"] = round((to_float(h["평가금액"]) or 0.0) / total * 100, 1)
+        h["비중"] = f"{h['비중_v']:.1f}%"
+    return total
+
+
+def build_snapshot(content: str, today: str, closes: dict[str, float] | None = None) -> str:
+    """덤프 본문 → 스냅샷 마크다운. `closes`(종목명 → 종가)가 있으면 그 가격으로 평가·판정한다."""
     blocks = portfolio_blocks(content)
     if not blocks:
         raise ValueError("포트폴리오 시트 블록을 찾지 못했다 — 시트 순서/구조 변경 가능성")
@@ -387,8 +424,22 @@ def build_snapshot(content: str, today: str) -> str:
     if not holdings:
         raise ValueError("보유 종목 행을 하나도 파싱하지 못했다")
     check_balance(holdings, totals)
+    price_note = ""
+    if closes:
+        fallbacks = [h["종목"] for h in holdings if h["섹터"] != CASH_SECTOR and h["종목"] not in closes]
+        price_note = "가격: 정규장 종가 × 보유 수량"
+        if fallbacks:
+            price_note += f" · 시트 현재가 사용 = {', '.join(fallbacks)}"
+        total = revalue(holdings, closes)
+        if total:
+            totals["잔고"] = f"₩{total:,.0f}"
+            invested = to_float(totals.get("투자금"))
+            if invested:
+                profit = total - invested
+                totals["총손익"] = f"{'-' if profit < 0 else ''}₩{abs(profit):,.0f}"
+                totals["수익률"] = f"{profit / invested * 100:.2f}%"
     sectors = parse_sectors(blocks[1]) if len(blocks) > 1 else []
-    return render(holdings, sectors, totals, today)
+    return render(holdings, sectors, totals, today, price_note)
 
 
 def csv_to_markdown(text: str) -> str:
@@ -447,15 +498,46 @@ def load_content(path: Path) -> str:
     return csv_to_markdown(raw)
 
 
+def fetch_closes(content: str, today: str) -> tuple[dict[str, float], list[str]]:
+    """덤프의 보유 종목마다 정규장 마지막 종가를 받는다 → (종목명 → 종가, 못 받은 종목 사유 목록)."""
+    blocks = portfolio_blocks(content)
+    if not blocks:
+        return {}, []
+    holdings, _ = parse_holdings(blocks[0])
+    overrides = load_overrides()
+    closes: dict[str, float] = {}
+    missing: list[str] = []
+    for h in holdings:
+        if h["섹터"] == CASH_SECTOR:
+            continue
+        code, err = resolve_code(h["종목"], overrides)
+        if not code:
+            missing.append(f"{h['종목']}(티커 미해석 — {err})")
+            continue
+        bars = daily.fetch_daily_bars(code, CLOSE_FETCH_DAYS, asof=today)
+        if not bars.rows:
+            missing.append(f"{h['종목']}(시세 수집 실패 — {bars.error or '응답 없음'})")
+            continue
+        closes[h["종목"]] = bars.rows[-1]["close"]
+    return closes, missing
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dump", type=Path, help="Sheets 범위 응답 JSON · Drive CSV 응답 · 평문 CSV · 레거시 덤프 경로")
     parser.add_argument("--out", type=Path, help="스냅샷 저장 경로 (예: output/portfolio/2026/08/2026-08-09.md)")
     parser.add_argument("--date", default=dt.date.today().isoformat(), help="스냅샷 날짜 (기본: 오늘)")
+    parser.add_argument("--sheet-prices", action="store_true", help="종가를 받지 않고 시트 현재가를 쓴다 (네트워크 없음)")
     args = parser.parse_args()
 
     try:
-        snapshot = build_snapshot(load_content(args.dump), args.date)
+        content = load_content(args.dump)
+        closes: dict[str, float] = {}
+        if not args.sheet_prices:
+            closes, missing = fetch_closes(content, args.date)
+            for item in missing:
+                print(f"[누락] 종가 — {item} · 시트 현재가 사용", file=sys.stderr)
+        snapshot = build_snapshot(content, args.date, closes or None)
     except (OSError, ValueError) as e:
         print(f"ERROR: 포트폴리오 파싱 실패 — {e}", file=sys.stderr)
         return 1
