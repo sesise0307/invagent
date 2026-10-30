@@ -268,30 +268,30 @@ def etf_cap_line(dump: str) -> str:
     return next(line for line in findings.splitlines() if line.startswith("- 지수 ETF 규칙 3"))
 
 
-ETF_CAP_LABEL = "- 지수 ETF 규칙 3(ETF별 매수원금 15% 상한 · 상승분 허용): "
+ETF_CAP_LABEL = "- 지수 ETF 규칙 3(ETF별 매수원금 20% 상한 · 상승분 허용): "
 
 
 def test_index_etf_buy_driven_excess_is_a_violation() -> None:
-    """2026-10-28 사용자 결정: 15% 상한은 매수원금 비중(매수금액 ÷ 총자산)에 건다 — 넘기면 매수가 넘긴 것이다."""
-    line = etf_cap_line(etf_cap_dump(("₩160,000", "₩150,000", "15.0%"), ("₩50,000", "₩60,000", "6.0%")))
+    """2026-10-28 사용자 결정(상한 2026-10-30 20%로 상향): 상한은 매수원금 비중(매수금액 ÷ 총자산)에 건다 — 넘기면 매수가 넘긴 것이다."""
+    line = etf_cap_line(etf_cap_dump(("₩210,000", "₩200,000", "20.0%"), ("₩50,000", "₩60,000", "6.0%")))
 
-    assert line == ETF_CAP_LABEL + "KODEX 200 15.0% ← **위반**(매수원금 16.0%)"
+    assert line == ETF_CAP_LABEL + "KODEX 200 20.0% ← **위반**(매수원금 21.0%)"
 
 
 def test_index_etf_rise_only_excess_is_allowed() -> None:
-    """매수 없이 주가 상승으로 평가 비중이 15%를 넘은 것은 「매매규칙 9」처럼 허용한다 — 위반이 아니다."""
-    line = etf_cap_line(etf_cap_dump(("₩120,000", "₩170,000", "17.0%"), ("₩50,000", "₩60,000", "6.0%")))
+    """매수 없이 주가 상승으로 평가 비중이 20%를 넘은 것은 「매매규칙 9」처럼 허용한다 — 위반이 아니다."""
+    line = etf_cap_line(etf_cap_dump(("₩120,000", "₩220,000", "22.0%"), ("₩50,000", "₩60,000", "6.0%")))
 
-    assert line == ETF_CAP_LABEL + "KODEX 200 17.0% ← 상승분 초과 · 허용(매수원금 12.0%)"
+    assert line == ETF_CAP_LABEL + "KODEX 200 22.0% ← 상승분 초과 · 허용(매수원금 12.0%)"
     assert "위반" not in line
 
 
 def test_index_etf_cap_marks_reaching_and_nearing_on_the_cost_axis() -> None:
-    """도달·근접(13%↑)은 남은 매수 여유를 보는 것이라 매수원금 비중으로 판정하고, 여유 있는 ETF는 생략한다."""
-    line = etf_cap_line(etf_cap_dump(("₩150,000", "₩140,000", "14.0%"), ("₩135,000", "₩120,000", "12.0%")))
+    """도달·근접(17%↑)은 남은 매수 여유를 보는 것이라 매수원금 비중으로 판정하고, 여유 있는 ETF는 생략한다."""
+    line = etf_cap_line(etf_cap_dump(("₩200,000", "₩190,000", "19.0%"), ("₩175,000", "₩160,000", "16.0%")))
 
     assert line == ETF_CAP_LABEL + (
-        "KODEX 200 14.0% ← 상한 도달(매수원금 15.0%), KODEX 코스닥150 12.0% ← 근접(매수원금 13.5%)"
+        "KODEX 200 19.0% ← 상한 도달(매수원금 20.0%), KODEX 코스닥150 16.0% ← 근접(매수원금 17.5%)"
     )
 
 
@@ -304,18 +304,18 @@ def test_index_etf_line_says_none_when_all_have_room() -> None:
 def test_index_etf_excess_without_cost_column_is_not_called_a_violation() -> None:
     """매수금액 열은 선택이다. 없으면 매수로 넘었는지 상승으로 넘었는지 가를 수 없어 위반이라 하지 않는다."""
     line = etf_cap_line(
-        etf_cap_dump(("₩160,000", "₩170,000", "17.0%"), ("₩50,000", "₩60,000", "6.0%"), cost_column=False)
+        etf_cap_dump(("₩160,000", "₩220,000", "22.0%"), ("₩50,000", "₩60,000", "6.0%"), cost_column=False)
     )
 
-    assert line == ETF_CAP_LABEL + "KODEX 200 17.0% ← 초과(매수·상승 구분 불가 — 매수금액 열 없음)"
+    assert line == ETF_CAP_LABEL + "KODEX 200 22.0% ← 초과(매수·상승 구분 불가 — 매수금액 열 없음)"
 
 
 def test_index_etf_near_cap_without_cost_column_falls_back_to_evaluation_weight() -> None:
     line = etf_cap_line(
-        etf_cap_dump(("₩160,000", "₩140,000", "14.0%"), ("₩50,000", "₩60,000", "6.0%"), cost_column=False)
+        etf_cap_dump(("₩160,000", "₩180,000", "18.0%"), ("₩50,000", "₩60,000", "6.0%"), cost_column=False)
     )
 
-    assert line == ETF_CAP_LABEL + "KODEX 200 14.0% ← 근접(평가 비중 기준 — 매수금액 열 없음)"
+    assert line == ETF_CAP_LABEL + "KODEX 200 18.0% ← 근접(평가 비중 기준 — 매수금액 열 없음)"
 
 
 def test_index_etf_lines_are_omitted_without_index_etfs() -> None:

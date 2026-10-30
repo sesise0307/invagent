@@ -676,9 +676,9 @@ def test_portfolio_thresholds_match_my_rules() -> None:
     assert etf_weight and etf_trend, "「지수 ETF 규칙 3·4」 원문 형식이 바뀌었다"
 
     assert module.INDEX_ETF_MAX_WEIGHT_PCT == float(etf_weight.group(1))
-    # 2026-10-28: 15% 상한은 매수원금 비중 축이고 주가 상승분 초과는 허용한다 — 스크립트가 그 축으로 판정한다.
+    # 2026-10-28: 상한은 매수원금 비중 축이고 주가 상승분 초과는 허용한다 — 스크립트가 그 축으로 판정한다.
     etf_rule = re.search(r"^3\. \*\*비중\*\*:.*$", rules, re.MULTILINE)
-    assert etf_rule and "매수 없이 주가 상승으로 15%를 넘는 것은 허용" in etf_rule.group(0)
+    assert etf_rule and "매수 없이 주가 상승으로 20%를 넘는 것은 허용" in etf_rule.group(0)
     assert "매수원금 비중에 적용" in etf_rule.group(0)
     assert module.INDEX_ETF_TREND_GAIN_PCT == float(etf_trend.group(1))
     assert module.INDEX_ETF_TREND_PULLBACK_PCT == float(etf_trend.group(2))
