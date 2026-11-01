@@ -51,10 +51,9 @@ there too), which step 1-3-3 re-scans each day with `turn_scan` closes against t
 a candidate moves to `보유_트리거.md` on its first fill; a sector group
 defined there (조선·엔진, user decision 2026-10-04) needs its sector confirmation as well as the breakout. The
 file is gitignored working data; its price lines come from the report's target range as of a stated
-date, so the briefing flags them for recalculation once they age. `context/my_rules.md`
-「매매규칙 16」 caps the AI/semiconductor/substrate/power sector at 65% of evaluated weight; step 8
-of `analyze-stock` reports the room left under that cap instead of treating sector overlap as a
-reason to shrink a position.
+date, so the briefing flags them for recalculation once they age. Sector weight has no cap: the user
+removed 「매매규칙 16·17」 on 2026-11-01 and sizes sectors by discretion, so step 8 of `analyze-stock`
+states sector overlap as a fact, not as a reason to shrink a position.
 
 ## Portfolio snapshot and dated layout
 
