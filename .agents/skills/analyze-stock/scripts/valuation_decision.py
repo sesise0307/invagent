@@ -12,10 +12,11 @@ from pathlib import Path
 from typing import Any
 
 MIN_STOP_LOSS = 0.15
-# 「매매규칙 6」 두 티어(2026-10-21 개정) — 진입가 대비 1차 분할·전량 매도선.
-FIRST_PARTIAL_STOP = 0.12
+# 「매매 규칙 6」 세 티어(2026-11-01 개정) — 진입가 대비 30% 축소선 둘. 전량 매도선은 MIN_STOP_LOSS다.
+FIRST_TRIM_STOP = 0.08
+SECOND_TRIM_STOP = 0.12
 # 손익비 분모의 하한. 실행 손절선(MIN_STOP_LOSS)과 일부러 분리해 둔다 — 실행 손절선은
-# 「매매규칙 6」의 전량 이탈선이라 1회 최대 손실을 정하고 「기본 원칙 4(2%룰)」의
+# 「매매 규칙 6」의 전량 이탈선이라 1회 최대 손실을 정하고 「기본 원칙 4(2%룰)」의
 # 분모로 남아야 하지만, 손익비 분모는 하방이 막힌 종목이 낮은 분모를 받도록 따로 정한
 # 값이다 (사용자 확정 2026-09-22). 2026-10-21 개정으로 둘 다 15%가 됐지만 재는 것이
 # 다르다 — 한쪽이 바뀌어도 다른 쪽이 따라가지 않게 두 값을 합치지 마라.
@@ -211,12 +212,17 @@ def decide(payload: Any) -> dict[str, Any]:
     returns = {key: value / current - 1 for key, value in
                (("low", low), ("center", center), ("high", high))}
     downside = (current - low) / current
+    at_band_floor = payload.get("at_value_band_floor", False)
+    if not isinstance(at_band_floor, bool):
+        raise DecisionInputError("at_value_band_floor must be a boolean")
+    # 「하방이 막힌」(my_rules 「적용 방법」): 하단목표가 ≥ 현재가 또는 현재가가 밸류 밴드 최하단.
+    downside_blocked = downside <= 0 or at_band_floor
     effective_stop = max(downside, MIN_STOP_LOSS)
     reward_risk_stop = max(downside, MIN_REWARD_RISK_STOP)
     reward_risk = returns["center"] / reward_risk_stop
     if returns["center"] >= 0.50:
         grade, rule = "buy_candidate", "center return >= 50%"
-    elif returns["center"] >= 0.30 and downside <= 0:
+    elif returns["center"] >= 0.30 and downside_blocked:
         grade, rule = "buy_candidate", "center return >= 30% and scenario downside is blocked"
     elif returns["center"] >= 0.25:
         grade, rule = "watch", "center return >= 25%"
@@ -263,11 +269,12 @@ def decide(payload: Any) -> dict[str, Any]:
         "decision": {"base_grade": base_grade, "grade": grade, "base_rule": rule,
                      "downgrades": downgrades, "confidence": confidence,
                      "confidence_reasons": confidence_reasons},
-        "risk": {"downside": downside, "effective_stop_loss": effective_stop,
+        "risk": {"downside": downside, "downside_blocked": downside_blocked, "effective_stop_loss": effective_stop,
                  "reward_risk_denominator": reward_risk_stop,
                  "reward_risk": reward_risk, "account_risk_limit": ACCOUNT_RISK_LIMIT,
                  "max_purchase_fraction": position_cap, "entry_price": entry_price,
-                 "stop_prices": {"first_partial": entry_price * (1 - FIRST_PARTIAL_STOP),
+                 "stop_prices": {"first_trim": entry_price * (1 - FIRST_TRIM_STOP),
+                                 "second_trim": entry_price * (1 - SECOND_TRIM_STOP),
                                  "full_exit": entry_price * (1 - MIN_STOP_LOSS)},
                  "account_value": account_value, "max_purchase_amount": max_amount,
                  "max_whole_shares": max_shares},

@@ -134,7 +134,7 @@ def test_entry_policy_opens_stage_four_only_once_the_stock_turns_up() -> None:
 
 
 def test_entry_policy_waits_for_the_turn_before_the_value_path_opens() -> None:
-    """「매매규칙 2」는 바닥을 다진 '후' 고개 드는 초반에 산다 — 다지는 중이나 초입을 지난 뒤는 수량 0."""
+    """「매매 규칙 2」는 바닥을 다진 '후' 고개 드는 초반에 산다 — 다지는 중이나 초입을 지난 뒤는 수량 0."""
     module = load_script("analyze-stock", "entry_policy")
 
     for value in ("basing", "extended"):
@@ -150,7 +150,7 @@ ACCUMULATION_PASS = {"status": "ok", "eligible": True, "op_yoy_increased": True}
 
 
 def test_entry_policy_opens_half_a_first_tranche_before_the_turn_for_a_growing_quiet_base() -> None:
-    """경로 C — 「매매규칙 2」 단서. 바닥 30일 + 바닥 +10% 이내 + 영업이익 YoY 증가 + 밸류 게이트면 고개 들기 전에
+    """경로 C — 「매매 규칙 2」 단서. 바닥 30일 + 바닥 +10% 이내 + 영업이익 YoY 증가 + 밸류 게이트면 고개 들기 전에
     1차 트랜치의 절반을 연다. 4단계도 같다 (2026-09-25 백테스트, 사용자 확정)."""
     module = load_script("analyze-stock", "entry_policy")
 
@@ -161,7 +161,7 @@ def test_entry_policy_opens_half_a_first_tranche_before_the_turn_for_a_growing_q
         )
         assert result["action"] == "watch", stage
         assert result["max_tranche_fraction"] == pytest.approx(0.015), stage
-        assert "매매규칙 2" in result["checks"]["stage"]["rule"]
+        assert "매매 규칙 2" in result["checks"]["stage"]["rule"]
 
 
 def test_entry_policy_keeps_the_base_closed_when_any_accumulation_condition_is_missing() -> None:
@@ -298,7 +298,7 @@ def test_value_gate_caps_the_first_tranche_at_a_third_of_target_weight() -> None
 
 
 def test_value_gate_requires_a_next_tranche_trigger() -> None:
-    """나머지 tranche를 무엇이 여는지 안 적었으면 1차도 열지 않는다 — 「매매규칙 4」 사전 계획."""
+    """나머지 tranche를 무엇이 여는지 안 적었으면 1차도 열지 않는다 — 「매매 규칙 4」 사전 계획."""
     module = load_script("analyze-stock", "entry_policy")
 
     blank = module.decide(

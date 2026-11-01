@@ -449,7 +449,7 @@ def test_twenty_week_line_is_a_documented_approximation():
     assert "근사" in skill
 
 def test_long_bull_candle_uses_the_threshold_from_my_rules():
-    """「매매규칙 12」의 '장대 양봉'은 2026-09-05에 +8% 이상으로 정의됐다. 정의는 룰 파일이 정본이다."""
+    """「매매 규칙 12」의 '장대 양봉'은 2026-09-05에 +8% 이상으로 정의됐다. 정의는 룰 파일이 정본이다."""
     import re
 
     rules = (REPO_ROOT / "context" / "my_rules.md").read_text(encoding="utf-8")

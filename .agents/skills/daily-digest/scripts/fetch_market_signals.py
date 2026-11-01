@@ -37,6 +37,8 @@ VOLATILE_WINDOW_DAYS = 10     # 거래일 기준. 휴장일은 행 자체가 없
 VOLATILE_DAY_TRIGGER = 3      # 이 수 이상이면 발동
 # 판정 대상은 **지수뿐**이다. 섹터 레버리지는 「레버리지 규칙 2」대로 사용자가 판단한다.
 LEVERAGE_MARKETS = ("KOSPI", "KOSDAQ")
+# 「계좌 규칙 1」 -10% 매수 중단 해제선 (2026-11-01 사용자 결정).
+MDD_RELEASE_MA_DAYS = 3
 
 # --- 「레버리지 규칙 2」 반대매매 클라이맥스 예외 -----------------------------
 # 룰 원문: 반대매매 금액 또는 비중이 평소(직전 120거래일) 대비 +2σ 이상인 날은 「레버리지 규칙 3」
@@ -60,7 +62,7 @@ MARGIN_CALL_RATIO_SIGMA = 2.0
 # --- 「시장 국면」 급락 (context/my_rules.md 「시장 국면」, 2026-10-15 사용자 확정) ------
 # 급락 = 조정(52주 고점 대비 -10% 이하) + 3거래일 연속 하락 뒤 그날 -3% 넘게 하락 + 가장 최근
 # 반대매매가 직전 120거래일 평균 +1σ 이상. 클라이맥스(+2σ)보다 한 단계 이른 신호이고,
-# 지수 ETF 바텀피싱(「지수 ETF 규칙 2」)과 「매매규칙 6」 시장 급락 예외가 이 판정을 쓴다.
+# 지수 ETF 바텀피싱(「지수 ETF 규칙 2」)과 「매매 규칙 6」 시장 급락 재량이 이 판정을 쓴다.
 CRASH_STREAK_DAYS = 3
 CRASH_DROP_PCT = -3.0
 CRASH_MARGIN_SIGMA = 1.0
@@ -443,9 +445,12 @@ def leverage_liquidation(rows: list[dict]) -> dict:
         window = changes[-VOLATILE_WINDOW_DAYS:]
         days = [(d, v) for d, v in window if abs(v) >= VOLATILE_DAY_PCT]
         insufficient = len(window) < VOLATILE_WINDOW_DAYS
-        # 예외는 해당 변동일이 **전부 상승**일 때만이다. 하락이 하나라도 섞이면
-        # 룰이 막으려는 음의 복리가 성립하므로 예외를 주지 않는다.
-        exempt = bool(days) and all(v > 0 for _, v in days)
+        # 예외 = 창 직전 종가 아래로 내려간 종가가 없고(저점 유지) 최신 종가가 그보다 높다(상승 추세).
+        closes = [r[market] for r in rows if r.get(market)][-(VOLATILE_WINDOW_DAYS + 1):]
+        exempt = (
+            bool(days) and not insufficient
+            and min(closes[1:]) >= closes[0] and closes[-1] > closes[0]
+        )
         fired = (
             not insufficient and len(days) >= VOLATILE_DAY_TRIGGER and not exempt
         )
@@ -468,10 +473,37 @@ def print_leverage(rows: list[dict]) -> None:
         elif v["fired"]:
             state = "⛔ 발동 — 레버리지 전량 정리 · 신규 진입 금지"
         elif v["exempt"]:
-            state = "✅ 예외 — 변동일이 전부 상승 방향"
+            state = "✅ 예외 — 저점 유지 · 상승 추세"
         else:
             state = "✅ 미발동"
         print(f"  {market}: {v['count']}일 [{detail}] → {state}")
+
+
+def mdd_release(rows: list[dict]) -> dict:
+    """「계좌 규칙 1」 해제 조건: KOSPI·KOSDAQ 중 하나의 종가가 3일선 위인가."""
+    markets: dict[str, dict] = {}
+    for market in LEVERAGE_MARKETS:
+        closes = [r[market] for r in rows if r.get(market)][-MDD_RELEASE_MA_DAYS:]
+        insufficient = len(closes) < MDD_RELEASE_MA_DAYS
+        average = None if insufficient else sum(closes) / MDD_RELEASE_MA_DAYS
+        markets[market] = {
+            "insufficient": insufficient,
+            "close": closes[-1] if closes else None,
+            "average": average,
+            "recovered": not insufficient and closes[-1] > average,
+        }
+    return {"released": any(m["recovered"] for m in markets.values()), "markets": markets}
+
+
+def print_mdd_release(rows: list[dict]) -> None:
+    verdict = mdd_release(rows)
+    print("[계좌 규칙 1] -10% 매수 중단 해제 = KOSPI·KOSDAQ 중 하나 종가 3일선 위")
+    for market, m in verdict["markets"].items():
+        if m["insufficient"]:
+            print(f"  {market}: ❔ 판정 불가 — 일봉 부족")
+        else:
+            print(f"  {market}: 종가 {m['close']:,.2f} · 3일선 {m['average']:,.2f} → {'✅ 회복' if m['recovered'] else '❌ 미회복'}")
+    print(f"  판정: {'✅ 해제 조건 충족' if verdict['released'] else '⛔ 해제 조건 미충족'}")
 
 
 def fmt_pct(x) -> str:
@@ -625,7 +657,9 @@ def main(argv: list[str] | None = None) -> int:
         print_margin_call(rows, (mm or {}).get("data", []))
         print_market_regime(rows, (mm or {}).get("data", []))
     if mm:
-        print_drawdown_ladder(*with_session_close(mm.get("data", []), indices_data or {}, bp or {}))
+        session_rows, session_note = with_session_close(mm.get("data", []), indices_data or {}, bp or {})
+        print_drawdown_ladder(session_rows, session_note)
+        print_mdd_release(session_rows)
     # 일부만 실패한 경우: 받은 부분은 출력하고 누락 사실을 남긴다
     for name, err in errors.items():
         print(f"[누락] {name} — {err}", file=sys.stderr)

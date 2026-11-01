@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """단기 바닥 전환 판정기.
 
-「매매규칙 2」의 "하락하는 와중에 매수하지 않고 바닥을 다진 후 고개를 들기 시작하는 초반"을
+「매매 규칙 2」의 "하락하는 와중에 매수하지 않고 바닥을 다진 후 고개를 들기 시작하는 초반"을
 일봉 20~60일 창으로 **결정론적으로** 판정한다. 150일선 스테이지(`stage_scan.py`)는 주도주의
 국면에는 맞지만 가치·소외주의 바닥에서는 전환 확인이 수개월 늦다 — 그 공백을 메우는 판정기다.
 
@@ -63,11 +63,11 @@ STATE_LABEL = {
 }
 
 STATE_ACTION = {
-    "falling": "매수 금지 — 「매매규칙 2」 하락하는 와중에 매수하지 않는다. 바닥 저점이 "
+    "falling": "매수 금지 — 「매매 규칙 2」 하락하는 와중에 매수하지 않는다. 바닥 저점이 "
                f"{BASE_MIN_AGE}거래일 버틸 때까지 대기.",
     "basing": "관망 — 바닥은 다지는 중이나 아직 고개를 들지 않았다. 돌파선 종가 돌파를 감시한다 "
               "(「기본 원칙 8(풍림화산)」 대기).",
-    "turning": "「매매규칙 2」의 '고개 드는 초반' — 밸류 게이트 통과 시 「매매규칙 4」 사전 계획의 "
+    "turning": "「매매 규칙 2」의 '고개 드는 초반' — 밸류 게이트 통과 시 「매매 규칙 4」 사전 계획의 "
                "1차(목표 비중 ÷ 3). 진입 가부의 정본은 `analyze-stock` 10단계.",
     "extended": "추격 금지 — 초입을 지났다. 돌파선이 있으면 돌파선 +10% 이내로 눌렸을 때, "
                 "없으면(V자 반등) 저점 높임이 확정된 뒤 재판정.",
@@ -358,7 +358,7 @@ def print_result(name: str, code: str, r: dict, source: str = "StockEasy 일봉"
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="단기 바닥 전환 판정 (「매매규칙 2」 초입)")
+    parser = argparse.ArgumentParser(description="단기 바닥 전환 판정 (「매매 규칙 2」 초입)")
     parser.add_argument("query", help="종목명 또는 6자리 티커")
     parser.add_argument("--days", type=int, default=400, help="일봉 조회 일수 (기본 400 ≈ 13개월)")
     parser.add_argument("--json", action="store_true", help="판정 결과 JSON 덤프")

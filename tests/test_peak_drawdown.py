@@ -32,7 +32,7 @@ PEAK_SNAPSHOT = """# 포트폴리오 스냅샷 — 2026-08-28
 
 ## 룰 자동 판정
 
-- 매매규칙 6(-15% 손절): 베타파마 -16.67% (비중 50.0%) ← **위반**
+- 매매 규칙 6(-15% 손절): 베타파마 -16.67% (비중 50.0%) ← **위반**
 """
 
 
@@ -207,7 +207,7 @@ def test_account_mdd_uses_snapshot_balance_peak(tmp_path: Path) -> None:
     assert account["mdd"] == pytest.approx(-12.0)
     assert account["band"] == -10.0
     rendered = module.render([], account)
-    assert "계좌 MDD(「기본 원칙 13」)" in rendered
+    assert "계좌 MDD(「계좌 규칙 1」)" in rendered
     assert "-12.0% ← **발동 (-10%)**" in rendered
     assert "입출금을 보정하지 않는다" in rendered
 
@@ -315,7 +315,7 @@ def _account(tmp_path: Path, today_balance: float, peak: float = 100_000_000.0) 
 
 
 def test_account_mdd_warns_before_band_is_hit(tmp_path: Path) -> None:
-    """-15% 밟은 뒤 알리면 「기본 원칙 13」 대응을 준비할 시간이 없다 — 도달 전에 경고한다."""
+    """-15% 밟은 뒤 알리면 「계좌 규칙 1」 대응을 준비할 시간이 없다 — 도달 전에 경고한다."""
     module = load_script("daily-digest", "peak_drawdown")
 
     account = _account(tmp_path, 86_500_000.0)  # MDD -13.5%
@@ -439,7 +439,7 @@ def test_peak_drawdown_append_is_idempotent(
     text = snapshot.read_text(encoding="utf-8")
     assert text.count(module.SECTION_TITLE) == 1
     # 기존 룰 자동 판정 섹션은 그대로 남는다
-    assert "매매규칙 6(-15% 손절)" in text
+    assert "매매 규칙 6(-15% 손절)" in text
     assert "🟡 -10%" in text
     # 계좌 기록 축도 같은 섹션에 함께 쓰인다
     assert "계좌 기록 고점(일자)" in text
@@ -703,7 +703,7 @@ def test_append_section_removes_legacy_title(tmp_path: Path) -> None:
     assert text.count(module.SECTION_TITLE) == 1
     assert module.LEGACY_SECTION_TITLES[0] not in text
     assert "-45.3%" not in text  # 옛 섹션 본문까지 걷어낸다
-    assert "매매규칙 6(-15% 손절)" in text  # 다른 섹션은 보존
+    assert "매매 규칙 6(-15% 손절)" in text  # 다른 섹션은 보존
 
 
 # --- MDD 상태 재생·저장 규칙 ----------------------------------------------------
@@ -756,6 +756,81 @@ def test_fresh_mdd_state_is_saved_on_first_run() -> None:
     _, should_save = module.update_mdd_state(_HEALTHY_ACCOUNT, {"schema_version": 1, "account_mdd": {}}, "2026-08-28", [])
 
     assert should_save is True
+
+
+def _released_state(module, band: float) -> dict:
+    """-15%까지 발동한 뒤 band 위치에서 사용자가 재개를 기록한 상태."""
+    state, _ = module.update_mdd_state(
+        {"band": -15.0, "first_breaches": {"-10": "2026-10-13", "-15": "2026-10-15"}},
+        {"schema_version": 1, "account_mdd": {}},
+        "2026-10-15",
+        [],
+    )
+    state, _ = module.update_mdd_state(
+        {"band": band, "first_breaches": {"-10": "2026-10-13", "-15": "2026-10-15"}},
+        state,
+        "2026-10-22",
+        [],
+        review_completed=True,
+        resume_authorized=True,
+    )
+    return state
+
+
+_BREACHES = {"-10": "2026-10-13", "-15": "2026-10-15"}
+
+
+def test_staying_below_the_line_after_release_is_not_a_new_trigger() -> None:
+    """「계좌 규칙 1」: 해제 뒤 선 아래에 머무는 것은 재이탈이 아니다."""
+    module = load_script("daily-digest", "peak_drawdown")
+    state = _released_state(module, -15.0)
+
+    state, _ = module.update_mdd_state({"band": -15.0, "first_breaches": _BREACHES}, state, "2026-10-23", [])
+
+    assert state["account_mdd"]["pause_active"] is False
+    assert state["account_mdd"]["first_15_breach_date"] == "2026-10-15"
+
+
+def test_recrossing_the_line_after_release_starts_a_new_trigger() -> None:
+    """해제 후 선 위로 회복했다가 종가로 다시 넘으면 5거래일과 복기를 새로 시작한다."""
+    module = load_script("daily-digest", "peak_drawdown")
+    state = _released_state(module, -15.0)
+
+    state, _ = module.update_mdd_state({"band": -10.0, "first_breaches": _BREACHES}, state, "2026-10-26", [])
+    assert state["account_mdd"]["pause_active"] is False
+
+    state, _ = module.update_mdd_state({"band": -15.0, "first_breaches": _BREACHES}, state, "2026-10-27", [])
+
+    item = state["account_mdd"]
+    assert item["pause_active"] is True
+    assert item["first_15_breach_date"] == "2026-10-27"
+    assert item["review_completed"] is False
+    assert item["resume_authorized"] is False
+
+
+def test_first_cross_of_the_deeper_line_after_release_is_a_new_trigger() -> None:
+    """-10% 구간에서 해제한 뒤 -15%로 내려가면 위에서 아래로 넘은 것이다."""
+    module = load_script("daily-digest", "peak_drawdown")
+    state = _released_state(module, -10.0)
+
+    state, _ = module.update_mdd_state({"band": -15.0, "first_breaches": _BREACHES}, state, "2026-10-26", [])
+
+    assert state["account_mdd"]["pause_active"] is True
+    assert state["account_mdd"]["first_15_breach_date"] == "2026-10-26"
+
+
+def test_recrossing_before_release_does_not_restart_the_count() -> None:
+    """해제 전 재진입은 재발동이 아니다 (2026-10-20 사용자 결정)."""
+    module = load_script("daily-digest", "peak_drawdown")
+    state, _ = module.update_mdd_state(
+        {"band": -15.0, "first_breaches": _BREACHES}, {"schema_version": 1, "account_mdd": {}}, "2026-10-15", []
+    )
+
+    state, _ = module.update_mdd_state({"band": -10.0, "first_breaches": _BREACHES}, state, "2026-10-19", [])
+    state, _ = module.update_mdd_state({"band": -15.0, "first_breaches": _BREACHES}, state, "2026-10-20", [])
+
+    assert state["account_mdd"]["first_15_breach_date"] == "2026-10-15"
+    assert state["account_mdd"]["pause_active"] is True
 
 
 def test_append_section_failed_write_leaves_snapshot_intact(
@@ -837,3 +912,15 @@ def test_account_mdd_today_balance_is_closing_price_times_quantity(
     payload = json.loads(capsys.readouterr().out)
     # 현금 9,000,000 + 알파전자 100 × 90,000 + 베타파마 200 × 90,000 (시트 잔고 줄은 90,000,000)
     assert payload["account"]["current"] == pytest.approx(36_000_000)
+
+
+def test_unreadable_account_does_not_count_as_recovered_above_the_line() -> None:
+    """잔고를 못 읽은 날은 선 위로 회복한 날이 아니다 — 다음 날 가짜 재발동이 나면 안 된다."""
+    module = load_script("daily-digest", "peak_drawdown")
+    state = _released_state(module, -15.0)
+
+    state, _ = module.update_mdd_state({"error": "잔고 이력 없음"}, state, "2026-10-23", [])
+    state, _ = module.update_mdd_state({"band": -15.0, "first_breaches": _BREACHES}, state, "2026-10-26", [])
+
+    assert state["account_mdd"]["pause_active"] is False
+    assert state["account_mdd"]["first_15_breach_date"] == "2026-10-15"

@@ -56,14 +56,14 @@ def test_portfolio_parser_unescapes_and_flags_rules() -> None:
     assert "-16.48%" in snapshot and "\\-16.48%" not in snapshot
     assert "| _현금 | 현금 |" in snapshot
 
-    assert "매매규칙 6(-15% 전량 매도): 베타파마 -16.48% (비중 9.8%) ← **위반**" in snapshot
-    assert "매매규칙 6(-12% 1차 분할 매도): 해당 없음" in snapshot
-    # -9.20%는 「매매규칙 7」의 -8% 선을 넘었다.
-    assert "매매규칙 7(-8% 비중 축소 고려): 감마엔터 -9.20% (비중 2.7%)" in snapshot
-    assert "매매규칙 11(24~30%↑ 익절 쿠션): 알파전자 +108.36% (비중 26.3%)" in snapshot
-    assert "매매규칙 9(평가 비중 35% 상한): 해당 없음" in snapshot
+    assert "매매 규칙 6(-15% 전량 매도): 베타파마 -16.48% (비중 9.8%) ← **위반**" in snapshot
+    assert "매매 규칙 6(-12% 30% 축소): 해당 없음" in snapshot
+    # -9.20%는 「매매 규칙 6」의 -8% 선을 넘었다.
+    assert "매매 규칙 6(-8% 30% 축소): 감마엔터 -9.20% (비중 2.7%) ← **위반**" in snapshot
+    assert "매매 규칙 11(24~30%↑ 익절 쿠션): 알파전자 +108.36% (비중 26.3%)" in snapshot
+    assert "매매 규칙 9(평가 비중 35% 상한): 해당 없음" in snapshot
     # 현금은 종목 수·룰 판정에서 제외
-    assert "매매규칙 9(종목 수 5~12): 3종목 ← **미달**" in snapshot
+    assert "매매 규칙 9(종목 수 5~12): 3종목 ← **미달**" in snapshot
     assert "현금 비중: 5.1% (₩5,000,000)" in snapshot
 
 
@@ -162,16 +162,16 @@ STOP_TIER_DUMP = """|  |  |  |  |  |  |  |  |  |  |  |  |
 
 
 def test_portfolio_grades_stop_loss_in_two_tiers() -> None:
-    """「매매규칙 6」은 -12% 1차 분할 + -15% 전량 두 티어다(2026-10-21 개정). 깊은 티어가 얕은 티어를 흡수한다."""
+    """「매매 규칙 6」은 -8%·-12% 각 30% + -15% 전량 세 티어다(2026-11-01 개정). 깊은 티어가 얕은 티어를 흡수한다."""
     module = load_script("daily-digest", "extract_portfolio")
     snapshot = module.build_snapshot(STOP_TIER_DUMP, "2026-09-05")
 
-    assert "매매규칙 6(-15% 전량 매도): 앱실론 -22.00% (비중 12.0%) ← **위반**" in snapshot
-    assert "매매규칙 6(-12% 1차 분할 매도): 제타 -13.00% (비중 11.0%) ← **위반**" in snapshot
+    assert "매매 규칙 6(-15% 전량 매도): 앱실론 -22.00% (비중 12.0%) ← **위반**" in snapshot
+    assert "매매 규칙 6(-12% 30% 축소): 제타 -13.00% (비중 11.0%) ← **위반**" in snapshot
     # -22%는 전량 티어에만 잡힌다 — 한 종목이 두 줄에 겹쳐 세어지지 않는다.
-    assert "매매규칙 6(-12% 1차 분할 매도): 앱실론" not in snapshot
-    # -11%는 축소 고려(-8%), -5%는 아무 데도 안 걸린다.
-    assert "매매규칙 7(-8% 비중 축소 고려): 에타 -11.00% (비중 10.0%)" in snapshot
+    assert "매매 규칙 6(-12% 30% 축소): 앱실론" not in snapshot
+    # -11%는 -8% 30% 축소, -5%는 아무 데도 안 걸린다.
+    assert "매매 규칙 6(-8% 30% 축소): 에타 -11.00% (비중 10.0%) ← **위반**" in snapshot
     assert "세타" not in snapshot.split("## 룰 자동 판정")[1]
 
 
@@ -188,11 +188,11 @@ WEIGHT_DUMP = """|  |  |  |  |  |  |  |  |  |  |  |  |
 
 
 def test_portfolio_weight_cap_is_the_valuation_axis() -> None:
-    """「매매규칙 9」의 35%는 **평가 비중** 상한이다. 매수원금 비중 상한(2%÷손절률)과 다른 축이라 라벨로 갈라 쓴다."""
+    """「매매 규칙 9」의 35%는 **평가 비중** 상한이다. 매수원금 비중 상한(2%÷손절률)과 다른 축이라 라벨로 갈라 쓴다."""
     module = load_script("daily-digest", "extract_portfolio")
     snapshot = module.build_snapshot(WEIGHT_DUMP, "2026-09-05")
 
-    assert "매매규칙 9(평가 비중 35% 상한): 이오타 36.0% ← **위반**" in snapshot
+    assert "매매 규칙 9(평가 비중 35% 상한): 이오타 36.0% ← **위반**" in snapshot
     # 시트의 비중은 평가 비중이므로 매수원금 축 룰을 여기에 인용하지 않는다.
     assert "매수원금" not in snapshot.split("## 룰 자동 판정")[1]
 
@@ -211,27 +211,26 @@ INDEX_ETF_DUMP = """|  |  |  |  |  |  |  |  |  |  |  |  |
 
 
 def test_index_etf_skips_average_cost_stop_and_cushion() -> None:
-    """「지수 ETF 규칙 4」: 「매매규칙 6」 평단 손절은 지수 ETF에 적용하지 않는다. 매도는 추세 꺾임이다."""
+    """「지수 ETF 규칙 4」: 「매매 규칙 6」 평단 손절은 지수 ETF에 적용하지 않는다. 매도는 추세 꺾임이다."""
     module = load_script("daily-digest", "extract_portfolio")
     findings = module.build_snapshot(INDEX_ETF_DUMP, "2026-10-28").split("## 룰 자동 판정")[1]
 
-    assert "매매규칙 6(-12% 1차 분할 매도): 제타 -13.00% (비중 11.0%) ← **위반**" in findings
-    lines = [line for line in findings.splitlines() if line.startswith("- 매매규칙")]
+    assert "매매 규칙 6(-12% 30% 축소): 제타 -13.00% (비중 11.0%) ← **위반**" in findings
+    lines = [line for line in findings.splitlines() if line.startswith("- 매매 규칙")]
     assert not any("KODEX" in line for line in lines if "종목 수" not in line)
 
 
 def test_index_etf_is_not_graded_by_the_35_percent_cap() -> None:
-    """「지수 ETF 규칙 3」이 비중 계산을 대신하므로 지수 ETF는 「매매규칙 9」 35% 줄에 오르지 않는다."""
+    """「지수 ETF 규칙 3」이 비중 계산을 대신하므로 지수 ETF는 「매매 규칙 9」 35% 줄에 오르지 않는다."""
     module = load_script("daily-digest", "extract_portfolio")
     dump = INDEX_ETF_DUMP.replace("| 16.0% |", "| 36.0% |")
     findings = module.build_snapshot(dump, "2026-10-28").split("## 룰 자동 판정")[1]
 
-    assert "매매규칙 9(평가 비중 35% 상한): 해당 없음" in findings
+    assert "매매 규칙 9(평가 비중 35% 상한): 해당 없음" in findings
 
 
 def etf_cap_dump(
-    kodex200: tuple[str, str, str], kosdaq150: tuple[str, str, str], cost_column: bool = True
-) -> str:
+    kodex200: tuple[str, str, str], kosdaq150: tuple[str, str, str], cost_column: bool = True, extra: tuple = ()) -> str:
     """ETF 두 행의 (매수금액, 평가금액, 비중)을 받아 합계 ₩1,000,000짜리 시트를 만든다.
 
     평가금액 합계(현금 포함)가 정확히 ₩1,000,000이 되도록 현금 행이 나머지를 채운다.
@@ -240,10 +239,11 @@ def etf_cap_dump(
         return int(text.replace("₩", "").replace(",", ""))
 
     stock_value = 270_000
-    cash = 1_000_000 - won(kodex200[1]) - won(kosdaq150[1]) - stock_value
+    cash = 1_000_000 - won(kodex200[1]) - won(kosdaq150[1]) - stock_value - sum(won(row[2]) for row in extra)
     rows = [
         ("지수", "KODEX 200", *kodex200),
         ("지수", "KODEX 코스닥150", *kosdaq150),
+        *(("지수", *row) for row in extra),
         ("반도체", "제타", "₩250,000", f"₩{stock_value:,}", "27.0%"),
         ("현금", "\\_현금", f"₩{cash:,}", f"₩{cash:,}", f"{cash / 10_000:.1f}%"),
     ]
@@ -268,30 +268,30 @@ def etf_cap_line(dump: str) -> str:
     return next(line for line in findings.splitlines() if line.startswith("- 지수 ETF 규칙 3"))
 
 
-ETF_CAP_LABEL = "- 지수 ETF 규칙 3(ETF별 매수원금 20% 상한 · 상승분 허용): "
+ETF_CAP_LABEL = "- 지수 ETF 규칙 3(지수별 매수원금 30% · 합계 60% 상한 · 상승분 허용): "
 
 
 def test_index_etf_buy_driven_excess_is_a_violation() -> None:
-    """2026-10-28 사용자 결정(상한 2026-10-30 20%로 상향): 상한은 매수원금 비중(매수금액 ÷ 총자산)에 건다 — 넘기면 매수가 넘긴 것이다."""
-    line = etf_cap_line(etf_cap_dump(("₩210,000", "₩200,000", "20.0%"), ("₩50,000", "₩60,000", "6.0%")))
+    """2026-10-28 사용자 결정(상한 2026-11-01 지수별 30%로 변경): 상한은 매수원금 비중(매수금액 ÷ 총자산)에 건다 — 넘기면 매수가 넘긴 것이다."""
+    line = etf_cap_line(etf_cap_dump(("₩310,000", "₩300,000", "30.0%"), ("₩50,000", "₩60,000", "6.0%")))
 
-    assert line == ETF_CAP_LABEL + "KODEX 200 20.0% ← **위반**(매수원금 21.0%)"
+    assert line == ETF_CAP_LABEL + "KODEX 200 30.0% ← **위반**(매수원금 31.0%)"
 
 
 def test_index_etf_rise_only_excess_is_allowed() -> None:
-    """매수 없이 주가 상승으로 평가 비중이 20%를 넘은 것은 「매매규칙 9」처럼 허용한다 — 위반이 아니다."""
-    line = etf_cap_line(etf_cap_dump(("₩120,000", "₩220,000", "22.0%"), ("₩50,000", "₩60,000", "6.0%")))
+    """매수 없이 주가 상승으로 평가 비중이 30%를 넘은 것은 「매매 규칙 9」처럼 허용한다 — 위반이 아니다."""
+    line = etf_cap_line(etf_cap_dump(("₩120,000", "₩320,000", "32.0%"), ("₩50,000", "₩60,000", "6.0%")))
 
-    assert line == ETF_CAP_LABEL + "KODEX 200 22.0% ← 상승분 초과 · 허용(매수원금 12.0%)"
+    assert line == ETF_CAP_LABEL + "KODEX 200 32.0% ← 상승분 초과 · 허용(매수원금 12.0%)"
     assert "위반" not in line
 
 
 def test_index_etf_cap_marks_reaching_and_nearing_on_the_cost_axis() -> None:
-    """도달·근접(17%↑)은 남은 매수 여유를 보는 것이라 매수원금 비중으로 판정하고, 여유 있는 ETF는 생략한다."""
-    line = etf_cap_line(etf_cap_dump(("₩200,000", "₩190,000", "19.0%"), ("₩175,000", "₩160,000", "16.0%")))
+    """도달·근접(26%↑)은 남은 매수 여유를 보는 것이라 매수원금 비중으로 판정하고, 여유 있는 ETF는 생략한다."""
+    line = etf_cap_line(etf_cap_dump(("₩300,000", "₩290,000", "29.0%"), ("₩265,000", "₩250,000", "25.0%")))
 
     assert line == ETF_CAP_LABEL + (
-        "KODEX 200 19.0% ← 상한 도달(매수원금 20.0%), KODEX 코스닥150 16.0% ← 근접(매수원금 17.5%)"
+        "KODEX 200 29.0% ← 상한 도달(매수원금 30.0%), KODEX 코스닥150 25.0% ← 근접(매수원금 26.5%)"
     )
 
 
@@ -304,18 +304,43 @@ def test_index_etf_line_says_none_when_all_have_room() -> None:
 def test_index_etf_excess_without_cost_column_is_not_called_a_violation() -> None:
     """매수금액 열은 선택이다. 없으면 매수로 넘었는지 상승으로 넘었는지 가를 수 없어 위반이라 하지 않는다."""
     line = etf_cap_line(
-        etf_cap_dump(("₩160,000", "₩220,000", "22.0%"), ("₩50,000", "₩60,000", "6.0%"), cost_column=False)
+        etf_cap_dump(("₩160,000", "₩320,000", "32.0%"), ("₩50,000", "₩60,000", "6.0%"), cost_column=False)
     )
 
-    assert line == ETF_CAP_LABEL + "KODEX 200 22.0% ← 초과(매수·상승 구분 불가 — 매수금액 열 없음)"
+    assert line == ETF_CAP_LABEL + "KODEX 200 32.0% ← 초과(매수·상승 구분 불가 — 매수금액 열 없음)"
 
 
 def test_index_etf_near_cap_without_cost_column_falls_back_to_evaluation_weight() -> None:
     line = etf_cap_line(
-        etf_cap_dump(("₩160,000", "₩180,000", "18.0%"), ("₩50,000", "₩60,000", "6.0%"), cost_column=False)
+        etf_cap_dump(("₩160,000", "₩270,000", "27.0%"), ("₩50,000", "₩60,000", "6.0%"), cost_column=False)
     )
 
-    assert line == ETF_CAP_LABEL + "KODEX 200 18.0% ← 근접(평가 비중 기준 — 매수금액 열 없음)"
+    assert line == ETF_CAP_LABEL + "KODEX 200 27.0% ← 근접(평가 비중 기준 — 매수금액 열 없음)"
+
+
+def test_index_etf_cap_sums_funds_on_the_same_index() -> None:
+    """상한은 ETF별이 아니라 지수별이다."""
+    dump = etf_cap_dump(
+        ("₩50,000", "₩60,000", "6.0%"),
+        ("₩200,000", "₩190,000", "19.0%"),
+        extra=(("TIGER 코스닥150", "₩200,000", "₩190,000", "19.0%"),),
+    )
+
+    assert etf_cap_line(dump) == ETF_CAP_LABEL + "KODEX 코스닥150 + TIGER 코스닥150 38.0% ← **위반**(매수원금 40.0%)"
+
+
+def test_index_etf_total_cost_over_sixty_is_a_violation() -> None:
+    line = etf_cap_line(etf_cap_dump(("₩310,000", "₩300,000", "30.0%"), ("₩310,000", "₩300,000", "30.0%")))
+
+    assert line.endswith("합계 매수원금 62.0% ← **위반**")
+
+
+def test_index_etfs_are_not_counted_as_holdings() -> None:
+    """「매매 규칙 9」 종목 수에서 지수 ETF를 뺀다. 이 표는 개별 종목 1개와 ETF 2개다."""
+    module = load_script("daily-digest", "extract_portfolio")
+    snapshot = module.build_snapshot(etf_cap_dump(("₩50,000", "₩60,000", "6.0%"), ("₩50,000", "₩60,000", "6.0%")), "2026-10-28")
+
+    assert "매매 규칙 9(종목 수 5~12): 1종목 ← **미달**" in snapshot
 
 
 def test_index_etf_lines_are_omitted_without_index_etfs() -> None:
@@ -331,7 +356,7 @@ def test_leveraged_index_etf_keeps_individual_stock_rules() -> None:
     dump = INDEX_ETF_DUMP.replace("| KODEX 200 |", "| KODEX 코스닥150레버리지 |")
     findings = module.build_snapshot(dump, "2026-10-28").split("## 룰 자동 판정")[1]
 
-    assert "매매규칙 6(-12% 1차 분할 매도): KODEX 코스닥150레버리지 -13.00%" in findings
+    assert "매매 규칙 6(-12% 30% 축소): KODEX 코스닥150레버리지 -13.00%" in findings
     assert "지수 ETF 규칙 4(매도 = 평단 +8% 후 최고 종가 -3%): KODEX 코스닥150 +30.00% " in findings
 
 
@@ -352,7 +377,7 @@ def test_rules_are_graded_on_closing_price_not_sheet_price() -> None:
     # 베타파마 시트 ₩57,500(-16.48%) → 종가 ₩61,000이면 평단 ₩68,845 대비 -11.40%
     snapshot = module.build_snapshot(PORTFOLIO_DUMP, "2026-08-09", closes={"베타파마": 61_000})
 
-    assert "매매규칙 6(-15% 전량 매도): 해당 없음" in snapshot
+    assert "매매 규칙 6(-15% 전량 매도): 해당 없음" in snapshot
     assert "베타파마 -11.40%" in snapshot
     assert "| 베타파마 | 바이오 | 900 | ₩68,845 | ₩61,000 |" in snapshot
 

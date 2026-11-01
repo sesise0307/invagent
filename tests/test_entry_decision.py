@@ -166,7 +166,7 @@ def test_stage_two_opens_the_trend_path(tmp_path, capsys, children):
     assert result["inputs"]["stage"] == {"status": "ok", "value": 2}
     assert result["action"] == "eligible"
     assert result["max_tranche_fraction"] is None
-    assert result["checks"]["stage"]["rule"] == "매매규칙 2(펀더 기반 매수)"
+    assert result["checks"]["stage"]["rule"] == "매매 규칙 2(펀더 기반 매수)"
 
 
 def test_stage_four_turning_with_a_passing_value_gate_opens_the_first_tranche(tmp_path, capsys, children):
@@ -186,7 +186,7 @@ def test_stage_four_turning_with_a_passing_value_gate_opens_the_first_tranche(tm
     assert inputs["valuation_grade"] == "buy_candidate"
     assert result["action"] == "watch"
     assert result["max_tranche_fraction"] == 0.03
-    assert result["checks"]["stage"]["rule"] == "매매규칙 4(분할 매수)"
+    assert result["checks"]["stage"]["rule"] == "매매 규칙 4(분할 매수)"
 
 
 def test_stage_four_turning_without_blocked_downside_stays_closed(tmp_path, capsys, children):
@@ -211,7 +211,7 @@ def test_basing_with_accumulation_and_rising_operating_profit_opens_path_c(tmp_p
         "status": "ok", "eligible": True, "op_yoy_increased": True}
     assert result["action"] == "watch"
     assert result["max_tranche_fraction"] == pytest.approx(0.015)
-    assert result["checks"]["stage"]["rule"] == "매매규칙 2 단서(선매집)"
+    assert result["checks"]["stage"]["rule"] == "매매 규칙 2 단서(선매집)"
 
 
 def test_unknown_operating_profit_growth_becomes_null_and_keeps_path_c_shut(
@@ -325,3 +325,16 @@ def test_entry_decision_imports_no_other_skills_script():
     assert not any("stage_scan" in line or "turn_scan" in line for line in imports)
     assert "sys.path.insert(0, str(SCRIPTS_DIR))" in source
     assert entry_decision.STAGE_SCAN.is_file() and entry_decision.TURN_SCAN.is_file()
+
+
+def test_value_band_floor_also_counts_as_blocked_downside(tmp_path, capsys, children):
+    """2026-11-01 사용자 정의: 하단목표가 ≥ 현재가 또는 현재가가 밸류 밴드 최하단이면 하방 막힘."""
+    install, stage_out, turn_out = children
+    install(stage_out(DOWNTREND), turn_out(TURNING))
+    valuation = _valuation(current_price=115.0)  # 하단 110 < 현재가 115
+
+    _, closed = _run(tmp_path, capsys, valuation=valuation)
+    assert closed["inputs"]["value_gate"]["downside_blocked"] is False
+
+    _, opened = _run(tmp_path, capsys, valuation={**valuation, "at_value_band_floor": True})
+    assert opened["inputs"]["value_gate"]["downside_blocked"] is True

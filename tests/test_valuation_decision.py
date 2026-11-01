@@ -27,7 +27,7 @@ def _downside_blocked_payload() -> dict:
 def test_reward_risk_denominator_is_separate_from_the_position_sizing_floor() -> None:
     """손익비 분모(15%)와 2%룰 분모(15%)는 숫자가 같아도 다른 것을 잰다.
 
-    2%룰 하한은 「매매규칙 6」의 전량 이탈선이라 1회 최대 손실을 정하고, 그래서
+    2%룰 하한은 「매매 규칙 6」의 전량 이탈선이라 1회 최대 손실을 정하고, 그래서
     「기본 원칙 4(2%룰)」의 분모로 남아야 한다. 손익비는 시나리오 하방 대비
     보상을 재는 값이므로 실행 손절선에 묶이면 기대수익의 재진술이 된다.
     """
@@ -41,18 +41,61 @@ def test_reward_risk_denominator_is_separate_from_the_position_sizing_floor() ->
     assert risk["reward_risk_denominator"] == pytest.approx(module.MIN_REWARD_RISK_STOP)
     assert module.MIN_REWARD_RISK_STOP == pytest.approx(0.15)
     assert risk["reward_risk"] == pytest.approx(center_return / module.MIN_REWARD_RISK_STOP)
-    # 2%룰과 실행 손절선은 「매매규칙 6」 전량 이탈선 15%에 묶여 있다 (2026-10-21 개정).
+    # 2%룰과 실행 손절선은 「매매 규칙 6」 전량 이탈선 15%에 묶여 있다 (2026-10-21 개정).
     assert risk["effective_stop_loss"] == pytest.approx(0.15)
     assert risk["max_purchase_fraction"] == pytest.approx(0.02 / 0.15)
 
 
-def test_stop_prices_follow_the_two_stop_tiers() -> None:
-    """「매매규칙 6」은 -12% 1차 분할, -15% 전량이다 — 진입가 10,000원이면 8,800원 · 8,500원."""
+def test_stop_prices_follow_the_three_stop_tiers() -> None:
+    """「매매 규칙 6」의 -8%·-12%·-15% 선이다 — 진입가 10,000원이면 9,200원 · 8,800원 · 8,500원."""
     module = load_script("analyze-stock", "valuation_decision")
     payload = _downside_blocked_payload()
     payload["entry_price"] = 10000.0
 
     stops = module.decide(payload)["risk"]["stop_prices"]
 
-    assert stops["first_partial"] == pytest.approx(8800.0)
+    assert stops["first_trim"] == pytest.approx(9200.0)
+    assert stops["second_trim"] == pytest.approx(8800.0)
     assert stops["full_exit"] == pytest.approx(8500.0)
+
+
+def _thirty_percent_center_payload(**extra) -> dict:
+    """중심 수익률 40%, 하단목표가 95 < 현재가 100 — 하단목표가로는 하방이 안 막힌다."""
+    return {
+        "asof": "2026-09-22",
+        "current_price": 100.0,
+        "scenarios": {
+            "bear": 95.0, "base": 140.0, "bull": 185.0,
+            "probabilities": {"bear": 0, "base": 100, "bull": 0},
+        },
+        **extra,
+    }
+
+
+def test_center_thirty_without_blocked_downside_is_only_watch() -> None:
+    module = load_script("analyze-stock", "valuation_decision")
+
+    result = module.decide(_thirty_percent_center_payload())
+
+    assert result["risk"]["downside_blocked"] is False
+    assert result["decision"]["base_grade"] == "watch"
+
+
+def test_value_band_floor_blocks_downside_for_the_grade() -> None:
+    """「하방이 막힌」 정의(2026-11-01): 밸류 밴드 최하단이면 하단목표가와 무관하게 막힌 것이다."""
+    module = load_script("analyze-stock", "valuation_decision")
+
+    result = module.decide(_thirty_percent_center_payload(at_value_band_floor=True))
+
+    assert result["risk"]["downside_blocked"] is True
+    assert result["decision"]["base_grade"] == "buy_candidate"
+    # 손익비와 2%룰 분모는 여전히 실측 하방으로 계산한다.
+    assert result["risk"]["downside"] == pytest.approx(0.05)
+    assert result["risk"]["effective_stop_loss"] == pytest.approx(0.15)
+
+
+def test_value_band_floor_must_be_a_boolean() -> None:
+    module = load_script("analyze-stock", "valuation_decision")
+
+    with pytest.raises(module.DecisionInputError):
+        module.decide(_thirty_percent_center_payload(at_value_band_floor="yes"))

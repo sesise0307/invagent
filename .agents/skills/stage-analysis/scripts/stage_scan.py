@@ -46,7 +46,7 @@ MA_DAYS = 150            # 통합 버전 기준선. 200일선은 참고로 병�
 MA_REF_DAYS = 200        # 미너비니 원본 기준선 — 참고 표시용
 MA_20WEEK = 100          # 기존 공개 상수: 일봉 근사 길이. 실제 주봉 함수는 WEEK_COUNT를 사용.
 WEEK_COUNT = 20          # 「기술적 분석 규칙 1」의 실제 주봉 종가 표본 수
-# 「매매규칙 12」의 장대 양봉 정의(2026-09-05 사용자 확정): 전일 종가 대비 +8% 이상.
+# 「매매 규칙 12」의 장대 양봉 정의(2026-09-05 사용자 확정): 전일 종가 대비 +8% 이상.
 # 정의는 `context/my_rules.md`가 정본이고 테스트가 원문에서 파싱해 이 상수와 대조한다.
 LONG_BULL_PCT = 8.0
 LONG_BULL_WINDOW = 20    # 진입가를 구속하는 최근 구간 (거래일). 반년 전 양봉은 오늘과 무관하다
@@ -74,8 +74,8 @@ STAGE_ACTION = {
     1: "기다리며 지켜본다. 매수 대상이 아니다 — 「기본 원칙 8(풍림화산)」 대기 구간.",
     2: "매수 대상 구간 (경로 A, 추세 확인 진입). 1·3·4단계의 '바닥 다진 후 고개 드는 초반'은 "
        "turn_scan.py의 단기 바닥 전환 판정이 정본이다.",
-    3: "신규 매수 금지. 「매매규칙 11」 수익 쿠션 확보 · 「매매규칙 5」 분할 매도 구간.",
-    4: "접근에 신중해야 한다. 「매매규칙 6」 -12% 1차 분할 → -15% 전량 · 「매매규칙 8」 물타기 금지.",
+    3: "신규 매수 금지. 「매매 규칙 11」 수익 쿠션 확보 · 「매매 규칙 5」 분할 매도 구간.",
+    4: "접근에 신중해야 한다. 「매매 규칙 6」 -8%·-12% 각 30% → -15% 전량 · 「매매 규칙 8」 물타기 금지.",
 }
 
 
@@ -170,7 +170,7 @@ def ma_slope(ma: list[float | None], window: int = SLOPE_WINDOW) -> tuple[str, f
 def long_bull_days(bars: list[dict], window: int = LONG_BULL_WINDOW) -> list[dict]:
     """최근 구간의 장대 양봉(전일 종가 대비 +`LONG_BULL_PCT`% 이상) 목록.
 
-    「매매규칙 12」는 장대 양봉 위에 진입가를 잡는 것을 막는다. 막으려면 그 날의 종가를
+    「매매 규칙 12」는 장대 양봉 위에 진입가를 잡는 것을 막는다. 막으려면 그 날의 종가를
     알아야 하므로 날짜·등락률·종가를 함께 낸다.
     """
     out: list[dict] = []
@@ -691,7 +691,7 @@ def print_result(name: str, code: str, result: dict, sources: list[str]) -> None
         days = " · ".join(
             f"{d['date']} {d['change']:+.1f}% (종가 {d['close']:,.0f}원)" for d in p["long_bull"]
         )
-        print(f"  장대 양봉(「매매규칙 12」 +{LONG_BULL_PCT:.0f}% 이상, 최근 {LONG_BULL_WINDOW}일): {days}")
+        print(f"  장대 양봉(「매매 규칙 12」 +{LONG_BULL_PCT:.0f}% 이상, 최근 {LONG_BULL_WINDOW}일): {days}")
     else:
         print(f"  장대 양봉(최근 {LONG_BULL_WINDOW}일): 없음")
     highs = " → ".join(f"{h['price']:,.0f}" for h in p["pivot_highs"]) or "-"

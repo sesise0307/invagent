@@ -37,26 +37,27 @@ NEXT_SHEET_MARKER = "최초 투자"
 # context/my_rules.md 임계값 — 룰 원문이 정본이다.
 # `tests/test_agent_configuration.py::test_portfolio_thresholds_match_my_rules`가
 # 룰 파일에서 숫자를 파싱해 아래 상수와 대조한다. 룰이 바뀌면 그 테스트가 먼저 깨진다.
-STOP_LOSS_PCT = -12.0  # 매매규칙 6: -12% 1차 분할 매도
-STOP_FULL_PCT = -15.0  # 매매규칙 6: -15% 전량 매도
-TRIM_PCT = -8.0  # 매매규칙 7: -8% 비중 축소 고려
-PROFIT_CUSHION_PCT = 24.0  # 매매규칙 11: 24~30% 수익 시 보유량 10~30% 익절
-# 매매규칙 9는 두 축을 나눈다. 아래는 **평가 비중** 축(주가 상승분 허용, 최대 35%)이다.
+STOP_LOSS_PCT = -12.0  # 매매 규칙 6: -12%에서 30% 축소, -15%에서 전량
+STOP_FULL_PCT = -15.0  # 매매 규칙 6: -15% 전량 매도
+TRIM_PCT = -8.0  # 매매 규칙 6: -8% 30% 축소
+PROFIT_CUSHION_PCT = 24.0  # 매매 규칙 11: 24~30% 수익 시 보유량 10~30% 익절
+# 매매 규칙 9는 두 축을 나눈다. 아래는 **평가 비중** 축(주가 상승분 허용, 최대 35%)이다.
 # 매수원금 비중 상한(= 2% ÷ 계획 손절률)은 스냅샷이 아니라 진입 판단에서 계산한다.
 MAX_WEIGHT_PCT = 35.0
 WEIGHT_WARN_PCT = 30.0  # 상한 근접 경고선
-# 지수 ETF 규칙 3: ETF마다 최종 비중 최대 20% (2026-10-30 15%에서 상향, 2%룰 비중 계산 대신).
-# 2026-10-28 사용자 결정: 「매매규칙 9」처럼 축을 나눈다 — 상한은 **매수원금 비중**(매수금액 ÷
+# 지수 ETF 규칙 3: 지수별 최종 비중 최대 30%, 합계 60% (2026-11-01, 2%룰 비중 계산·종목 수 대신).
+# 2026-10-28 사용자 결정: 「매매 규칙 9」처럼 축을 나눈다 — 상한은 **매수원금 비중**(매수금액 ÷
 # 총자산)에 걸고, 매수 없이 주가 상승으로 평가 비중이 상한을 넘는 것은 허용한다.
-INDEX_ETF_MAX_WEIGHT_PCT = 20.0
-# 근접 경고선 — 35% 상한의 30% 경고와 같은 비율(약 86%)을 20%에 적용해 17%로 둔다.
+INDEX_ETF_MAX_WEIGHT_PCT = 30.0
+INDEX_ETF_TOTAL_MAX_PCT = 60.0
+# 근접 경고선 — 35% 상한의 30% 경고와 같은 비율(약 86%)을 30%에 적용해 26%로 둔다.
 # 분할 매수 한 번(수 %p)이면 상한을 넘는 거리라 그 전에 남은 매수 여유를 보게 한다(매수원금 축).
-INDEX_ETF_WEIGHT_WARN_PCT = 17.0
+INDEX_ETF_WEIGHT_WARN_PCT = 26.0
 # 지수 ETF 규칙 4: 평단 +8% 이후 최고 종가 대비 -3% = 추세 꺾임 매도. 판정은 종가 이력이 필요해
 # 여기서 하지 않고, 판정 줄 라벨에 기준만 인용한다.
 INDEX_ETF_TREND_GAIN_PCT = 8.0
 INDEX_ETF_TREND_PULLBACK_PCT = -3.0
-MIN_HOLDINGS = 5  # 매매규칙 9: 5~12종목
+MIN_HOLDINGS = 5  # 매매 규칙 9: 5~12종목
 MAX_HOLDINGS = 12
 
 # 「지수 ETF 규칙 1」 대상 식별. 시트가 KODEX 200·KODEX 코스닥150 같은 시장 전체 지수 ETF에
@@ -198,10 +199,15 @@ def is_index_etf(holding: dict) -> bool:
     return holding["섹터"] == INDEX_ETF_SECTOR and not LEVERAGED_ETF_RE.search(holding["종목"])
 
 
+def etf_index(holding: dict) -> str:
+    """「지수 ETF 규칙 3」 상한을 묶는 지수. 이름에 코스닥이 없으면 KOSPI로 본다."""
+    return "KOSDAQ" if re.search(r"코스닥|KOSDAQ", holding["종목"], re.IGNORECASE) else "KOSPI"
+
+
 def rule_findings(holdings: list[dict]) -> list[str]:
     """보유 현황을 my_rules.md 임계값과 대조해 판정 문구 생성."""
     positions = [h for h in holdings if h["섹터"] != CASH_SECTOR]
-    # 지수 ETF는 「매매규칙 6·7·11」과 평가 비중 35% 대신 「지수 ETF 규칙 3·4」를 따른다.
+    # 지수 ETF는 「매매 규칙 6·11」과 평가 비중 35%·종목 수 대신 「지수 ETF 규칙 3·4」를 따른다.
     stocks = [h for h in positions if not is_index_etf(h)]
     findings: list[str] = []
 
@@ -212,34 +218,35 @@ def rule_findings(holdings: list[dict]) -> list[str]:
             if h["수익률_v"] is not None and pred(h["수익률_v"])
         ]
 
-    # 「매매규칙 6」은 두 티어다. 깊은 티어가 얕은 티어를 흡수해 한 종목이 두 줄에 겹치지 않는다.
-    full_label = f"- 매매규칙 6({STOP_FULL_PCT:.0f}% 전량 매도)"
+    # 「매매 규칙 6」은 세 티어다. 깊은 티어가 얕은 티어를 흡수해 한 종목이 두 줄에 겹치지 않는다.
+    full_label = f"- 매매 규칙 6({STOP_FULL_PCT:.0f}% 전량 매도)"
     full_exit = names(lambda v: v <= STOP_FULL_PCT)
     findings.append(
         f"{full_label}: {', '.join(full_exit)} "
-        "← **위반** (임계 도달 · 이행 여부 미확인 · 시장 급락 예외 미확인)" if full_exit
+        "← **위반** (임계 도달 · 이행 여부 미확인 · 시장 급락 재량 미확인)" if full_exit
         else f"{full_label}: 해당 없음"
     )
 
-    tier1_label = f"- 매매규칙 6({STOP_LOSS_PCT:.0f}% 1차 분할 매도)"
+    tier1_label = f"- 매매 규칙 6({STOP_LOSS_PCT:.0f}% 30% 축소)"
     tier1 = names(lambda v: STOP_LOSS_PCT >= v > STOP_FULL_PCT)
     findings.append(
         f"{tier1_label}: {', '.join(tier1)} "
-        "← **위반** (임계 도달 · 이행 여부 미확인 · 시장 급락 예외 미확인)" if tier1
+        "← **위반** (임계 도달 · 이행 여부 미확인 · 시장 급락 재량 미확인)" if tier1
         else f"{tier1_label}: 해당 없음"
     )
 
-    trim_label = f"- 매매규칙 7({TRIM_PCT:.0f}% 비중 축소 고려)"
+    trim_label = f"- 매매 규칙 6({TRIM_PCT:.0f}% 30% 축소)"
     trim = names(lambda v: TRIM_PCT >= v > STOP_LOSS_PCT)
     findings.append(
-        f"{trim_label}: {', '.join(trim)}" if trim
+        f"{trim_label}: {', '.join(trim)} "
+        "← **위반** (임계 도달 · 이행 여부 미확인 · 시장 급락 재량 미확인)" if trim
         else f"{trim_label}: 해당 없음"
     )
 
     cushion = names(lambda v: v >= PROFIT_CUSHION_PCT)
     findings.append(
-        f"- 매매규칙 11(24~30%↑ 익절 쿠션): {', '.join(cushion)}" if cushion
-        else "- 매매규칙 11(24~30%↑ 익절 쿠션): 해당 없음"
+        f"- 매매 규칙 11(24~30%↑ 익절 쿠션): {', '.join(cushion)}" if cushion
+        else "- 매매 규칙 11(24~30%↑ 익절 쿠션): 해당 없음"
     )
 
     over = [h for h in stocks if h["비중_v"] is not None and h["비중_v"] > MAX_WEIGHT_PCT]
@@ -252,29 +259,36 @@ def rule_findings(holdings: list[dict]) -> list[str]:
         return ", ".join(f"{h['종목']} {h['비중']}" for h in rows)
 
     if over:
-        findings.append(f"- 매매규칙 9(평가 비중 35% 상한): {weight_desc(over)} ← **위반**")
+        findings.append(f"- 매매 규칙 9(평가 비중 35% 상한): {weight_desc(over)} ← **위반**")
     elif at_cap:
-        findings.append(f"- 매매규칙 9(평가 비중 35% 상한): {weight_desc(at_cap)} ← 상한 도달")
+        findings.append(f"- 매매 규칙 9(평가 비중 35% 상한): {weight_desc(at_cap)} ← 상한 도달")
     elif near:
-        findings.append(f"- 매매규칙 9(평가 비중 35% 상한): {weight_desc(near)} ← 근접")
+        findings.append(f"- 매매 규칙 9(평가 비중 35% 상한): {weight_desc(near)} ← 근접")
     else:
-        findings.append("- 매매규칙 9(평가 비중 35% 상한): 해당 없음")
+        findings.append("- 매매 규칙 9(평가 비중 35% 상한): 해당 없음")
 
     etfs = [h for h in positions if is_index_etf(h)]
     if etfs:
         etf_label = (
-            f"- 지수 ETF 규칙 3(ETF별 매수원금 {INDEX_ETF_MAX_WEIGHT_PCT:.0f}% 상한 · 상승분 허용)"
+            f"- 지수 ETF 규칙 3(지수별 매수원금 {INDEX_ETF_MAX_WEIGHT_PCT:.0f}% · 합계 {INDEX_ETF_TOTAL_MAX_PCT:.0f}% 상한 · 상승분 허용)"
         )
         # 분모 = 현금 행을 포함한 전체 평가금액 합계. 시트의 비중 열이 바로 이 합계(= 잔고)로
         # 나눈 값이라(10/28: 코스닥150 ₩73,560,000 ÷ 잔고 ₩478,906,000 = 15.4%) 같은 분모를 써야
         # 매수원금 비중과 평가 비중이 한 줄에서 비교된다. 잔고 총계는 시트에 없을 수 있지만 평가금액은
         # 필수 열이고, `check_balance`가 둘이 1% 안에서 맞는지 이미 확인한다.
         account_total = sum(to_float(h["평가금액"]) or 0.0 for h in holdings)
-        flagged = []
+        groups: dict[str, list[dict]] = {}
         for h in etfs:
-            weight = h["비중_v"]
-            cost = to_float(h["매수금액"])
-            if cost is None or not account_total:
+            groups.setdefault(etf_index(h), []).append(h)
+        flagged = []
+        total_cost_pct = 0.0
+        for members in groups.values():
+            name = " + ".join(h["종목"] for h in members)
+            weights = [h["비중_v"] for h in members if h["비중_v"] is not None]
+            weight = round(sum(weights), 1) if weights else None
+            shown = members[0]["비중"] if len(members) == 1 else f"{weight:.1f}%"
+            costs = [to_float(h["매수금액"]) for h in members]
+            if None in costs or not account_total:
                 if weight is None or weight < INDEX_ETF_WEIGHT_WARN_PCT:
                     continue
                 if weight > INDEX_ETF_MAX_WEIGHT_PCT:
@@ -283,9 +297,10 @@ def rule_findings(holdings: list[dict]) -> list[str]:
                     state = "← 상한 도달(평가 비중 기준 — 매수금액 열 없음)"
                 else:
                     state = "← 근접(평가 비중 기준 — 매수금액 열 없음)"
-                flagged.append(f"{h['종목']} {h['비중']} {state}")
+                flagged.append(f"{name} {shown} {state}")
                 continue
-            cost_pct = round(cost / account_total * 100, 1)
+            cost_pct = round(sum(costs) / account_total * 100, 1)
+            total_cost_pct += cost_pct
             cost_note = f"매수원금 {cost_pct:.1f}%"
             if cost_pct > INDEX_ETF_MAX_WEIGHT_PCT:
                 state = f"← **위반**({cost_note})"
@@ -297,7 +312,9 @@ def rule_findings(holdings: list[dict]) -> list[str]:
                 state = f"← 근접({cost_note})"
             else:
                 continue
-            flagged.append(f"{h['종목']} {h['비중']} {state}")
+            flagged.append(f"{name} {shown} {state}")
+        if total_cost_pct > INDEX_ETF_TOTAL_MAX_PCT:
+            flagged.append(f"합계 매수원금 {total_cost_pct:.1f}% ← **위반**")
         findings.append(f"{etf_label}: {', '.join(flagged) if flagged else '해당 없음'}")
         # 「지수 ETF 규칙 4」 추세 꺾임은 평단 +8% 이후 최고 종가가 필요해 스냅샷만으로는 못 낸다.
         held = ", ".join(
@@ -310,7 +327,7 @@ def rule_findings(holdings: list[dict]) -> list[str]:
             "— 평단 손절·익절 쿠션 미적용, 종가 이력으로 별도 판정"
         )
 
-    count = len(positions)
+    count = len(stocks)
     if count > MAX_HOLDINGS:
         state = "← **초과**"
     elif count == MAX_HOLDINGS or count == MIN_HOLDINGS:
@@ -319,7 +336,7 @@ def rule_findings(holdings: list[dict]) -> list[str]:
         state = "← **미달**"
     else:
         state = ""
-    findings.append(f"- 매매규칙 9(종목 수 5~12): {count}종목 {state}".rstrip())
+    findings.append(f"- 매매 규칙 9(종목 수 5~12): {count}종목 {state}".rstrip())
 
     cash = [h for h in holdings if h["섹터"] == CASH_SECTOR]
     if cash:

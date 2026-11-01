@@ -40,7 +40,7 @@ BASE = [(0, 200.0), (100, 100.0), (110, 108.0), (120, 102.0)]
 
 
 def test_a_fresh_low_is_still_falling():
-    """「매매규칙 2」 — 방금 신저가를 쓴 종목은 바닥을 다진 게 아니라 하락하는 와중이다."""
+    """「매매 규칙 2」 — 방금 신저가를 쓴 종목은 바닥을 다진 게 아니라 하락하는 와중이다."""
     result = turn_scan.analyze_turn(_bars(_path([(0, 200.0), (140, 100.0)])))
 
     assert result["state"] == "falling"

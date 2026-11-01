@@ -129,7 +129,7 @@ def test_leverage_rule_three_stays_quiet_below_the_threshold() -> None:
 
 
 def test_leverage_rule_three_exempts_a_run_that_is_all_upward() -> None:
-    """룰의 예외는 '상승 방향으로 일관적인 변동'이다 — 음의 복리는 방향이 섞일 때 생긴다."""
+    """전부 상승이면 저점을 낮추지 않은 상승 추세이므로 예외다."""
     module = load_script("daily-digest", "fetch_market_signals")
 
     # ±5% 3일이 전부 상승 (+6.00 / +6.13 / +6.22)
@@ -140,11 +140,6 @@ def test_leverage_rule_three_exempts_a_run_that_is_all_upward() -> None:
     assert verdict["fired"] is False
     assert verdict["exempt"] is True
 
-    # 하락이 하나라도 섞이면 예외가 깨진다.
-    # 같은 3일인데 마지막이 하락 (+6.00 / +6.13 / -5.78)
-    mixed = [100.0, 106.0, 112.5, 106.0, 106.5, 107.0, 107.5, 108.0, 108.5, 109.0, 109.5]
-    broken = module.leverage_liquidation(_monitor_rows(mixed))["KOSPI"]
-    assert broken["count"] == 3 and broken["fired"] is True and broken["exempt"] is False
 
 
 def test_leverage_rule_three_judges_each_index_separately_and_no_sectors() -> None:
@@ -687,3 +682,63 @@ def test_market_regime_is_normal_above_the_correction_line() -> None:
 
     assert verdict["streak"] is True and verdict["margin_surge"] is True
     assert verdict["regime"] == "normal"
+
+
+def test_mdd_release_needs_only_one_index_above_its_three_day_average() -> None:
+    """「계좌 규칙 1」: KOSPI·KOSDAQ 중 하나라도 종가가 3일선 위면 -10% 중단 해제 조건 충족."""
+    module = load_script("daily-digest", "fetch_market_signals")
+    # KOSPI 3일선 = (100+90+98)/3 = 96 < 98 → 회복. KOSDAQ 3일선 = (100+90+80)/3 = 90 > 80 → 미회복.
+    verdict = module.mdd_release(_monitor_rows([100.0, 90.0, 98.0], [100.0, 90.0, 80.0]))
+
+    assert verdict["released"] is True
+    assert verdict["markets"]["KOSPI"]["recovered"] is True
+    assert verdict["markets"]["KOSDAQ"]["recovered"] is False
+
+
+def test_mdd_release_stays_closed_while_both_indices_are_below() -> None:
+    module = load_script("daily-digest", "fetch_market_signals")
+
+    verdict = module.mdd_release(_monitor_rows([100.0, 90.0, 80.0], [100.0, 90.0, 80.0]))
+
+    assert verdict["released"] is False
+
+
+def test_mdd_release_close_equal_to_the_average_is_not_a_recovery() -> None:
+    """3일선 '위'만 회복이다. 횡보(종가 = 3일선)는 반등이 아니다."""
+    module = load_script("daily-digest", "fetch_market_signals")
+
+    verdict = module.mdd_release(_monitor_rows([90.0, 90.0, 90.0], [90.0, 90.0, 90.0]))
+
+    assert verdict["released"] is False
+
+
+def test_mdd_release_with_too_few_bars_is_undecided_not_released() -> None:
+    module = load_script("daily-digest", "fetch_market_signals")
+
+    verdict = module.mdd_release(_monitor_rows([100.0, 110.0], [100.0, 110.0]))
+
+    assert verdict["released"] is False
+    assert verdict["markets"]["KOSPI"]["insufficient"] is True
+
+
+def test_leverage_rule_three_exempts_a_mixed_run_that_keeps_rising_above_its_low() -> None:
+    """2026-11-01 사용자 정의: 저점을 낮추지 않고 상승 추세면 하락 변동일이 섞여도 예외다."""
+    module = load_script("daily-digest", "fetch_market_signals")
+    # 창 직전 100. 종가가 100 아래로 안 내려가고 끝이 100보다 높다. 변동일 +10 / -5.45 / +7.69 혼재.
+    closes = [100.0, 110.0, 104.0, 112.0, 113.0, 113.0, 113.0, 113.0, 113.0, 113.0, 113.0]
+
+    verdict = module.leverage_liquidation(_monitor_rows(closes))["KOSPI"]
+
+    assert verdict["count"] == 3
+    assert verdict["exempt"] is True and verdict["fired"] is False
+
+
+def test_leverage_rule_three_fires_when_the_run_breaks_below_its_start() -> None:
+    """창 안에서 시작 종가를 깨면 끝이 더 높아도 저점을 낮춘 것이다."""
+    module = load_script("daily-digest", "fetch_market_signals")
+    closes = [100.0, 106.0, 99.0, 106.0, 107.0, 107.0, 107.0, 107.0, 107.0, 107.0, 107.0]
+
+    verdict = module.leverage_liquidation(_monitor_rows(closes))["KOSPI"]
+
+    assert verdict["count"] == 3
+    assert verdict["exempt"] is False and verdict["fired"] is True

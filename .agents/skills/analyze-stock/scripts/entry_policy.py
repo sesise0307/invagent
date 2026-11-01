@@ -150,7 +150,7 @@ def decide(payload: Any) -> dict[str, Any]:
     account = _state(payload, "account_pause")
     if not account or account["status"] != "ok":
         apply("account_pause", "withhold", "account pause/review state is unknown",
-              "기본 원칙 13(계좌 MDD 관리)")
+              "계좌 규칙 1(계좌 MDD 관리)")
     else:
         active = account.get("active")
         remaining = account.get("remaining_trading_days")
@@ -160,10 +160,10 @@ def decide(payload: Any) -> dict[str, Any]:
             raise EntryPolicyError("account_pause requires active, non-negative remaining_trading_days, and review_complete")
         if active or remaining > 0 or not review:
             apply("account_pause", "watch", "new-buy pause or required review is incomplete",
-                  "기본 원칙 13(계좌 MDD 관리)")
+                  "계좌 규칙 1(계좌 MDD 관리)")
         else:
             apply("account_pause", "eligible", "pause cleared and review complete",
-                  "기본 원칙 13(계좌 MDD 관리)")
+                  "계좌 규칙 1(계좌 MDD 관리)")
 
     stage = _state(payload, "stage")
     if not stage or stage["status"] != "ok":
@@ -173,7 +173,7 @@ def decide(payload: Any) -> dict[str, Any]:
         if value not in {1, 2, 3, 4}:
             raise EntryPolicyError("stage.value must be 1, 2, 3, or 4")
         if value == 2:
-            apply("stage", "eligible", "stage 2 is the buy-stage gate", "매매규칙 2(펀더 기반 매수)")
+            apply("stage", "eligible", "stage 2 is the buy-stage gate", "매매 규칙 2(펀더 기반 매수)")
         else:
             # 1·3·4단계는 단기 바닥 전환 판정(turn_scan)이 타이밍 게이트다. 고개를 든 뒤에만
             # 밸류 게이트가 1차 분할을 연다 — 4단계도 같다 (2026-09-12 사용자 확정).
@@ -183,72 +183,72 @@ def decide(payload: Any) -> dict[str, Any]:
                 raise EntryPolicyError("turn.value must be falling, basing, turning, or extended")
             if turn_value is None:
                 apply("stage", "withhold", f"stage {value} with unknown short-term turn evidence",
-                      "매매규칙 2(펀더 기반 매수)")
+                      "매매 규칙 2(펀더 기반 매수)")
             elif turn_value == "falling":
                 apply("stage", "avoid", f"stage {value} and still falling — no buying into a decline",
-                      "매매규칙 2(펀더 기반 매수)")
+                      "매매 규칙 2(펀더 기반 매수)")
             elif turn_value == "basing" and _accumulation_ready(_state(payload, "accumulation")):
                 tranche = _value_first_tranche(_state(payload, "value_gate"))
                 if tranche is None:
                     apply("stage", "withhold", f"stage {value} quiet base without a passing value gate",
-                          "매매규칙 2(펀더 기반 매수)")
+                          "매매 규칙 2(펀더 기반 매수)")
                 else:
                     cap = min(cap, tranche * ACCUMULATION_TRANCHE_RATIO)
                     apply("stage", "watch",
                           f"stage {value} quiet base with growing operating profit: "
                           "early accumulation, half the first tranche",
-                          "매매규칙 2 단서(선매집)")
+                          "매매 규칙 2 단서(선매집)")
             elif turn_value != "turning":
                 apply("stage", "withhold", f"stage {value} {TURN_STATES[turn_value]}",
-                      "매매규칙 2(펀더 기반 매수)")
+                      "매매 규칙 2(펀더 기반 매수)")
             else:
                 tranche = _value_first_tranche(_state(payload, "value_gate"))
                 if tranche is None:
                     apply("stage", "withhold", f"stage {value} turning without a passing value gate",
-                          "매매규칙 2(펀더 기반 매수)")
+                          "매매 규칙 2(펀더 기반 매수)")
                 else:
                     cap = min(cap, tranche)
                     apply("stage", "watch",
                           f"stage {value} turning, value-first entry: capped first tranche only",
-                          "매매규칙 4(분할 매수)")
+                          "매매 규칙 4(분할 매수)")
 
     long_bull = _state(payload, "long_bull")
     if not long_bull or long_bull["status"] != "ok":
-        apply("long_bull", "withhold", "long-bull-day evidence is unknown", "매매규칙 12(뇌동매매 금지)")
+        apply("long_bull", "withhold", "long-bull-day evidence is unknown", "매매 규칙 12(뇌동매매 금지)")
     elif not isinstance(long_bull.get("active"), bool):
         raise EntryPolicyError("long_bull.active must be boolean")
     elif long_bull["active"]:
         apply("long_bull", "watch", "entry on a >=8% long bullish day is prohibited",
-              "매매규칙 12(뇌동매매 금지)")
+              "매매 규칙 12(뇌동매매 금지)")
     else:
         apply("long_bull", "eligible", "no active long-bull entry restriction",
-              "매매규칙 12(뇌동매매 금지)")
+              "매매 규칙 12(뇌동매매 금지)")
 
     earnings = _state(payload, "earnings")
     if not earnings or earnings["status"] != "ok":
         apply("earnings", "withhold", "earnings-event evidence is unknown",
-              "매매규칙 13(실적 발표 직후 매수 금지)")
+              "매매 규칙 12(실적 발표 직후 매수 금지)")
     elif not isinstance(earnings.get("surprise"), bool):
         raise EntryPolicyError("earnings.surprise must be boolean")
     elif earnings["surprise"] and not earnings.get("cause_analyzed", False):
         apply("earnings", "watch", "surprise cause has not been analyzed",
-              "매매규칙 13(실적 발표 직후 매수 금지)")
+              "매매 규칙 12(실적 발표 직후 매수 금지)")
     else:
         apply("earnings", "eligible", "no unanalyzed earnings surprise",
-              "매매규칙 13(실적 발표 직후 매수 금지)")
+              "매매 규칙 12(실적 발표 직후 매수 금지)")
 
     event = _state(payload, "event")
     if not event or event["status"] != "ok":
-        apply("event", "withhold", "event-trade evidence is unknown", "매매규칙 14(이벤트 매매 제한)")
+        apply("event", "withhold", "event-trade evidence is unknown", "매매 규칙 14(이벤트 매매 제한)")
     elif not isinstance(event.get("enabled"), bool):
         raise EntryPolicyError("event.enabled must be boolean")
     elif event["enabled"]:
         leader = event.get("sector_leader")
         if not isinstance(leader, bool):
-            apply("event", "withhold", "sector-leader status is unknown", "매매규칙 14(이벤트 매매 제한)")
+            apply("event", "withhold", "sector-leader status is unknown", "매매 규칙 14(이벤트 매매 제한)")
         elif not leader:
             apply("event", "avoid", "event trade is limited to a clear sector leader",
-                  "매매규칙 14(이벤트 매매 제한)")
+                  "매매 규칙 14(이벤트 매매 제한)")
         else:
             current_event = _fraction(event.get("current_purchase_fraction"),
                                       "event.current_purchase_fraction")
@@ -258,16 +258,16 @@ def decide(payload: Any) -> dict[str, Any]:
             needed = {"date", "expected_scenario", "profit_taking_schedule", "thesis_break"}
             if not isinstance(plan, dict) or any(not plan.get(key) for key in needed):
                 apply("event", "withhold", "required event plan is incomplete",
-                      "매매규칙 14(이벤트 매매 제한)")
+                      "매매 규칙 14(이벤트 매매 제한)")
             elif current_event + proposed_event > EVENT_LIMIT + 1e-12:
                 apply("event", "avoid", "event purchase principal would exceed 5%",
-                      "매매규칙 14(이벤트 매매 제한)")
+                      "매매 규칙 14(이벤트 매매 제한)")
             else:
                 cap = min(cap, EVENT_LIMIT - current_event)
                 apply("event", "eligible", "event plan and 5% cap pass",
-                      "매매규칙 14(이벤트 매매 제한)")
+                      "매매 규칙 14(이벤트 매매 제한)")
     else:
-        apply("event", "eligible", "not an event-based trade", "매매규칙 14(이벤트 매매 제한)")
+        apply("event", "eligible", "not an event-based trade", "매매 규칙 14(이벤트 매매 제한)")
 
     instrument = _state(payload, "instrument")
     if not instrument or instrument["status"] != "ok":

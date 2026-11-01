@@ -75,7 +75,7 @@ def test_analyze_stock_skill_defines_scenario_target_price() -> None:
         assert scenario in content
     assert "w_c" in content and "w_s" in content
     assert "손익비" in content
-    assert "기본 원칙 2" in content and "매매규칙 6" in content
+    assert "기본 원칙 2" in content and "매매 규칙 6" in content
 
     steps = re.findall(r"^### (\d+)단계", content, re.MULTILINE)
     assert [int(step) for step in steps] == list(range(1, 12))
@@ -114,7 +114,7 @@ def test_analyze_stock_downside_drives_stop_and_position_cap() -> None:
     """손익비 분모가 상수 15%면 중심 기대수익의 재진술이 된다 — 실측 하방을 쓴다."""
     content = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
 
-    # 「매매규칙 6」의 최종 이탈선은 -15%다(2026-10-21 개정). 2%룰 분모를 1차 분할선 12%로
+    # 「매매 규칙 6」의 최종 이탈선은 -15%다(2026-10-21 개정). 2%룰 분모를 1차 분할선 12%로
     # 내리면 1회 최대 손실이 계좌의 2.5%가 되어 「기본 원칙 4」를 넘기므로, 실효 손절폭 하한은 15%다.
     assert "실효 손절폭  = max(하방, 15%)" in content
     # 손익비 분모는 그와 별개의 값이고, 상수가 아니라 실측 하방과의 max다
@@ -123,8 +123,8 @@ def test_analyze_stock_downside_drives_stop_and_position_cap() -> None:
     assert "손익비      = 중심 기대수익 / 손익비 분모" in content
     assert "두 분모는 다른 것을 잰다. 하나로 합치지 마라" in content
     # 「기본 원칙 2」 단서(하방 막힘 시 30%)가 판정선에 들어와야 한다.
-    assert "중심 30~50% & 하방 ≤ 0%" in content
-    # 「매매규칙 9」는 두 축이다. 진입 크기를 정하는 것은 매수원금 축뿐이고,
+    assert "중심 30~50% & 하방 막힘" in content
+    # 「매매 규칙 9」는 두 축이다. 진입 크기를 정하는 것은 매수원금 축뿐이고,
     # 평가 비중 35%는 진입 후 주가 상승분에 걸리는 별개 상한이다.
     assert "매수원금 비중 상한 = 2% / 실효 손절폭" in content
     assert "평가 비중 상한 = 35%" in content
@@ -135,7 +135,7 @@ def test_analyze_stock_wires_detected_signals_to_user_rules() -> None:
     """6단계가 잡은 서프라이즈·20주선 신호가 10단계 룰 환산까지 이어져야 한다."""
     content = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
 
-    assert "매매규칙 13" in content
+    assert "매매 규칙 12" in content
     assert "기술적 분석 규칙 1" in content
     assert "확신도 판정" in content
 
@@ -181,7 +181,7 @@ def test_analyze_stock_gates_entry_on_the_scripted_stage() -> None:
 
 
 def test_value_path_waits_for_the_scripted_turn() -> None:
-    """「매매규칙 2」의 '고개 드는 초반'은 turn_scan이 정본이다 — 6단계가 돌리고 10단계·템플릿·advice가 인용한다.
+    """「매매 규칙 2」의 '고개 드는 초반'은 turn_scan이 정본이다 — 6단계가 돌리고 10단계·템플릿·advice가 인용한다.
 
     150일선 스테이지로 읽으면 가치주 바닥은 저점 +30~50% 뒤에야 2단계가 된다 (2026-09-12).
     """
@@ -374,7 +374,9 @@ def test_margin_call_climax_is_an_index_only_carve_out() -> None:
     rules = _my_rules()
     rule2 = [ln for ln in rules.splitlines() if ln.startswith("2. **지수·섹터 레버리지")][0]
 
-    assert "반대매매" in rule2 and "2σ" in rule2
+    assert "반대매매" in rule2 and "「시장 국면」" in rule2
+    climax = [ln for ln in rules.splitlines() if ln.startswith("- **클라이맥스**")][0]
+    assert "2σ" in climax
     assert "지수 레버리지에 한해" in rule2
     assert "섹터" in rule2
     # 기존 보유 물량 처리는 사용자 판단 영역이다 — 룰이 대신 정하지 않는다.
@@ -399,7 +401,7 @@ def test_leverage_rule_three_constants_match_the_documented_table() -> None:
     assert f"| `VOLATILE_DAY_PCT` | {module.VOLATILE_DAY_PCT}%" in table
     assert f"| `VOLATILE_WINDOW_DAYS` | {module.VOLATILE_WINDOW_DAYS} |" in table
     assert f"| `VOLATILE_DAY_TRIGGER` | {module.VOLATILE_DAY_TRIGGER} |" in table
-    assert "전부 양수" in table
+    assert "저점 유지" in table
     assert "섹터" in table
 
 
@@ -432,20 +434,20 @@ def test_margin_call_window_rationale_is_documented() -> None:
     # 비중 축은 사용자가 더한 두 번째 급증 조건이다 — 룰 원문과 근거 표가 함께 말해야 한다.
     assert f"`MARGIN_CALL_RATIO_SIGMA` | {module.MARGIN_CALL_RATIO_SIGMA:g}" in skill
     assert "2026-10-14" in skill
-    rule2 = [ln for ln in _my_rules().splitlines() if ln.startswith("2. **지수·섹터 레버리지")][0]
-    assert f"반대매매 비중이 같은 기준으로 +{module.MARGIN_CALL_RATIO_SIGMA:g}σ 이상" in rule2
-    assert "둘 중 하나" in rule2
+    climax = [ln for ln in _my_rules().splitlines() if ln.startswith("- **클라이맥스**")][0]
+    assert f"반대매매 비중이 같은 기준으로 +{module.MARGIN_CALL_RATIO_SIGMA:g}σ 이상" in climax
+    assert "둘 중 하나" in climax
 
 
 def test_long_bull_candle_is_wired_into_the_entry_rules() -> None:
-    """「매매규칙 12」는 진입가를 구속한다 — 스크립트가 날짜와 종가를 주는데 스킬이 안 쓰면 소용없다."""
+    """「매매 규칙 12」는 진입가를 구속한다 — 스크립트가 날짜와 종가를 주는데 스킬이 안 쓰면 소용없다."""
     analyze = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
     stage = (SKILLS_ROOT / "stage-analysis" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "장대 양봉" in stage and "LONG_BULL_PCT" in stage
-    # analyze-stock 10단계의 매매규칙 12 항목이 스크립트 판정을 인용해야 한다.
-    block = analyze.split("「매매규칙 12」")[1][:300]
-    assert "stage_scan" in block or "장대 양봉 줄" in block
+    # analyze-stock 10단계의 매매 규칙 12 항목이 스크립트 판정을 인용해야 한다.
+    blocks = [part[:300] for part in analyze.split("「매매 규칙 12」")[1:]]
+    assert any("stage_scan" in block or "장대 양봉 줄" in block for block in blocks)
 
 
 def test_every_skill_script_is_named_by_a_skill_document() -> None:
@@ -516,9 +518,9 @@ def test_every_mechanically_checkable_rule_has_a_script() -> None:
         "레버리지 규칙 3": ("daily-digest/scripts/fetch_market_signals.py", "leverage_liquidation"),
         "기술적 분석 규칙 1": ("stage-analysis/scripts/stage_scan.py", "MA_20WEEK"),
         # '바닥을 다진 후 고개를 들기 시작하는 초반' — 바닥 저점이 버틴 거래일 수로 확정한다.
-        "매매규칙 2": ("stage-analysis/scripts/turn_scan.py", "BASE_MIN_AGE"),
-        "기본 원칙 13": ("daily-digest/scripts/peak_drawdown.py", "ACCOUNT_MDD_BANDS"),
-        "매매규칙 6": ("daily-digest/scripts/extract_portfolio.py", "STOP_FULL_PCT"),
+        "매매 규칙 2": ("stage-analysis/scripts/turn_scan.py", "BASE_MIN_AGE"),
+        "계좌 규칙 1": ("daily-digest/scripts/peak_drawdown.py", "ACCOUNT_MDD_BANDS"),
+        "매매 규칙 6": ("daily-digest/scripts/extract_portfolio.py", "STOP_FULL_PCT"),
     }
     for rule, (path, symbol) in checks.items():
         text = (SKILLS_ROOT / path).read_text(encoding="utf-8")
@@ -531,8 +533,8 @@ def test_leverage_and_short_term_rules_are_wired_into_advice() -> None:
 
     # 「레버리지 규칙 1」 개별 종목 레버리지 금지 — 2·3만 인용되고 1만 빠져 있었다.
     assert "레버리지 규칙 1" in advice
-    # 「기본 원칙 11」 단기 투자 금지 — 이벤트 매매(「매매규칙 14」)와 같은 자리에 온다.
-    assert "기본 원칙 11" in advice
+    # 「기본 원칙 2」 단기 투자 금지 — 이벤트 매매(「매매 규칙 14」)와 같은 자리에 온다.
+    assert "기본 원칙 2" in advice
 
     briefing = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
     # 브리핑의 레버리지 리마인드는 스크립트 판정을 인용한다.
@@ -550,14 +552,14 @@ def test_rule_check_blocks_convert_every_line_my_rules_asks_for() -> None:
 
     advice = (SKILLS_ROOT / "advice" / "SKILL.md").read_text(encoding="utf-8")
     block = advice.split("🛡️ 룰 체크")[1].split("---")[0]
-    assert "「매매규칙 7」 -8%" in block
-    assert "「매매규칙 6」 -12%" in block
-    assert "「매매규칙 6」 -15%" in block
+    assert "「매매 규칙 6」 -8%" in block
+    assert "「매매 규칙 6」 -12%" in block
+    assert "「매매 규칙 6」 -15%" in block
     assert "매수원금 비중 상한 = 2% ÷ 실효 손절폭" in block
     assert "평가 비중 상한 35%" in block
     # 2026-10-21에 은퇴한 선(룰 6 -20% 전량, 룰 7 -10%)이 남으면 안 된다.
-    assert "「매매규칙 6」 -20%" not in block
-    assert "「매매규칙 7」 -10%" not in block
+    assert "「매매 규칙 6」 -20%" not in block
+    assert "「매매 규칙 7」 -10%" not in block
 
     template = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
     assert "실효 손절폭 max(하방, 15%)" in template
@@ -566,7 +568,7 @@ def test_rule_check_blocks_convert_every_line_my_rules_asks_for() -> None:
 
 
 def test_advice_resolves_rule_versus_rule_conflicts() -> None:
-    """급락장에선 「매매규칙 6」 손절 예외(팔지 마라)와 「기본 원칙 13」(줄여라)이 동시에 켜진다.
+    """급락장에선 「매매 규칙 6」 손절 예외(팔지 마라)와 「계좌 규칙 1」(줄여라)이 동시에 켜진다.
 
     advice가 대가↔룰 충돌만 정리하고 룰↔룰 충돌을 비워 두면 매번 재논쟁이 난다.
     """
@@ -574,13 +576,13 @@ def test_advice_resolves_rule_versus_rule_conflicts() -> None:
     table = advice.split("대가 기준 vs 사용자 룰 충돌 처리")[1].split("## 중요한 원칙")[0]
 
     assert "룰 ↔ 룰 충돌" in table
-    assert "기본 원칙 13" in table and "매매규칙 6" in table
+    assert "계좌 규칙 1" in table and "매매 규칙 6" in table
     # 계좌 레벨 룰이 종목 레벨 예외보다 위다.
     assert "계좌 레벨" in table
 
 
 def test_no_file_presents_one_tier_as_the_whole_of_rule_six() -> None:
-    """「매매규칙 6」을 인용하면서 -12%만 적으면 -15% 전량 매도 티어가 통째로 사라진다.
+    """「매매 규칙 6」을 인용하면서 -12%만 적으면 -15% 전량 매도 티어가 통째로 사라진다.
 
     2026-10-21에 -15%/-20%에서 -12%/-15%로 바뀌었다. 옛 -20% 전량을 인용하는 줄도 남으면 안 된다.
     """
@@ -592,15 +594,15 @@ def test_no_file_presents_one_tier_as_the_whole_of_rule_six() -> None:
         if path.suffix not in {".md", ".py"} or "__pycache__" in path.parts:
             continue
         for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if "매매규칙 6" not in line:
+            if "매매 규칙 6" not in line:
                 continue
-            # 티어를 명시한 줄(-12% = 1차 분할)과 축을 구분하는 줄은 정상이다.
-            allowed = ("-15%", "1차 분할", "평단", "고점")
+            # 티어를 명시한 줄(-12% = 30% 축소)과 축을 구분하는 줄은 정상이다.
+            allowed = ("-15%", "30%", "평단", "고점")
             if "-12%" in line and not any(tok in line for tok in allowed):
                 bad.append(f"{path.relative_to(REPO_ROOT)}:{i}")
             if "-20% 전량" in line or "-15% 1차 분할" in line:
                 bad.append(f"{path.relative_to(REPO_ROOT)}:{i} (옛 티어)")
-    assert not bad, "「매매규칙 6」을 한 티어만 또는 옛 티어로 인용한 곳: " + ", ".join(bad)
+    assert not bad, "「매매 규칙 6」을 한 티어만 또는 옛 티어로 인용한 곳: " + ", ".join(bad)
 
 
 def test_master_versus_rule_table_sizes_off_the_terminal_stop() -> None:
@@ -616,7 +618,7 @@ def test_master_versus_rule_table_sizes_off_the_terminal_stop() -> None:
 
 
 def test_no_skill_still_cites_the_retired_rule_seven_line() -> None:
-    """「매매규칙 7」은 2026-10-21에 -10%에서 -8%가 됐다. -10% 비중 축소를 인용하는 곳이 남으면 안 된다."""
+    """「매매 규칙 7」은 2026-10-21에 -10%에서 -8%가 됐다. -10% 비중 축소를 인용하는 곳이 남으면 안 된다."""
     targets = [
         SKILLS_ROOT / "advice" / "SKILL.md",
         SKILLS_ROOT / "advice" / "references" / "trend_following.md",
@@ -625,7 +627,7 @@ def test_no_skill_still_cites_the_retired_rule_seven_line() -> None:
         REPO_ROOT / "template" / "stock_analysis.md",
         REPO_ROOT / "template" / "daily_digest.md",
     ]
-    retired = ("-10% 비중 축소", "「매매규칙 7」 -10%", "매매규칙 7 (-10%", "매매규칙 7(-10%")
+    retired = ("-10% 비중 축소", "「매매 규칙 7」 -10%", "매매 규칙 7 (-10%", "매매 규칙 7(-10%")
     for path in targets:
         text = path.read_text(encoding="utf-8")
         hits = [tok for tok in retired if tok in text]
@@ -633,59 +635,58 @@ def test_no_skill_still_cites_the_retired_rule_seven_line() -> None:
 
     # 브리핑 룰 리마인드도 두 손절 티어를 모두 안내해야 한다.
     briefing = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
-    assert "매매규칙 7 (-8%" in briefing
+    assert "매매 규칙 6 (-8%" in briefing
     assert "-15% 전량" in briefing
 
 
 def test_split_sell_rule_does_not_contradict_the_stop_tiers() -> None:
-    """「매매규칙 5」의 즉시 전량 조건에 -15% 손절이 들어가면 「매매규칙 6」의 1차 분할과 정반대가 된다.
+    """「매매 규칙 5」의 즉시 전량 조건에 -15% 손절이 들어가면 「매매 규칙 6」의 티어와 정반대가 된다.
 
     2026-09-02에 규칙 6이 1차 분할 / 전량 두 티어로 바뀌었으므로(2026-10-21부터 -12% / -15%) 규칙 5의
     즉시 전량 사유는 아이디어 훼손과 「레버리지 규칙 3」 둘만 남는다.
     """
     rules = _my_rules()
     rule5 = re.search(r"^5\. \*\*분할 매도\*\*.*$", rules, re.MULTILINE)
-    assert rule5, "「매매규칙 5」를 찾지 못했다"
+    assert rule5, "「매매 규칙 5」를 찾지 못했다"
     text = rule5.group(0)
 
     immediate = text.split("즉시 전량 정리")[0]
-    assert "매매규칙 6" not in immediate, "즉시 전량 조건이 여전히 「매매규칙 6」에 걸려 있다"
+    assert "매매 규칙 6" not in immediate, "즉시 전량 조건이 여전히 「매매 규칙 6」에 걸려 있다"
     assert "투자 아이디어가 깨졌거나" in immediate
     assert "레버리지 규칙 3(변동성 레버리지 청산)" in immediate
     # 손절 티어의 소유권은 규칙 6에 있다고 명시해 둔다.
-    assert "「매매규칙 6」의 -12%/-15% 손절은 그 규칙이 정한 티어" in text
+    assert "「매매 규칙 6」의 -8%/-12%/-15% 손절은 그 규칙이 정한 티어" in text
 
 
 def test_portfolio_thresholds_match_my_rules() -> None:
     """임계값 정본은 `context/my_rules.md`다. 룰 숫자가 바뀌면 이 테스트가 먼저 깨진다.
 
-    2026-09-02 「매매규칙 6·7」이 바뀌었는데 스크립트가 옛 -8%·단일 -15%에 머문 적이 있다.
+    2026-09-02 「매매 규칙 6·7」이 바뀌었는데 스크립트가 옛 -8%·단일 -15%에 머문 적이 있다.
     상수를 문자열로 못 박지 않고 룰 원문에서 파싱해 대조한다.
     """
     module = load_script("daily-digest", "extract_portfolio")
     rules = _my_rules()
 
-    trim = re.search(r"^7\. \*\*(-\d+)% 비중 축소\*\*", rules, re.MULTILINE)
-    stop = re.search(r"^6\. \*\*(-\d+)%, (-\d+)% 손절\*\*", rules, re.MULTILINE)
+    stop = re.search(r"^6\. \*\*(-\d+)%, (-\d+)%, (-\d+)% 손절\*\*", rules, re.MULTILINE)
     cushion = re.search(r"수익이 (\d+)-(\d+)% 정도 발생하면", rules)
     weight = re.search(r"최대 (\d+)%를 넘지 않도록", rules)
     holdings = re.search(r"종목 수는 (\d+)~(\d+)종목", rules)
-    etf_weight = re.search(r"최종 비중은 ETF마다 최대 (\d+)%", rules)
+    etf_weight = re.search(r"지수별로 각각 최대 (\d+)%", rules)
     etf_trend = re.search(r"평단\(현재 보유분 기준\) 대비 \+(\d+)% 이상 오른 뒤, 그 이후 최고 종가 대비 (-\d+)%", rules)
-    assert trim and stop and cushion and weight and holdings, "룰 원문 형식이 바뀌었다"
+    assert stop and cushion and weight and holdings, "룰 원문 형식이 바뀌었다"
     assert etf_weight and etf_trend, "「지수 ETF 규칙 3·4」 원문 형식이 바뀌었다"
 
     assert module.INDEX_ETF_MAX_WEIGHT_PCT == float(etf_weight.group(1))
     # 2026-10-28: 상한은 매수원금 비중 축이고 주가 상승분 초과는 허용한다 — 스크립트가 그 축으로 판정한다.
     etf_rule = re.search(r"^3\. \*\*비중\*\*:.*$", rules, re.MULTILINE)
-    assert etf_rule and "매수 없이 주가 상승으로 20%를 넘는 것은 허용" in etf_rule.group(0)
+    assert etf_rule and "매수 없이 주가 상승으로 30%를 넘는 것은 허용" in etf_rule.group(0)
     assert "매수원금 비중에 적용" in etf_rule.group(0)
     assert module.INDEX_ETF_TREND_GAIN_PCT == float(etf_trend.group(1))
     assert module.INDEX_ETF_TREND_PULLBACK_PCT == float(etf_trend.group(2))
 
-    assert module.TRIM_PCT == float(trim.group(1))
-    assert module.STOP_LOSS_PCT == float(stop.group(1))
-    assert module.STOP_FULL_PCT == float(stop.group(2))
+    assert module.TRIM_PCT == float(stop.group(1))
+    assert module.STOP_LOSS_PCT == float(stop.group(2))
+    assert module.STOP_FULL_PCT == float(stop.group(3))
     assert module.PROFIT_CUSHION_PCT == float(cushion.group(1))
     assert module.MAX_WEIGHT_PCT == float(weight.group(1))
     assert (module.MIN_HOLDINGS, module.MAX_HOLDINGS) == (
@@ -695,7 +696,7 @@ def test_portfolio_thresholds_match_my_rules() -> None:
 
 
 def test_account_mdd_action_text_matches_my_rules(tmp_path: Path) -> None:
-    """경고에 붙는 대응 문구는 「기본 원칙 13」 원문에서 온다 — 룰이 바뀌면 같이 바뀌어야 한다."""
+    """경고에 붙는 대응 문구는 「계좌 규칙 1」 원문에서 온다 — 룰이 바뀌면 같이 바뀌어야 한다."""
     module = load_script("daily-digest", "peak_drawdown")
     rules = (REPO_ROOT / "context" / "my_rules.md").read_text(encoding="utf-8")
 
@@ -703,17 +704,18 @@ def test_account_mdd_action_text_matches_my_rules(tmp_path: Path) -> None:
     assert "레버리지를 모두 정리하고 신규 매수를 중단" in rules
     assert "현금 비중을 30% 이상 확보" in rules
     assert "5거래일 동안 신규 매수를 금지" in rules
-    assert "복기한 뒤에만 매매를 재개" in rules
-    assert "신규 매수 중단은 지수가 더 하락하지 않고 반등하기 전까지 유지" in rules
+    assert "KOSPI·KOSDAQ 중 하나의 종가가 3일 이동평균 위로 회복하면 -10% 중단을 해제" in rules
+    assert "5거래일 경과와 복기 완료도 함께 충족" in rules
+    assert "해제 후 종가로 선을 위에서 아래로 다시 넘으면 새로 발동" in rules
     assert "레버리지 전량 정리" in module.ACCOUNT_MDD_ACTION[-10.0]
-    assert "신규 매수 중단(지수 하락 멈추고 반등 전까지)" in module.ACCOUNT_MDD_ACTION[-10.0]
+    assert "신규 매수 중단(KOSPI·KOSDAQ 중 하나 종가 3일선 회복 전까지)" in module.ACCOUNT_MDD_ACTION[-10.0]
     assert "5거래일 신규 매수 금지" in module.ACCOUNT_MDD_ACTION[-15.0]
     assert "5거래일 매수 금지는 개별 종목에만 적용" in rules
     assert "레버리지가 아닌 지수 ETF는 중단·금지 기간에도 바텀피싱" in rules
     assert "개별 종목 한정" in module.ACCOUNT_MDD_ACTION[-15.0]
     assert "지수 ETF 바텀피싱 분할 매수 허용" in module.ACCOUNT_MDD_ACTION[-15.0]
     assert "-10% 신규 매수 중단과 -15% 5거래일 매수 금지는 개별 종목에만 적용" in rules
-    assert "개별 종목 신규 매수 중단(지수 하락 멈추고 반등 전까지)" in module.ACCOUNT_MDD_ACTION[-10.0]
+    assert "개별 종목 신규 매수 중단(KOSPI·KOSDAQ 중 하나 종가 3일선 회복 전까지)" in module.ACCOUNT_MDD_ACTION[-10.0]
 
 
 FLAT_ARCHIVE_PATH_RE = re.compile(
@@ -753,9 +755,9 @@ def test_daily_digest_documents_peak_drawdown_step() -> None:
     # 밴드 4개와 룰 매핑이 모두 문서화돼 있어야 한다
     for band in ("-10%", "-15%", "-20%", "-30%"):
         assert band in skill
-    assert "매매규칙 3(추세 기반 매도)" in skill
-    assert "매매규칙 15" in skill
-    assert "기본 원칙 13" in skill
+    assert "매매 규칙 3(추세 기반 매도)" in skill
+    assert "매매 규칙 15" in skill
+    assert "계좌 규칙 1" in skill
     # 평단 축과 고점 축을 섞지 말라는 경고
     assert "평단 기준 룰과 다른 축이다" in skill
     assert "ticker_overrides.md" in skill
@@ -876,8 +878,8 @@ def test_stock_analysis_template_has_entry_path_and_trailing_stop() -> None:
 
     assert "| 진입 경로 |" in template
     assert "| 추세 이탈선 |" in template
-    # 「매매규칙 15」가 요구하는 것 — 미리 정한 선 + 매주 재검토.
-    assert "매매규칙 3·15" in template
+    # 「매매 규칙 15」가 요구하는 것 — 미리 정한 선 + 매주 재검토.
+    assert "매매 규칙 3·15" in template
     assert "매주 재검토" in template
     # §5에 밸류 게이트 체크리스트가 붙는다.
     assert "### 🚪 진입 경로 판정" in template
@@ -893,7 +895,7 @@ def test_trailing_stop_uses_the_closing_price_basis() -> None:
     assert "추세 이탈선" in skill
     block = skill.split("추세 이탈선")[1][:500]
     assert "종가 기준" in block
-    assert "매매규칙 3" in block and "매매규칙 15" in block
+    assert "매매 규칙 3" in block and "매매 규칙 15" in block
 
 
 def test_advice_records_the_entry_stage_conflict_resolution() -> None:

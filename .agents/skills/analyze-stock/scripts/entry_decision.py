@@ -12,7 +12,7 @@
   자식이 실패하면(비정상 종료·JSON 아님) 그 키는 `{"status":"unknown","reason":…}`이고
   `decide()`가 보류한다.
 - `valuation_grade`·`value_gate`: `--valuation`(valuation_decision.py 입력 JSON)을 같은 폴더의
-  `valuation_decision.decide`로 계산한다. 하방 막힘 = `risk.downside <= 0`(하단목표가 ≥ 현재가),
+  `valuation_decision.decide`로 계산한다. 하방 막힘 = `risk.downside_blocked`,
   손익비 = `risk.reward_risk`. 1차 수량·목표 비중·증량 트리거는 context의 `tranche_plan`이다.
 - `account_pause`·`event`·`long_bull`·`earnings`·`instrument`(필수), `leverage`·`tranche_plan`·`asof`
   (선택)는 `--context` JSON을 그대로 넘긴다. 모르는 키나 빠진 필수 키는 exit 2.
@@ -124,8 +124,8 @@ def build_valuation_inputs(valuation: Any, tranche_plan: Any) -> dict[str, Any]:
         raise EntryDecisionError(f"tranche_plan must have exactly {', '.join(TRANCHE_PLAN_KEYS)}")
     gate = {
         "status": "ok",
-        # 밸류 게이트 1번 「하방 막힘 — 하단목표가 ≥ 현재가」 = valuation_decision의 downside ≤ 0.
-        "downside_blocked": risk["downside"] <= 0,
+        # 밸류 게이트 1번 「하방 막힘」 판정은 valuation_decision이 정본이다.
+        "downside_blocked": risk["downside_blocked"],
         "reward_risk": risk["reward_risk"],
         **tranche_plan,
     }

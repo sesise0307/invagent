@@ -122,7 +122,7 @@ forecast, and the skill requires saying so alongside any date it produces.
 
 The stage verdict is too slow to time a value or neglected stock's bottom — 150-day
 confirmation arrives months after the low, or leaves the stock in stage 4 the whole
-way — so 「매매규칙 2」's "buy once the base is in and the price starts to lift" is judged
+way — so 「매매 규칙 2」's "buy once the base is in and the price starts to lift" is judged
 by `.agents/skills/stage-analysis/scripts/turn_scan.py` instead, on 20–60-day daily
 windows and on closes only. It returns one of four states: `falling` (a fresh base low
 within 15 sessions, a Wyckoff spring of up to 3% excepted — the base is the 120-day closing
@@ -143,7 +143,7 @@ keeps the trend-confirmed path A, while stages 1, 3 and 4 open path B only when 
 is `turning` and the value gate passes — stage 4 included, since a stock that has turned
 up is no longer falling (user decision, 2026-09-12). `entry_policy.py` takes the state as
 `turn`; unknown withholds and `falling` avoids. A `basing` stock can still open path C —
-early accumulation before the turn, the proviso added to 「매매규칙 2」 on 2026-09-25 — when
+early accumulation before the turn, the proviso added to 「매매 규칙 2」 on 2026-09-25 — when
 turn_scan's `accumulation` price check passes (a base at least 30 sessions old after a 20%
 or deeper decline, a box no more than 25% above the low, a close within 10% of it), the
 latest confirmed quarter's operating profit beat the same quarter a year earlier
@@ -204,7 +204,7 @@ and report recency, then EPS revision direction). Range width and the two
 dispersion ratios are reported alongside the targets and drive the confidence
 grade. The verdict is tied to `context/my_rules.md`: the centre against the
 50~100% expectation of 「기본 원칙 2」 including its 30% capped-downside proviso,
-and the low point against the -15% final stop of 「매매규칙 6」 (-20% until 2026-10-21), which together set the
+and the low point against the -15% final stop of 「매매 규칙 6」 (-20% until 2026-10-21), which together set the
 effective stop width used for the reward/risk ratio and the 「기본 원칙 4」 2%-rule
 position cap. The calculation rules live in `analyze-stock/SKILL.md` step 9; the
 output layout lives in `template/stock_analysis.md` §2.

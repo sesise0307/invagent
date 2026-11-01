@@ -17,11 +17,11 @@
 출력도 「경보(… 발동 판정 아님)」로 표기한다.
 
 같은 실행에서 과거 스냅샷들의 잔고 최고치 대비 계좌 MDD도 계산해
-`context/my_rules.md` 「기본 원칙 13(계좌 MDD 관리)」의 -10/-15% 발동 여부를 표기한다.
+`context/my_rules.md` 「계좌 규칙 1(계좌 MDD 관리)」의 -10/-15% 발동 여부를 표기한다.
 
 기존 룰 판정(`extract_portfolio.py`)은 **평단 기준** 수익률만 본다. 이 스크립트는 **고점 기준**
 축을 따로 본다. 크게 오른 뒤 꺾이는 종목은 평단 기준으로는 여전히 큰 수익이라 어떤 경고도
-받지 못하므로, 「매매규칙 3(추세 기반 매도)」·「매매규칙 15(trailing stop 사전 설정)」가
+받지 못하므로, 「매매 규칙 3(추세 기반 매도)」·「매매 규칙 15(trailing stop 사전 설정)」가
 요구하는 추세 훼손 감지를 이 축들이 담당한다.
 
 데이터 소스:
@@ -55,7 +55,7 @@ from invagent.datafeed.tickers import load_overrides, resolve_code
 PEAK_WINDOW_DAYS = 250      # 전고점 탐색 구간 (거래일 ≈ 52주)
 FETCH_CALENDAR_DAYS = 400   # 250거래일을 확보하기 위한 달력일 요청 폭
 DRAWDOWN_BANDS = (-10.0, -15.0, -20.0, -30.0)   # 종목 경보 밴드
-ACCOUNT_MDD_BANDS = (-10.0, -15.0)              # 「기본 원칙 13」 계좌 MDD 밴드
+ACCOUNT_MDD_BANDS = (-10.0, -15.0)              # 「계좌 규칙 1」 계좌 MDD 밴드
 # 다음 밴드에 이만큼(%p) 안으로 들어오면 발동 전에 미리 경고한다. 밴드가 요구하는 대응
 # (계좌 = 레버리지 정리·현금 확보·신규 매수 금지 / 종목 = trailing stop·분할 매도 기준 확정)은
 # 밟은 뒤 준비하면 늦기 때문에 도달 전에 알리는 것이 이 상수들의 목적이다.
@@ -72,11 +72,11 @@ BAND_EPS = 1e-9
 
 BAND_MARK = {-10.0: "🟡", -15.0: "🟠", -20.0: "🔴", -30.0: "⛔"}
 
-# 임박 경고가 함께 출력하는 대응 문구. `context/my_rules.md` 「기본 원칙 13」 원문을 요약한 것이라
+# 임박 경고가 함께 출력하는 대응 문구. `context/my_rules.md` 「계좌 규칙 1」 원문을 요약한 것이라
 # 룰 본문이 바뀌면 여기도 같이 고친다.
 ACCOUNT_MDD_ACTION = {
-    -10.0: "「기본 원칙 13」 = 레버리지 전량 정리 · 개별 종목 신규 매수 중단(지수 하락 멈추고 반등 전까지) · 확신 낮은 종목부터 축소해 현금 30% 이상 확보.",
-    -15.0: "「기본 원칙 13」 = 5거래일 신규 매수 금지(개별 종목 한정 · 비레버리지 지수 ETF 바텀피싱 분할 매수 허용) · 포트폴리오와 룰 위반 복기 후에만 매매 재개.",
+    -10.0: "「계좌 규칙 1」 = 레버리지 전량 정리 · 개별 종목 신규 매수 중단(KOSPI·KOSDAQ 중 하나 종가 3일선 회복 전까지) · 확신 낮은 종목부터 축소해 현금 30% 이상 확보.",
+    -15.0: "「계좌 규칙 1」 = 5거래일 신규 매수 금지(개별 종목 한정 · 비레버리지 지수 ETF 바텀피싱 분할 매수 허용) · 포트폴리오와 룰 위반 복기 후에만 매매 재개.",
 }
 
 SECTION_TITLE = "## 전고점 낙폭 (52주 시장 고점 · 계좌 기록 고점)"
@@ -245,7 +245,7 @@ def account_mdd(snapshot_dir: Path, today_balance: float | None, today: str) -> 
     hits = [b for b in ACCOUNT_MDD_BANDS if mdd <= b + BAND_EPS]
 
     # 아직 안 밟은 밴드마다 발동 잔고와 남은 거리를 계산해 둔다.
-    # 밟은 뒤 알리면 「기본 원칙 13」의 대응을 준비할 시간이 없다.
+    # 밟은 뒤 알리면 「계좌 규칙 1」의 대응을 준비할 시간이 없다.
     pending = pending_bands(mdd, peak, ACCOUNT_MDD_BANDS)
     for p in pending:
         p["gap_won"] = current - p["trigger"]  # 발동까지 남은 금액
@@ -371,8 +371,9 @@ def update_mdd_state(
 ) -> tuple[dict, bool]:
     """최초 MDD 발동일과 매수 중단 상태를 유지하고, 저장할지를 함께 돌려준다.
 
-    -10% 해제 조건은 규칙에 없으므로 자동 해제하지 않는다. 재개는 사용자 입력으로만 기록한다.
+    재개는 입력으로만 기록한다. 해제 조건(지수 3일선 회복)은 `fetch_market_signals.py`가 판정한다.
     -15%는 최초 발동일부터 거래일 5개와 복기 완료를 각각 기록하되 재개를 추론하지 않는다.
+    해제 후 종가로 선을 위에서 아래로 다시 넘을 때만 새 발동이다. 해제 전 재진입은 재발동이 아니다.
 
     `asof`보다 뒤 날짜에 쓰인 상태는 과거 날짜 재실행(replay)이므로 물려받지 않고 빈 상태에서
     계산하며, 그 결과는 저장하지 않는다 — 더 최신 상태를 과거 판정으로 덮어쓰면 안 된다.
@@ -401,6 +402,20 @@ def update_mdd_state(
     else:
         item.setdefault("resume_authorized", False)
 
+    hits = {"10": band is not None and band <= -10.0, "15": band is not None and band <= -15.0}
+    if item["resume_authorized"] and not account.get("error"):
+        crossed = [key for key, hit in hits.items() if hit and item.get(f"above_{key}_since_release")]
+        for key, hit in hits.items():
+            if not hit:
+                item[f"above_{key}_since_release"] = True
+        if crossed:
+            for key in crossed:
+                item[f"first_{key}_breach_date"] = asof
+            for key in ("resume_authorized_at", "review_completed_at", "above_10_since_release", "above_15_since_release"):
+                item.pop(key, None)
+            item["resume_authorized"] = False
+            item["review_completed"] = False
+
     first_15 = item.get("first_15_breach_date")
     sessions = sorted({d for d in session_dates if first_15 and first_15 <= d <= asof})
     if first_15 and session_dates:
@@ -413,7 +428,7 @@ def update_mdd_state(
         item["five_session_count"] = 0
         item["five_session_complete"] = False
     item["pause_active"] = bool(item.get("first_10_breach_date") and not item["resume_authorized"])
-    item["release_policy"] = "manual_user_resume_required"
+    item["release_policy"] = "index_3ma_recorded_by_resume_flag"
     item["asof"] = asof
     return state, state != previous and not replay
 
@@ -492,7 +507,7 @@ def render(
         f"내가 사기 전 고점까지 포함한다.",
         "> **계좌 기록 고점** = `output/portfolio/` 스냅샷에 기록된 최고 **현재가**(시트 수집가). "
         "내가 관측을 시작한 뒤의 고점만 본다.",
-        "> 두 축은 고점의 정의도 가격 기준도 다르고, 평단 기준 룰(「매매규칙 6·7」)과도 다른 축이다.",
+        "> 두 축은 고점의 정의도 가격 기준도 다르고, 평단 기준 룰(「매매 규칙 6」)과도 다른 축이다.",
         "",
         "| 종목 | 52주 고점(일자) | 현재 종가 | 52주 낙폭 | 경보 | "
         "계좌 기록 고점(일자) | 기록 낙폭 | 평단 수익률 | 비중 |",
@@ -584,13 +599,13 @@ def render(
         )
 
     if account.get("error"):
-        lines.append(f"- 계좌 MDD(「기본 원칙 13」): 계산 불가 — {account['error']}")
+        lines.append(f"- 계좌 MDD(「계좌 규칙 1」): 계산 불가 — {account['error']}")
     else:
         state_label = (
             f"← **발동 ({account['band']:.0f}%)**" if account["band"] is not None else "→ 미발동"
         )
         lines.append(
-            f"- 계좌 MDD(「기본 원칙 13」): 잔고 {won(account['current'])} · "
+            f"- 계좌 MDD(「계좌 규칙 1」): 잔고 {won(account['current'])} · "
             f"스냅샷 고점 {won(account['peak'])}({account['peak_date']}) · "
             f"{account['mdd']:+.1f}% {state_label}"
         )
@@ -618,7 +633,7 @@ def render(
         pause = "유지" if persisted.get("pause_active") else "사용자 재개 승인 기록"
         lines.append(
             f"- 계좌 MDD 지속 상태: -10% 최초 발동 {persisted['first_10_breach_date']} · "
-            f"신규 매수 중단 {pause}. 자동 해제 기준은 정하지 않는다."
+            f"신규 매수 중단 {pause}. 해제 판정은 `fetch_market_signals.py`의 `[계좌 규칙 1]` 줄이다."
         )
     if persisted.get("first_15_breach_date"):
         count = persisted.get("five_session_count")
@@ -626,7 +641,7 @@ def render(
         lines.append(
             f"- -15% 최초 발동 {persisted['first_15_breach_date']} · 5거래일 "
             f"{count_text} · 복기 완료 "
-            f"{'확인' if persisted.get('review_completed') else '미확인'} · 재개는 사용자 명시가 필요하다."
+            f"{'확인' if persisted.get('review_completed') else '미확인'} · 재개는 5거래일·복기 완료와 지수 3일선 회복이 모두 필요하다."
         )
     return "\n".join(lines) + "\n"
 
@@ -660,7 +675,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-file", type=Path, help="MDD 최초 발동일과 재개 상태 JSON")
     parser.add_argument("--sessions", type=Path, help="검증된 거래일 날짜 목록(JSON 또는 한 줄 한 날짜)")
     parser.add_argument("--review-completed", action="store_true", help="-15% 발동 후 복기 완료를 명시한다")
-    parser.add_argument("--resume-authorized", action="store_true", help="사용자가 신규 매수 재개를 명시했다")
+    parser.add_argument("--resume-authorized", action="store_true", help="해제 조건 충족으로 신규 매수 재개를 기록한다")
     parser.add_argument("--json", action="store_true", help="렌더링 대신 구조화 JSON을 출력한다")
     args = parser.parse_args(argv)
     if args.no_cache:
