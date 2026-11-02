@@ -274,7 +274,11 @@ def load_record_history(
 ) -> tuple[dict[str, list[tuple[str, float]]], dict]:
     """스냅샷 이력 전체 → 종목명별 (일자, 현재가) 리스트 + 구간 메타.
 
-    `## 보유` 표를 파싱할 수 없는 스냅샷(손으로 쓴 파일 등)은 조용히 건너뛴다.
+    전량 매도로 유효 스냅샷에서 사라진 종목은 그때까지의 이력을 버린다. 재진입 뒤에는 재진입 이후
+    기록만 고점 후보다 — 이전 보유 구간의 고점으로 재면 내가 보유하지 않은 하락이 낙폭에 섞인다.
+
+    `## 보유` 표를 파싱할 수 없는 스냅샷(손으로 쓴 파일 등)은 조용히 건너뛴다. 보유 여부를 알 수
+    없는 파일이므로 이력도 끊지 않는다.
     이 축의 존재 이유가 "네트워크 없이도 남는 낙폭"이므로 한 파일의 형식 차이로 죽으면 안 된다.
     """
     history: dict[str, list[tuple[str, float]]] = {}
@@ -286,6 +290,8 @@ def load_record_history(
         except (OSError, ValueError):
             continue
         valid_dates.append(path.stem)
+        held = {holding_name(row) for row in rows}
+        history = {name: samples for name, samples in history.items() if name in held}
         for row in rows:
             name = holding_name(row)
             price = to_float(row.get("현재가", ""))
@@ -579,8 +585,7 @@ def render(
         lines.append(
             f"- (주의) 계좌 기록 고점은 스냅샷 {meta['valid_files']}개"
             f"({meta['from']}~{meta['to']}) 안에서만 찾은 값이라 그 이전 고점·장중 등락은 "
-            f"담기지 않는다{skip_note}. 매도 후 재매수 구간도 구분하지 않고 전체 기록의 "
-            "최고 현재가를 쓴다."
+            f"담기지 않는다{skip_note}. 전량 매도 후 재진입한 종목은 재진입 이후 기록만 쓴다."
         )
 
     fallback: dict[str, list[str]] = {}

@@ -683,7 +683,7 @@ def test_render_names_both_axes_and_forbids_summing(monkeypatch: pytest.MonkeyPa
     # 각주 = 기록 구간·개수·제외 파일 수
     assert "스냅샷 22개(2026-08-09~2026-09-03)" in section
     assert "1개는 형식이 달라 제외" in section
-    assert "매도 후 재매수 구간도 구분하지 않고" in section
+    assert "재진입 이후 기록만" in section
 
 
 def test_append_section_removes_legacy_title(tmp_path: Path) -> None:
@@ -924,3 +924,21 @@ def test_unreadable_account_does_not_count_as_recovered_above_the_line() -> None
 
     assert state["account_mdd"]["pause_active"] is False
     assert state["account_mdd"]["first_15_breach_date"] == "2026-10-15"
+
+
+def test_record_history_restarts_after_full_exit_and_reentry(tmp_path: Path) -> None:
+    """전량 매도 전 고점은 재진입 뒤 낙폭의 기준이 아니다 (올릭스 2026-08 보유 → 10/22 재진입)."""
+    module = load_script("daily-digest", "peak_drawdown")
+    _write_snapshot(tmp_path, "2026-08-10", _record_snapshot("2026-08-10", {"알파전자": 139_300, "베타파마": 50_000}))
+    _write_snapshot(tmp_path, "2026-09-10", _record_snapshot("2026-09-10", {"베타파마": 51_000}))
+    _write_snapshot(tmp_path, "2026-10-22", _record_snapshot("2026-10-22", {"알파전자": 106_000, "베타파마": 52_000}))
+
+    history, _ = module.load_record_history(tmp_path)
+    result = module.record_drawdown("알파전자", 93_500.0, "2026-11-02", history)
+
+    assert history["알파전자"] == [("2026-10-22", 106_000.0)]
+    assert result["peak"] == 106_000.0 and result["peak_date"] == "2026-10-22"
+    assert result["drawdown"] == pytest.approx(-11.79, abs=0.01)
+    assert result["band"] == -10.0
+    # 계속 보유한 종목의 이력은 그대로다
+    assert [d for d, _ in history["베타파마"]] == ["2026-08-10", "2026-09-10", "2026-10-22"]
