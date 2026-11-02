@@ -802,6 +802,11 @@ def main(argv: list[str] | None = None) -> int:
 
     # 실적 축(`info`)은 본주 것, 시세 축(`price`)은 종목 자기 것이다 — 보통주면 같은 응답이다.
     price = payloads.price
+    if not price:
+        # 보통주는 두 축이 같은 응답이라, 뒤따른 시세 축 요청이 실패하면 실적 축까지 비어 있다.
+        detail = payloads.info.gaps[-1] if payloads.info.gaps else "빈 응답"
+        print(f"ERROR: StockEasy 시세 호출 실패 — {detail}", file=sys.stderr)
+        return 1
     parent_si = info.get("stock_info") or {}
     si = price.get("stock_info") or {}
     is_preferred = payloads.info.is_preferred

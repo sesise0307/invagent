@@ -334,6 +334,32 @@ def test_stock_info_main_renders_quote_and_consensus(
     assert "2026Q4 2026-08-12: 443.43 → 427.55 (-3.58%)" in out
 
 
+def test_stock_info_price_axis_failure_exits_1_with_the_reason(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """실적 축을 받은 뒤 예산이 바닥나 시세 축만 실패해도 traceback 없이 수집 실패로 끝난다."""
+    module = load_script("analyze-stock", "fetch_stock_info")
+    info_tab_calls = []
+
+    def fake_fetch(path, params=None, referer=None, cookie=None, ttl=None):
+        if path == datafeed_stockeasy.ENDPOINTS["search"]:
+            return [{"stock_code": "064290", "stock_name": "인텍플러스", "market": "KR"}], None
+        if path.startswith("/stock-info/info-tab/"):
+            info_tab_calls.append(ttl)
+            if len(info_tab_calls) == 1:
+                return STOCK_INFO_PAYLOAD, None
+            return None, "로그인 요청 예산 소진"
+        return None, "로그인 요청 예산 소진"
+
+    monkeypatch.setattr(datafeed_stockeasy, "fetch_stock_json", fake_fetch)
+    monkeypatch.setattr(datafeed_stockeasy, "load_cookie", lambda: "session=abc")
+
+    assert module.main(["064290"]) == 1
+    err = capsys.readouterr().err
+    assert "ERROR: StockEasy 시세 호출 실패" in err
+    assert "로그인 요청 예산 소진" in err
+
+
 def test_stock_info_since_filters_news_and_flags_new_reports(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
