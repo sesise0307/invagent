@@ -849,7 +849,9 @@ def test_daily_digest_documents_link_summary_step() -> None:
     assert "1,000자" in skill
     # 실패 경로와 2단계 출처 표기
     assert "[요약 실패]" in skill
-    assert "(링크 요약)" in skill
+    assert "(링크 미확인)" in skill
+    # 브리핑 본문에는 수집 경로 꼬리표를 붙이지 않는다 (2026-11-03 사용자 지시)
+    assert "출처 꼬리표 금지" in skill
     # 7단계가 원문 파일도 정리하고 오늘 것은 남긴다
     assert "output/daily-digest/links \\" in skill
     assert "output/daily-digest/links/{today}/**" in skill
