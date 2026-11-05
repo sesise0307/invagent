@@ -61,10 +61,11 @@ Authenticate once:
 uv run invagent authenticate
 ```
 
-Export saved messages from the last day:
+Export saved messages added since the last run (the last 24 hours on the first run):
 
 ```bash
-uv run invagent fetch-messages --days 1        # link fetching is on by default
+uv run invagent fetch-messages                 # link fetching is on by default
+uv run invagent fetch-messages --days 2        # explicit window, ignores the last run
 ```
 
 Linked pages are fetched and summarized into the export. Only public `http(s)`

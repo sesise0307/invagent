@@ -109,6 +109,7 @@ class MessageFetcher:
         fetch_links: bool = False,
         media_dir: Optional[Path] = None,
         link_dir: Optional[Path] = None,
+        after_id: Optional[int] = None,
     ) -> list[dict]:
         """
         저장된 메시지를 조회합니다.
@@ -124,6 +125,8 @@ class MessageFetcher:
             link_dir: 링크 본문을 저장할 디렉토리. 주어지면 읽기에 성공한 링크 본문은
                 여기 파일로 저장하고 링크 내용에는 경로와 요약 대기 마커만 남긴다. None이면
                 본문을 링크 내용에 그대로 둔다.
+            after_id: 주어지면 시간 창(days)을 쓰지 않고 이 ID보다 새 메시지만 받는다.
+                메시지 ID는 단조 증가하므로 직전 실행 이후분만 정확히 잘린다.
 
         Returns:
             메시지 리스트. 각 메시지는 다음 구조의 딕셔너리:
@@ -148,8 +151,11 @@ class MessageFetcher:
 
         # 저장된 메시지("me" 채널)에서 메시지 조회
         async for message in client.iter_messages("me"):
-            # cutoff date 이전 메시지는 중단
-            if message.date.replace(tzinfo=timezone.utc) < cutoff_date:
+            # 직전 실행에서 받은 메시지(after_id) 또는 cutoff date 이전 메시지는 중단
+            if after_id is not None:
+                if message.id <= after_id:
+                    break
+            elif message.date.replace(tzinfo=timezone.utc) < cutoff_date:
                 break
 
             has_image = _is_image_message(message)

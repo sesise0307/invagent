@@ -92,8 +92,10 @@ uv run python .agents/skills/market-data/scripts/fetch.py market [indices|big_pi
 ### 텔레그램
 
 ```bash
-uv run invagent fetch-messages --days 1
+uv run invagent fetch-messages            # 직전 실행 이후분만 · --days N은 N×24시간 창
 ```
+
+직전 실행이 본 마지막 메시지 ID가 `output/daily-digest/.last_fetch.json`에 남는다 — 규칙은 `daily-digest` 1단계.
 
 원본은 `output/daily-digest/raw/<날짜>_raw.md`, 첨부 이미지는 `output/daily-digest/media/<날짜>/`,
 링크 본문은 `output/daily-digest/links/<날짜>/`(raw에는 경로와 `[요약 대기]`만 남는다).

@@ -808,3 +808,35 @@ async def test_fetch_saved_messages_saves_body_that_starts_with_a_bracket(tmp_pa
     [saved] = list(link_dir.iterdir())
     assert saved.read_text(encoding="utf-8") == f"URL: {url}\n\n{body}\n"
     assert messages[0]["links_content"] == f"URL: {url}\n파일: {saved}\n[요약 대기]"
+
+
+def _text_message(message_id: int, date: datetime):
+    msg = MagicMock()
+    msg.id = message_id
+    msg.date = date
+    msg.text = f"message {message_id}"
+    msg.forward = None
+    msg.media = None
+    return msg
+
+
+@pytest.mark.asyncio
+async def test_fetch_after_id_returns_only_newer_messages_regardless_of_age():
+    """after_id가 주어지면 시간 창 없이 그 ID보다 새 메시지만 받는다 (주말 건너뛰기)"""
+    config = Config(api_id=1, api_hash="h", session_path="/tmp/s", output_dir="/tmp/o")
+    manager = TelegramClientManager()
+    fetcher = MessageFetcher(config, manager)
+    old = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    stream = [_text_message(i, old) for i in (12, 11, 10, 9)]
+
+    mock_client = AsyncMock()
+
+    async def async_gen(*args, **kwargs):
+        for msg in stream:
+            yield msg
+
+    mock_client.iter_messages = async_gen
+    with patch.object(manager, "get_client", return_value=mock_client):
+        messages = await fetcher.fetch_saved_messages(after_id=10)
+
+    assert [m["id"] for m in messages] == [12, 11]

@@ -279,3 +279,96 @@ def test_daily_prep_timed_out_step_keeps_its_partial_output(monkeypatch):
     assert results[0].ok is False
     assert "(시간 초과 — 부분 출력)" in text
     assert "SK하이닉스 -3.1%" in text
+
+
+def _run_fetch(tmp_path, args, returned_ids):
+    """fetch-messages를 가짜 fetcher로 돌리고 fetcher가 받은 인자를 돌려준다."""
+    from invagent.core.config import Config
+
+    config = Config(api_id=1, api_hash="h", session_path=tmp_path / "s", output_dir=tmp_path)
+    captured = {}
+
+    class FakeFetcher:
+        def __init__(self, config, client_manager):
+            pass
+
+        async def fetch_saved_messages(self, days=1, **kwargs):
+            captured["days"] = days
+            captured.update(kwargs)
+            return [{"id": i, "images": [], "links_content": ""} for i in returned_ids]
+
+        def format_messages_markdown(self, messages):
+            return ""
+
+    with patch("invagent.cli.Config.from_env", return_value=config), \
+         patch("invagent.cli.MessageFetcher", FakeFetcher), \
+         patch("invagent.cli.TelegramClientManager") as manager_cls:
+        manager_cls.return_value.disconnect = AsyncMock()
+        result = CliRunner().invoke(cli, ["fetch-messages", *args])
+    assert result.exit_code == 0, result.output
+    return captured
+
+
+def _state_file(tmp_path):
+    return tmp_path / "daily-digest/.last_fetch.json"
+
+
+def test_fetch_messages_resumes_after_previous_days_last_id(tmp_path):
+    """전일 상태가 있으면 그 last_id 이후만 받고, 오늘 상태를 새로 저장한다"""
+    import json
+    from datetime import datetime
+
+    state = _state_file(tmp_path)
+    state.parent.mkdir(parents=True)
+    state.write_text(json.dumps({"date": "2000-01-01", "after_id": 500, "last_id": 1000}))
+
+    captured = _run_fetch(tmp_path, [], returned_ids=[1050, 1001])
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    assert captured["after_id"] == 1000
+    assert json.loads(state.read_text()) == {"date": today, "after_id": 1000, "last_id": 1050}
+
+
+def test_fetch_messages_same_day_rerun_refetches_todays_window(tmp_path):
+    """같은 날 재실행은 오늘의 after_id를 다시 써서 오늘 raw를 빈 파일로 덮지 않는다"""
+    import json
+    from datetime import datetime
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    state = _state_file(tmp_path)
+    state.parent.mkdir(parents=True)
+    state.write_text(json.dumps({"date": today, "after_id": 1000, "last_id": 1050}))
+
+    captured = _run_fetch(tmp_path, [], returned_ids=[1052, 1001])
+
+    assert captured["after_id"] == 1000
+    assert json.loads(state.read_text()) == {"date": today, "after_id": 1000, "last_id": 1052}
+
+
+def test_fetch_messages_explicit_days_ignores_saved_state(tmp_path):
+    """--days를 직접 주면 상태와 무관하게 시간 창으로 받고, 상태는 갱신한다"""
+    import json
+    from datetime import datetime
+
+    state = _state_file(tmp_path)
+    state.parent.mkdir(parents=True)
+    state.write_text(json.dumps({"date": "2000-01-01", "after_id": 500, "last_id": 1000}))
+
+    captured = _run_fetch(tmp_path, ["--days", "2"], returned_ids=[1100, 900])
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    assert captured["days"] == 2
+    assert captured["after_id"] is None
+    assert json.loads(state.read_text())["last_id"] == 1100
+    assert json.loads(state.read_text())["date"] == today
+
+
+def test_fetch_messages_window_run_records_a_resumable_start(tmp_path):
+    """시간 창 실행(첫 실행·--days)은 받은 가장 오래된 메시지 직전을 오늘 시작점으로 남긴다"""
+    import json
+
+    _run_fetch(tmp_path, ["--days", "2"], returned_ids=[1100, 900])
+
+    assert json.loads(_state_file(tmp_path).read_text())["after_id"] == 899
+    rerun = _run_fetch(tmp_path, [], returned_ids=[1100, 900])
+    assert rerun["after_id"] == 899

@@ -89,7 +89,8 @@ Use `uv` for local development.
   `.agents/skills/` or `template/`.
 - `uv run pytest tests/test_peak_drawdown.py -q`: one skill script's behaviour —
   each script has its own `tests/test_<script>.py`.
-- `uv run invagent fetch-messages --days 1`: manually verify message fetching.
+- `uv run invagent fetch-messages`: manually verify message fetching (resumes after the
+  last run; `--days N` forces an N-day window).
 - `uv run invagent daily-prep`: run the briefing's independent prep steps at once.
 
 Skill scripts under `.agents/skills/**/scripts/` are invoked directly by path rather than

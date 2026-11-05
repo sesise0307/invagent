@@ -46,11 +46,15 @@ output/daily-digest/raw/<today>_raw.md
 
 - **파일이 없으면**: 아래 명령어로 먼저 메시지를 가져온다
   ```bash
-  uv run invagent fetch-messages --days 1
+  uv run invagent fetch-messages
   ```
 - **파일이 있으면**: 그대로 사용한다
 
-`--days` 인자를 사용자가 지정했다면 해당 값을 사용하되, 파일명 날짜는 오늘 날짜 기준이다.
+`--days` 없이 돌리면 **직전 실행 이후 새로 저장된 메시지만** 받는다(2026-11-05 사용자 결정). 마지막 메시지 ID를
+`output/daily-digest/.last_fetch.json`에 남겨 다음 실행이 그 뒤부터 받으므로, 주말처럼 하루를 건너뛰어도
+그 사이분이 한 raw에 다 들어오고 전일분은 다시 들어오지 않는다. 같은 날 재실행은 오늘 시작점을 다시 써서
+오늘 창을 그대로 다시 받는다. 상태 파일이 없는 첫 실행만 24시간 창이다.
+`--days N`을 사용자가 지정했다면 상태와 무관하게 N×24시간 창으로 받고(상태는 갱신), 파일명 날짜는 오늘 날짜 기준이다.
 
 첨부 이미지는 같은 명령이 `output/daily-digest/media/<today>/`에 함께 내려받는다
 (`--no-download-images`로 끌 수 있다). 판독은 1-4단계에서 한다.

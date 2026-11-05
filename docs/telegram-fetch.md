@@ -2,6 +2,20 @@
 
 Maintainer notes for `src/invagent/telegram/fetch.py` and `link_extractor.py`. The SSRF rules are summarised in `AGENTS.md`; the per-source rewrites and the marker contracts with `daily-digest/SKILL.md` are here. For reading one Naver post on request, use `docs/naver-blog-fetch.md`.
 
+## Fetch Window
+
+Without `--days`, `fetch-messages` resumes after the last run instead of taking a
+fixed 24-hour window (2026-11-05 user decision: a day's run must not repeat the
+previous day's messages, and a skipped day must not be lost). Telegram message ids
+only grow, so `src/invagent/telegram/fetch_state.py` keeps the newest id a run saw
+in `output/daily-digest/.last_fetch.json` as `{"date", "after_id", "last_id"}`:
+
+- a run on a new date fetches every message after the stored `last_id`, however old;
+- a rerun on the same date reuses that date's `after_id`, so regenerating today's
+  briefing gets today's window back instead of an empty raw export;
+- an explicit `--days N` or a missing state file uses the N-day (default 1) window and
+  records the id just before the oldest message fetched as that date's `after_id`.
+
 ## Images
 
 The same command downloads attached images to `media/<yyyy-mm-dd>/` and leaves

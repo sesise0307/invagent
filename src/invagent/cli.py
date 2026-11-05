@@ -12,6 +12,12 @@ from invagent.core.auth import authenticate
 from invagent.core.client import TelegramClientManager
 from invagent.telegram import MessageFetcher
 from invagent.telegram.fetch import PENDING_LINK_SUMMARY_MARKER
+from invagent.telegram.fetch_state import (
+    FETCH_STATE_FILE,
+    read_fetch_state,
+    resume_after_id,
+    write_fetch_state,
+)
 from invagent.tracking.stock_tracker import StockTracker
 
 
@@ -54,7 +60,15 @@ async def _authenticate_and_report(config: Config) -> None:
 
 
 @cli.command()
-@click.option("--days", type=int, default=1, help="Fetch messages from last N days (default: 1)")
+@click.option(
+    "--days",
+    type=int,
+    default=None,
+    help=(
+        "Fetch messages from the last N days instead of resuming after the last run "
+        "(default: resume; 1 day on the first run)"
+    ),
+)
 @click.option(
     "--fetch-links/--no-fetch-links",
     default=True,
@@ -75,13 +89,19 @@ def fetch_messages_cmd(days, fetch_links, download_images):
     """
     try:
         config = Config.from_env()
-        click.echo(f"📨 Fetching messages from last {days} day(s)...")
 
         # The raw file name and the media/link directories must share one date
         # string, or the skill's cleanup step retires them on different days.
         today = datetime.now().strftime("%Y-%m-%d")
         media_dir = config.digest_media_dir(today) if download_images else None
         link_dir = config.digest_link_dir(today) if fetch_links else None
+        state_path = config.output_dir / FETCH_STATE_FILE
+        after_id = None if days else resume_after_id(read_fetch_state(state_path), today)
+        days = days or 1
+        if after_id is None:
+            click.echo(f"📨 Fetching messages from last {days} day(s)...")
+        else:
+            click.echo(f"📨 Fetching messages after id {after_id} (last run)...")
 
         client_manager = TelegramClientManager()
         fetcher = MessageFetcher(config, client_manager)
@@ -93,6 +113,7 @@ def fetch_messages_cmd(days, fetch_links, download_images):
                     fetch_links=fetch_links,
                     media_dir=media_dir,
                     link_dir=link_dir,
+                    after_id=after_id,
                 )
             )
         finally:
@@ -108,6 +129,7 @@ def fetch_messages_cmd(days, fetch_links, download_images):
         # Save to file
         output_file = output_dir / f"{today}_raw.md"
         output_file.write_text(formatted_content, encoding="utf-8")
+        write_fetch_state(state_path, today, after_id, messages)
 
         image_count = sum(
             1
