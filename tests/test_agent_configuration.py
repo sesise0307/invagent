@@ -1030,11 +1030,15 @@ def test_market_regime_constants_match_my_rules_and_skill() -> None:
     rules = (REPO_ROOT / "context" / "my_rules.md").read_text(encoding="utf-8")
     skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
 
-    assert f"{module.CRASH_STREAK_DAYS}거래일 연속 하락한 뒤 그날 종가가 {module.CRASH_DROP_PCT:g}% 넘게 하락" in rules
-    assert f"+{module.CRASH_MARGIN_SIGMA:g}σ 이상" in rules
+    assert (
+        f"그날 종가가 {module.CRASH_DROP_PCT:g}% 넘게 하락하고, 그날을 포함한 {module.CRASH_WINDOW_DAYS}거래일 "
+        f"누적 등락률이 {module.CRASH_CUMULATIVE_PCT:g}% 이하인 날"
+    ) in rules
+    assert f"52주 고점 대비 {module.BEAR_DRAWDOWN_PCT:g}% 이하" in rules
     for name, value in (
-        ("CRASH_STREAK_DAYS", module.CRASH_STREAK_DAYS),
+        ("CRASH_WINDOW_DAYS", module.CRASH_WINDOW_DAYS),
         ("CRASH_DROP_PCT", f"{module.CRASH_DROP_PCT:g}%"),
-        ("CRASH_MARGIN_SIGMA", f"+{module.CRASH_MARGIN_SIGMA:g}σ"),
+        ("CRASH_CUMULATIVE_PCT", f"{module.CRASH_CUMULATIVE_PCT:g}%"),
+        ("BEAR_DRAWDOWN_PCT", f"{module.BEAR_DRAWDOWN_PCT:g}%"),
     ):
         assert f"| `{name}` | {value} |" in skill, name

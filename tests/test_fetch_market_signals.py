@@ -614,33 +614,30 @@ def _crash_monitor(credit: list[dict], tail: list[float]) -> list[dict]:
     return _monitor_for(credit, [100.0] * (len(credit) - len(tail)) + tail)
 
 
-def test_market_regime_flags_a_crash_after_three_down_days_and_a_drop_beyond_three_percent() -> None:
-    """「시장 국면」 급락 = 조정(-10% 이하) + 3거래일 연속 하락 뒤 -3% 넘는 하락 + 반대매매 +1σ.
+def test_market_regime_flags_a_crash_on_an_eight_percent_three_day_slide_without_margin_calls() -> None:
+    """「시장 국면」 급락 = 조정 + 그날 -3% 초과 하락 + 그날 포함 3거래일 누적 -8% 이하 (2026-11-06 개정).
 
-    2026-10-15: KOSPI 10/12 -3.9% · 10/13 -5.5% · 10/14 -0.4% 뒤 -7.6%, 반대매매 893억(평균+1.7σ).
-    지수 ETF 바텀피싱(「지수 ETF 규칙」)이 열리는 자리다.
+    반대매매는 급락 판정에서 뺐다 — 발표가 하루 늦고 실제 반대매매는 급락 2~3거래일 뒤에 몰려
+    급락 당일엔 거의 못 잡는다. 2026-11-06: KOSPI 11/04 +0.62% · 11/05 -5.28% · 11/06 -6.02%
+    (3일 누적 -10.4%), 반대매매 84억으로 옛 정의는 🟡 조정을 냈다.
     """
     module = load_script("daily-digest", "fetch_market_signals")
-    calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30   # 평균 103 · σ 10.77 → +1σ 113.8 · +2σ 124.5
-    credit = _credit_rows(calm + [120.0])
-    monitor = _crash_monitor(credit, [95.0, 92.0, 90.0, 85.0])
-
-    verdict = module.market_regime(credit, monitor)["KOSPI"]
+    calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
+    credit = _credit_rows(calm + [110.0])   # 반대매매 급증 아님
+    # 90 → 91(+1.1%) → 86(-5.5%) → 81(-5.8%) = 3일 누적 -10.0%
+    verdict = module.market_regime(credit, _crash_monitor(credit, [90.0, 91.0, 86.0, 81.0]))["KOSPI"]
 
     assert verdict["regime"] == "crash"
-    assert verdict["streak"] is True
-    assert verdict["margin_surge"] is True
 
 
-def test_market_regime_needs_three_down_days_before_the_drop() -> None:
-    """하루짜리 -5%는 급락이 아니다 — 연속 하락 뒤의 투매만 센다."""
+def test_market_regime_needs_the_three_day_slide_to_reach_eight_percent() -> None:
+    """하루짜리 -4%는 급락이 아니다 — 그날 포함 3거래일 누적이 -8%에 닿아야 한다."""
     module = load_script("daily-digest", "fetch_market_signals")
     calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
     credit = _credit_rows(calm + [120.0])
-    # 직전 3일 중 하루가 상승(92 → 93)
-    verdict = module.market_regime(credit, _crash_monitor(credit, [95.0, 92.0, 93.0, 85.0]))["KOSPI"]
+    # 95 → 96 → 93 → 88 : 그날 -5.4% · 3일 누적 -7.4%
+    verdict = module.market_regime(credit, _crash_monitor(credit, [95.0, 96.0, 93.0, 88.0]))["KOSPI"]
 
-    assert verdict["streak"] is False
     assert verdict["regime"] == "correction"
 
 
@@ -654,14 +651,34 @@ def test_market_regime_needs_the_drop_to_exceed_three_percent() -> None:
     assert verdict["regime"] == "correction"
 
 
-def test_market_regime_needs_a_one_sigma_margin_call_surge() -> None:
+def test_market_regime_line_states_the_slide_rule_without_margin_calls(capsys: pytest.CaptureFixture[str]) -> None:
+    """출력 줄은 급락 정의를 그대로 적고 지수별 3일 누적을 보여준다 — 반대매매는 급락 줄에 없다."""
     module = load_script("daily-digest", "fetch_market_signals")
     calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
-    credit = _credit_rows(calm + [110.0])   # +1σ 113.8 미만
-    verdict = module.market_regime(credit, _crash_monitor(credit, [95.0, 92.0, 90.0, 85.0]))["KOSPI"]
+    credit = _credit_rows(calm + [110.0])
+    module.print_market_regime(credit, _crash_monitor(credit, [90.0, 91.0, 86.0, 81.0]))
 
-    assert verdict["margin_surge"] is False
-    assert verdict["regime"] == "correction"
+    out = capsys.readouterr().out
+    assert "급락 = 낙폭 -10% 이하 · 그날 -3% 초과 하락 · 3거래일 누적 -8% 이하" in out
+    assert "KOSPI: 🟠 급락" in out
+    assert "3일 누적 -10.0%" in out
+    assert "반대매매" not in out
+
+
+def test_market_regime_splits_a_bear_market_below_twenty_percent_from_a_correction() -> None:
+    """고점 대비 -20% 이하는 「약세」, -10~-20%는 「조정」 (2026-11-06 사용자 개정).
+
+    -44.5%인 날에도 「조정」으로 찍혀 -12%인 날과 구분되지 않았다.
+    """
+    module = load_script("daily-digest", "fetch_market_signals")
+    calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
+    credit = _credit_rows(calm + [110.0])
+
+    bear = module.market_regime(credit, _crash_monitor(credit, [80.0, 79.0, 78.0, 77.0]))["KOSPI"]
+    correction = module.market_regime(credit, _crash_monitor(credit, [88.0, 87.0, 86.0, 85.0]))["KOSPI"]
+
+    assert bear["regime"] == "bear"
+    assert correction["regime"] == "correction"
 
 
 def test_market_regime_reports_the_climax_ahead_of_the_crash() -> None:
@@ -674,13 +691,14 @@ def test_market_regime_reports_the_climax_ahead_of_the_crash() -> None:
 
 
 def test_market_regime_is_normal_above_the_correction_line() -> None:
-    """고점 근처의 연속 하락·반대매매 급증은 급락 국면이 아니다(2026-05-11 같은 날)."""
+    """고점 근처의 3일 -9% 하락은 급락 국면이 아니다 — 조정(-10% 이하) 안에서만 급락을 센다."""
     module = load_script("daily-digest", "fetch_market_signals")
     calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
     credit = _credit_rows(calm + [120.0])
-    verdict = module.market_regime(credit, _crash_monitor(credit, [99.0, 98.0, 97.0, 93.0]))["KOSPI"]
+    # 100 → 97 → 94 → 91 : 3일 누적 -9.0% · 고점 대비 -9.0%
+    verdict = module.market_regime(credit, _crash_monitor(credit, [100.0, 97.0, 94.0, 91.0]))["KOSPI"]
 
-    assert verdict["streak"] is True and verdict["margin_surge"] is True
+    assert verdict["slide"] is True
     assert verdict["regime"] == "normal"
 
 
