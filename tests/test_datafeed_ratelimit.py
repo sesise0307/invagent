@@ -230,6 +230,32 @@ def test_stockeasy_cools_down_for_an_hour(monkeypatch) -> None:
     assert http.get_json(f"{STOCKEASY}/a", authed=False) == ({"ok": 1}, None)
 
 
+def test_a_stockeasy_dropped_connection_cools_down_at_once_without_retrying(monkeypatch) -> None:
+    """2026-11-09 06:02 KST 첫 끊김 뒤 재시도 두 번이 같은 계정을 더 두드렸다 — 차단을 늘린다(10/05에도 그랬다).
+    사용자 결정(2026-11-08): StockEasy가 연결을 끊으면 재시도 없이 바로 1시간 cool-down."""
+    from http.client import RemoteDisconnected
+
+    clock = _Clock(1_000_000.0)
+    monkeypatch.setattr(ratelimit, "_now", clock)
+    calls = _scripted(
+        monkeypatch, [RemoteDisconnected("Remote end closed connection without response"), b'{"ok": 1}']
+    )
+
+    assert http.get_json(f"{STOCKEASY}/a", authed=True)[0] is None
+    payload, err = http.get_json(f"{STOCKEASY}/b", authed=True)
+
+    assert payload is None and "3600초 남음" in err and "연결 끊김" in err
+    assert len(calls) == 1
+
+
+def test_a_stockeasy_timeout_is_still_retried(monkeypatch) -> None:
+    """시간 초과는 서버가 끊은 게 아니다 — 재시도 규칙 그대로."""
+    calls = _scripted(monkeypatch, [TimeoutError("timed out"), b'{"ok": 1}'])
+
+    assert http.get_json(f"{STOCKEASY}/a", authed=True) == ({"ok": 1}, None)
+    assert len(calls) == 2
+
+
 def test_stockeasy_takes_one_request_at_a_time(monkeypatch) -> None:
     import threading
     import time
@@ -334,12 +360,12 @@ def test_a_name_resolution_failure_does_not_cool_the_host_down(monkeypatch) -> N
 
 def test_a_cooled_down_login_endpoint_leaves_the_anonymous_market_endpoint_open(monkeypatch) -> None:
     """2026-10-16 StockEasy는 로그인 `info-tab`만 끊고 무인증 시장 지표는 줬다 — 계정 제한이다."""
-    calls = _scripted(monkeypatch, [ConnectionResetError("reset")] * ratelimit.MAX_ATTEMPTS + [b'{"ok": 1}'])
+    calls = _scripted(monkeypatch, [ConnectionResetError("reset"), b'{"ok": 1}'])
 
     assert http.get_json(f"{STOCKEASY}/info-tab", authed=True)[0] is None
     assert http.get_json(f"{STOCKEASY}/market", authed=False) == ({"ok": 1}, None)
     assert http.get_json(f"{STOCKEASY}/info-tab-2", authed=True)[0] is None
-    assert len(calls) == ratelimit.MAX_ATTEMPTS + 1
+    assert len(calls) == 2
 
 
 def _small_budget(monkeypatch, count, window):
@@ -366,31 +392,35 @@ def test_login_requests_stop_at_the_budget_until_the_oldest_leaves_the_window(mo
     assert http.get_json(f"{STOCKEASY}/c", authed=True)[0] == {"ok": 1}
 
 
-def test_stockeasy_allows_one_hundred_login_requests_per_six_hours(monkeypatch) -> None:
-    """60건에서 2026-10-19 70건, 2026-10-21 80건, 2026-10-28 90건, 2026-11-04 100건으로 올렸다(사용자 결정) — 조회가 예산 끝에서 끊겼다."""
+def test_stockeasy_allows_sixty_login_requests_per_hour(monkeypatch) -> None:
+    """2026-11-09 06:02 KST 로그인 요청이 57분 동안 74건 성공한 뒤 끊겼다 — 서버 한도는 1시간 약 75건으로 추정.
+    사용자 결정(2026-11-08)으로 1시간 60건으로 두고 옛 6시간 100건은 폐기했다."""
     clock = _Clock(1_000_000.0)
     monkeypatch.setattr(ratelimit, "_now", clock)
-    calls = _scripted(monkeypatch, [b'{"ok": 1}'] * 101)
+    calls = _scripted(monkeypatch, [b'{"ok": 1}'] * 62)
 
-    for i in range(100):
-        clock.now += 60
+    for i in range(60):
+        clock.now += 50
         assert http.get_json(f"{STOCKEASY}/r{i}", authed=True)[0] == {"ok": 1}
-    payload, err = http.get_json(f"{STOCKEASY}/r100", authed=True)
-    assert payload is None and "최근 6시간 100/100건" in err
-    assert len(calls) == 100
+    payload, err = http.get_json(f"{STOCKEASY}/r60", authed=True)
+    assert payload is None and "최근 1시간 60/60건" in err
+    assert len(calls) == 60
+
+    clock.now += 650  # 첫 요청(+50초)이 1시간 구간을 벗어났다
+    assert http.get_json(f"{STOCKEASY}/r60", authed=True)[0] == {"ok": 1}
 
 
 def test_every_stockeasy_request_is_logged_with_its_outcome(monkeypatch) -> None:
     """다음 차단 때 직전 요청 이력을 보고 차단 방식(일정 시간 차단 · 최근 구간 누적)을 가린다."""
     clock = _Clock(1_000_000.0)
     monkeypatch.setattr(ratelimit, "_now", clock)
-    _scripted(monkeypatch, [b'{"ok": 1}', b'{"ok": 1}'] + [ConnectionResetError("reset")] * ratelimit.MAX_ATTEMPTS)
+    _scripted(monkeypatch, [b'{"ok": 1}', b'{"ok": 1}', ConnectionResetError("reset")])
 
     http.get_json(f"{STOCKEASY}/market", authed=False)
     http.get_json(f"{STOCKEASY}/a", authed=True)
     http.get_json(f"{STOCKEASY}/b", authed=True)
 
     log = ratelimit.request_log("stockeasy.intellio.kr")
-    assert [(e["authed"], e["ok"]) for e in log] == [(False, True), (True, True)] + [(True, False)] * 3
+    assert [(e["authed"], e["ok"]) for e in log] == [(False, True), (True, True), (True, False)]
     assert log[-1]["reason"].startswith("연결 끊김")
     assert log[0]["t"] == 1_000_000.0

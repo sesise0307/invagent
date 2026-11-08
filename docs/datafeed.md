@@ -119,7 +119,7 @@ sequential scan at the 3-second interval was still cut off around the twelfth re
 Cool-downs are counted separately for login (cookie-carrying) and anonymous requests — on 2026-10-16
 StockEasy dropped every login `info-tab` call while still serving the anonymous market endpoints, so the
 limit sits on the login session rather than the IP. Login requests to StockEasy also
-carry a rolling budget (`login_budget` 100 per `login_window` six hours, retries included; raised from 60 to 70 on 2026-10-19 and to 80 on 2026-10-21 by user decision, each time after a stock analysis ran into the cap, to 90 on 2026-10-28 by user decision, and to 100 on 2026-11-04 by user decision after follow-up lookups past the daily briefing hit the cap). It was a KST
+carry a rolling budget (`login_budget` 60 per `login_window` one hour, retries included). Until 2026-11-08 the window was six hours (60, raised to 70 on 2026-10-19, 80 on 2026-10-21, 90 on 2026-10-28 and 100 on 2026-11-04 by user decision, each time after lookups ran into the cap); on 2026-11-09 06:02 KST login requests were cut off after 74 successes in 57 minutes while that six-hour budget still had room, so the server limit is read as about 75 per hour and, by user decision on 2026-11-08, the budget became 60 per hour and the six-hour window was dropped. It was a KST
 daily budget for one afternoon — the same day the browser opened again, so the limit does not reset at
 midnight; whether it is a timed lock-out or a rolling count is still unknown, and both are set off by a
 burst. Once spent, requests fail fast with a 「요청 예산 소진」 reason and take the kept-response fallback.
@@ -137,7 +137,10 @@ masked the first cookie refresh the same day. `stockinfo`'s
 earnings axis accepts an `info-tab` response up to 12 hours old (`FUNDAMENTALS_TTL_SECONDS`) because
 quarterly figures do not change within a day; the price axis keeps the 15-minute TTL.
 A 429/502/503/504, a dropped connection or a timeout is retried up to `MAX_ATTEMPTS` (3) times with
-exponential backoff plus jitter, honouring `Retry-After`; a 401 is never retried. When retries run
+exponential backoff plus jitter, honouring `Retry-After`; a 401 is never retried. StockEasy (`cool_on_drop`) is the
+exception for a dropped connection: it starts the one-hour cool-down at once without retrying, because retries after
+the first drop kept hitting the same account and extended the block (2026-10-05, 2026-11-09 06:02 KST; user decision
+2026-11-08). Timeouts and name-resolution failures are not drops. When retries run
 out the host enters a `COOLDOWN_SECONDS` (120, or its `HOST_LIMITS` value) cool-down during which every process fails fast
 instead of extending the block — daily bars then take the Naver fallback. A name-resolution failure
 (`[Errno 8]`) is retried but never starts a cool-down, because the request never reached the server: on

@@ -57,14 +57,19 @@ REASON_MAX_CHARS = 80
 # 숫자는 추정이다(전날 밤 보고서 146종목 재산출이 73종목 근처에서 끊김). 60건에서 시작해 2026-10-19 사용자 결정으로
 # 70건 — 종목 분석 한 번이 60건 끝에서 끊겼다. 2026-10-21 같은 이유(종목 분석 중 70건 소진)로 80건, 2026-10-28 사용자 결정으로 90건,
 # 2026-11-04 사용자 결정으로 100건(데일리 브리핑 뒤 추가 조회가 90건 끝에서 끊김).
+# 2026-11-09 06:02 KST 로그인 요청이 57분 동안 74건 성공한 뒤 끊겼다(6시간 100건 예산은 그 전에 걸리지 않음) —
+# 서버 한도를 1시간 약 75건으로 보고, 사용자 결정(2026-11-08)으로 1시간 60건으로 바꿨다. 6시간 구간은 폐기.
 # 다음 차단 때 `request_log`를 보고 조정한다.
 HOST_LIMITS = {
     "stockeasy.intellio.kr": {
         "min_interval": 8.0,
         "max_concurrent": 1,
         "cooldown": 3600.0,
-        "login_budget": 100,
-        "login_window": 6 * 3600.0,
+        "login_budget": 60,
+        "login_window": 3600.0,
+        # 서버가 연결을 끊으면 재시도 없이 바로 cool-down — 끊긴 뒤 재시도가 차단을 늘렸다
+        # (2026-10-05, 2026-11-09 06:02 KST). 사용자 결정 2026-11-08. 시간 초과·DNS 실패는 해당 없음.
+        "cool_on_drop": True,
     },
 }
 # 요청 기록 보관 기간. 예산 구간보다 길게 둬 차단 직전 이력을 남긴다.
@@ -97,6 +102,13 @@ def is_retryable(error: BaseException) -> bool:
     if isinstance(error, urllib.error.HTTPError):
         return error.code in RETRYABLE_STATUS
     return isinstance(error, (urllib.error.URLError, ConnectionError, TimeoutError))
+
+
+def is_dropped_connection(error: BaseException) -> bool:
+    """서버가 연결을 끊었다 — HTTP 응답도, 시간 초과도, 이름 풀이 실패도 아니다."""
+    if isinstance(error, urllib.error.HTTPError) or is_name_resolution_failure(error):
+        return False
+    return failure_reason(error).startswith("연결 끊김")
 
 
 def is_name_resolution_failure(error: BaseException) -> bool:
@@ -135,7 +147,7 @@ def call_with_retry(host: str, fetch, *, authed: bool = False):
         except Exception as error:
             if not is_retryable(error):
                 raise
-            if attempt == MAX_ATTEMPTS:
+            if attempt == MAX_ATTEMPTS or (HOST_LIMITS.get(host, {}).get("cool_on_drop") and is_dropped_connection(error)):
                 if not is_name_resolution_failure(error):
                     cooldown = _limit(host, "cooldown", COOLDOWN_SECONDS)
                     start_cooldown(scope, max(cooldown, retry_after(error) or 0.0), reason=failure_reason(error))
