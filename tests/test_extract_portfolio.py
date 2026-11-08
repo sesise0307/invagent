@@ -263,8 +263,9 @@ def etf_cap_dump(
 
 
 def etf_cap_line(dump: str) -> str:
+    """기본 상한(지수별 30%)이 적용되는 해(2027)의 판정 줄 — 2026년 상한은 따로 시험한다."""
     module = load_script("daily-digest", "extract_portfolio")
-    findings = module.build_snapshot(dump, "2026-10-28").split("## 룰 자동 판정")[1]
+    findings = module.build_snapshot(dump, "2027-01-04").split("## 룰 자동 판정")[1]
     return next(line for line in findings.splitlines() if line.startswith("- 지수 ETF 규칙 3"))
 
 
@@ -333,6 +334,26 @@ def test_index_etf_total_cost_over_sixty_is_a_violation() -> None:
     line = etf_cap_line(etf_cap_dump(("₩310,000", "₩300,000", "30.0%"), ("₩310,000", "₩300,000", "30.0%")))
 
     assert line.endswith("합계 매수원금 62.0% ← **위반**")
+
+
+def etf_cap_line_on(dump: str, today: str) -> str:
+    module = load_script("daily-digest", "extract_portfolio")
+    findings = module.build_snapshot(dump, today).split("## 룰 자동 판정")[1]
+    return next(line for line in findings.splitlines() if line.startswith("- 지수 ETF 규칙 3"))
+
+
+ETF_CAP_LABEL_2026 = "- 지수 ETF 규칙 3(매수원금 KOSPI 20% · KOSDAQ 40% · 합계 60% 상한 · 상승분 허용): "
+
+
+def test_index_etf_caps_in_2026_are_kospi_20_and_kosdaq_40() -> None:
+    """2026-11-08 사용자 결정: 2026년에만 KOSDAQ 상한 40%, KOSPI 20%(합계 60% 유지)."""
+    line = etf_cap_line_on(
+        etf_cap_dump(("₩210,000", "₩200,000", "20.0%"), ("₩380,000", "₩300,000", "30.0%")), "2026-11-09"
+    )
+
+    assert line == ETF_CAP_LABEL_2026 + (
+        "KODEX 200 20.0% ← **위반**(매수원금 21.0%), KODEX 코스닥150 30.0% ← 근접(매수원금 38.0%)"
+    )
 
 
 def test_index_etfs_are_not_counted_as_holdings() -> None:

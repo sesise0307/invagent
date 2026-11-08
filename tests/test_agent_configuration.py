@@ -677,9 +677,15 @@ def test_portfolio_thresholds_match_my_rules() -> None:
     assert etf_weight and etf_trend, "「지수 ETF 규칙 3·4」 원문 형식이 바뀌었다"
 
     assert module.INDEX_ETF_MAX_WEIGHT_PCT == float(etf_weight.group(1))
+    # 2026-11-08: 2026년에만 KOSPI·KOSDAQ 상한이 다르다 — 원문의 연도 단서와 스크립트 표가 같아야 한다.
+    year_caps = re.search(r"단 (\d{4})년에는 KOSPI 최대 (\d+)%, KOSDAQ 최대 (\d+)%", rules)
+    assert year_caps, "「지수 ETF 규칙 3」 연도 단서 형식이 바뀌었다"
+    assert module.INDEX_ETF_YEAR_CAPS == {
+        int(year_caps.group(1)): {"KOSPI": float(year_caps.group(2)), "KOSDAQ": float(year_caps.group(3))}
+    }
     # 2026-10-28: 상한은 매수원금 비중 축이고 주가 상승분 초과는 허용한다 — 스크립트가 그 축으로 판정한다.
     etf_rule = re.search(r"^3\. \*\*비중\*\*:.*$", rules, re.MULTILINE)
-    assert etf_rule and "매수 없이 주가 상승으로 30%를 넘는 것은 허용" in etf_rule.group(0)
+    assert etf_rule and "매수 없이 주가 상승으로 상한을 넘는 것은 허용" in etf_rule.group(0)
     assert "매수원금 비중에 적용" in etf_rule.group(0)
     assert module.INDEX_ETF_TREND_GAIN_PCT == float(etf_trend.group(1))
     assert module.INDEX_ETF_TREND_PULLBACK_PCT == float(etf_trend.group(2))

@@ -50,9 +50,12 @@ WEIGHT_WARN_PCT = 30.0  # 상한 근접 경고선
 # 총자산)에 걸고, 매수 없이 주가 상승으로 평가 비중이 상한을 넘는 것은 허용한다.
 INDEX_ETF_MAX_WEIGHT_PCT = 30.0
 INDEX_ETF_TOTAL_MAX_PCT = 60.0
-# 근접 경고선 — 35% 상한의 30% 경고와 같은 비율(약 86%)을 30%에 적용해 26%로 둔다.
+# 2026-11-08 사용자 결정: 코스닥 업사이드가 더 높다고 보고 **2026년에만** 지수별 상한을 KOSPI 20% ·
+# KOSDAQ 40%로 바꾼다(합계 60% 유지). 연도는 스냅샷 날짜로 고르고, 표에 없는 해는 기본 30%다.
+INDEX_ETF_YEAR_CAPS: dict[int, dict[str, float]] = {2026: {"KOSPI": 20.0, "KOSDAQ": 40.0}}
+# 근접 경고선 = 상한 - 4%p. 30% 상한일 때의 26%(35% 상한의 30% 경고와 같은 비율)를 거리로 옮긴 것이다.
 # 분할 매수 한 번(수 %p)이면 상한을 넘는 거리라 그 전에 남은 매수 여유를 보게 한다(매수원금 축).
-INDEX_ETF_WEIGHT_WARN_PCT = 26.0
+INDEX_ETF_WARN_GAP_PP = 4.0
 # 지수 ETF 규칙 4: 평단 +8% 이후 최고 종가 대비 -3% = 추세 꺾임 매도. 판정은 종가 이력이 필요해
 # 여기서 하지 않고, 판정 줄 라벨에 기준만 인용한다.
 INDEX_ETF_TREND_GAIN_PCT = 8.0
@@ -204,7 +207,13 @@ def etf_index(holding: dict) -> str:
     return "KOSDAQ" if re.search(r"코스닥|KOSDAQ", holding["종목"], re.IGNORECASE) else "KOSPI"
 
 
-def rule_findings(holdings: list[dict]) -> list[str]:
+def index_etf_caps(today: str) -> dict[str, float]:
+    """스냅샷 날짜의 해에 적용되는 지수별 매수원금 상한(「지수 ETF 규칙 3」)."""
+    year = int(today[:4])
+    return INDEX_ETF_YEAR_CAPS.get(year, {"KOSPI": INDEX_ETF_MAX_WEIGHT_PCT, "KOSDAQ": INDEX_ETF_MAX_WEIGHT_PCT})
+
+
+def rule_findings(holdings: list[dict], today: str) -> list[str]:
     """보유 현황을 my_rules.md 임계값과 대조해 판정 문구 생성."""
     positions = [h for h in holdings if h["섹터"] != CASH_SECTOR]
     # 지수 ETF는 「매매 규칙 6·11」과 평가 비중 35%·종목 수 대신 「지수 ETF 규칙 3·4」를 따른다.
@@ -269,9 +278,12 @@ def rule_findings(holdings: list[dict]) -> list[str]:
 
     etfs = [h for h in positions if is_index_etf(h)]
     if etfs:
-        etf_label = (
-            f"- 지수 ETF 규칙 3(지수별 매수원금 {INDEX_ETF_MAX_WEIGHT_PCT:.0f}% · 합계 {INDEX_ETF_TOTAL_MAX_PCT:.0f}% 상한 · 상승분 허용)"
-        )
+        caps = index_etf_caps(today)
+        if caps["KOSPI"] == caps["KOSDAQ"]:
+            cap_desc = f"지수별 매수원금 {caps['KOSPI']:.0f}%"
+        else:
+            cap_desc = f"매수원금 KOSPI {caps['KOSPI']:.0f}% · KOSDAQ {caps['KOSDAQ']:.0f}%"
+        etf_label = f"- 지수 ETF 규칙 3({cap_desc} · 합계 {INDEX_ETF_TOTAL_MAX_PCT:.0f}% 상한 · 상승분 허용)"
         # 분모 = 현금 행을 포함한 전체 평가금액 합계. 시트의 비중 열이 바로 이 합계(= 잔고)로
         # 나눈 값이라(10/28: 코스닥150 ₩73,560,000 ÷ 잔고 ₩478,906,000 = 15.4%) 같은 분모를 써야
         # 매수원금 비중과 평가 비중이 한 줄에서 비교된다. 잔고 총계는 시트에 없을 수 있지만 평가금액은
@@ -282,18 +294,20 @@ def rule_findings(holdings: list[dict]) -> list[str]:
             groups.setdefault(etf_index(h), []).append(h)
         flagged = []
         total_cost_pct = 0.0
-        for members in groups.values():
+        for index, members in groups.items():
+            cap = caps[index]
+            warn = cap - INDEX_ETF_WARN_GAP_PP
             name = " + ".join(h["종목"] for h in members)
             weights = [h["비중_v"] for h in members if h["비중_v"] is not None]
             weight = round(sum(weights), 1) if weights else None
             shown = members[0]["비중"] if len(members) == 1 else f"{weight:.1f}%"
             costs = [to_float(h["매수금액"]) for h in members]
             if None in costs or not account_total:
-                if weight is None or weight < INDEX_ETF_WEIGHT_WARN_PCT:
+                if weight is None or weight < warn:
                     continue
-                if weight > INDEX_ETF_MAX_WEIGHT_PCT:
+                if weight > cap:
                     state = "← 초과(매수·상승 구분 불가 — 매수금액 열 없음)"
-                elif weight == INDEX_ETF_MAX_WEIGHT_PCT:
+                elif weight == cap:
                     state = "← 상한 도달(평가 비중 기준 — 매수금액 열 없음)"
                 else:
                     state = "← 근접(평가 비중 기준 — 매수금액 열 없음)"
@@ -302,13 +316,13 @@ def rule_findings(holdings: list[dict]) -> list[str]:
             cost_pct = round(sum(costs) / account_total * 100, 1)
             total_cost_pct += cost_pct
             cost_note = f"매수원금 {cost_pct:.1f}%"
-            if cost_pct > INDEX_ETF_MAX_WEIGHT_PCT:
+            if cost_pct > cap:
                 state = f"← **위반**({cost_note})"
-            elif cost_pct == INDEX_ETF_MAX_WEIGHT_PCT:
+            elif cost_pct == cap:
                 state = f"← 상한 도달({cost_note})"
-            elif weight is not None and weight > INDEX_ETF_MAX_WEIGHT_PCT:
+            elif weight is not None and weight > cap:
                 state = f"← 상승분 초과 · 허용({cost_note})"
-            elif cost_pct >= INDEX_ETF_WEIGHT_WARN_PCT:
+            elif cost_pct >= warn:
                 state = f"← 근접({cost_note})"
             else:
                 continue
@@ -386,7 +400,7 @@ def render(
         for s in sectors:
             lines.append("| " + " | ".join(s.get(c, "") for c in cols) + " |")
 
-    lines += ["", "## 룰 자동 판정", "", *rule_findings(holdings), ""]
+    lines += ["", "## 룰 자동 판정", "", *rule_findings(holdings, today), ""]
     return "\n".join(lines)
 
 
