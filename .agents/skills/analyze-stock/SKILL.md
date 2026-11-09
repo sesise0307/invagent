@@ -180,8 +180,9 @@ uv run python .agents/skills/analyze-stock/scripts/find_reports.py "<종목명>"
 
 ### 6단계 — 시세 · 컨센서스 (StockEasy)
 
-시세·멀티플·52주·증권사별 목표주가·컨센 추정 실적·EPS 컨센 변화·뉴스는 **StockEasy가 단일 출처다.**
-다른 사이트 숫자를 섞지 않는다.
+시세·멀티플·52주·컨센 추정 실적·EPS 컨센 변화·뉴스는 **StockEasy가 단일 출처다.**
+증권사별 목표주가와 리포트 요약만 autoanalyst가 기본이고 StockEasy가 빈 곳을 채운다 — 스크립트가
+합쳐 주므로 행마다 `source`(`autoanalyst`·`stockeasy`)를 그대로 인용한다. 그 밖의 사이트 숫자는 섞지 않는다.
 
 ```bash
 uv run python .agents/skills/analyze-stock/scripts/fetch_stock_info.py "<종목명 또는 6자리 티커>" \
@@ -287,7 +288,8 @@ M은 상수가 아니라 StockEasy 빅픽처의 종목 상장 시장 상태다 �
 
 **리포트 요약 (`[리포트 요약]` 섹션)**
 
-같은 스크립트가 `securities-reports` API에서 최신 리포트의 요약 논지까지 받아온다.
+같은 스크립트가 최신 리포트의 요약 논지까지 받아온다. 기본은 autoanalyst(무인증)이고, 요약이 붙은
+리포트가 없거나 호출이 실패할 때만 StockEasy `securities-reports`를 부른다 — 섹션 머리의 `출처`가 어느 쪽인지 밝힌다.
 스크립트는 `.env`의 `STOCKEASY_COOKIE`(브라우저에서 복사한 Cookie 헤더 전문)를 읽어 붙인다.
 
 ⛔ **`stock-search`를 뺀 전 엔드포인트가 로그인 세션을 요구한다.** 쿠키가 없으면 시세·멀티플·

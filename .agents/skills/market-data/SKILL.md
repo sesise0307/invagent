@@ -32,7 +32,8 @@ StockEasy와 Naver가 함께 `<urlopen error [Errno 8] nodename nor servname pro
 | 데이터 | 경로 | 인증 |
 |---|---|---|
 | 시세·멀티플·52주·수급·섹터·투자지표 등급 | `info-tab` — `invagent.datafeed.stockinfo` (아래 두 축 행) → `analyze-stock/scripts/fetch_stock_info.py` | 필요 |
-| 증권사별 목표주가·컨센서스·EPS 리비전·리포트 요약 | `invagent.datafeed.stockeasy.fetch_stock_json` (`securities-reports`) → `analyze-stock/scripts/fetch_stock_info.py` | 필요 |
+| 증권사별 목표주가·리포트 요약 (기본) | `invagent.datafeed.autoanalyst.fetch_reports` — `api.autoanalyst.ai.kr/report_list_get_by_recent`(국내 기업 리포트, 페이지당 100건, 최대 5페이지)를 StockEasy 행 모양(`source: autoanalyst`)으로 → `analyze-stock/scripts/fetch_stock_info.py`. 목표가 이력은 `info-tab`의 `target_price_history`와 합친다(같은 리포트 = 증권사 같고 발간일 ±3일·목표가 같음). 2026-11-09 5종목 대조에서 겹친 리포트 목표가는 전부 일치했지만 커버리지가 서로 달랐다 — 이쪽에만 한국투자·BNK·흥국, StockEasy에만 SK증권·그로쓰리서치 상당수. `volume` 등 시세 칸은 쓰지 않는다(거래량이 1,000배로 실림) | 불필요 |
+| EPS 리비전·리포트 요약 (대체) | `invagent.datafeed.stockeasy.fetch_stock_json` (`securities-reports`) — autoanalyst에 요약 붙은 리포트가 없거나 호출이 실패할 때만 → `analyze-stock/scripts/fetch_stock_info.py`. EPS 리비전은 `info-tab`의 `eps_changes` | 필요 |
 | 종목 뉴스 | 같음 (`news/by-stock-code`) | 필요 |
 | 종목 DART 공시 목록 | 같음 (`stock-info/analysis-tab` — 2026-09 개편 페이지의 소식 탭, 공시·리포트·뉴스 각 최근 20건) | 필요 |
 | 시간외·NXT 체결가 (참고) | `invagent.datafeed.stockinfo` (`info-tab`의 `after_hours_quote`·`nxt_quote`) — 판정에 쓰지 않는다. ⚠️ 장 마감 뒤 `stock_info.cur_prc`는 시간외 체결가를 따라 움직인다(2026-10-12 산일전기 차트 종가 214,500원 vs `cur_prc` 213,500원). 정규장가는 `info-tab` 차트 마지막 봉 종가다 — `fetch_stock_info.py`의 `[시세]`·`regular_close`가 그것을 쓴다 | 필요 |

@@ -72,18 +72,8 @@
    "target_price_change": "상향",
    "current_price": 45800,
    "upside_potential": 63.76,
-   "title": "넘치는 수주와 폭발적 실적 성장"
-  },
-  {
-   "report_date": "2026-04-22",
-   "securities_company": "메리츠증권",
-   "author": "김동관",
-   "investment_opinion": "Buy",
-   "target_price": 41000,
-   "target_price_change": "신규",
-   "current_price": 31450,
-   "upside_potential": 30.4,
-   "title": "4년만의 턴어라운드"
+   "title": "넘치는 수주와 폭발적 실적 성장",
+   "source": "stockeasy"
   },
   {
    "report_date": "2026-05-28",
@@ -94,7 +84,20 @@
    "target_price_change": null,
    "current_price": 40650,
    "upside_potential": null,
-   "title": "호황기에 더욱 돋보이는 경쟁력"
+   "title": "호황기에 더욱 돋보이는 경쟁력",
+   "source": "stockeasy"
+  },
+  {
+   "report_date": "2026-04-22",
+   "securities_company": "메리츠증권",
+   "author": "김동관",
+   "investment_opinion": "Buy",
+   "target_price": 41000,
+   "target_price_change": "신규",
+   "current_price": 31450,
+   "upside_potential": 30.4,
+   "title": "4년만의 턴어라운드",
+   "source": "stockeasy"
   }
  ],
  "consensus": {
@@ -140,7 +143,7 @@
   "consensus_low": {
    "value": 75000.0,
    "status": "ok",
-   "source": "StockEasy stock-info/064290 [컨센 요약]",
+   "source": "autoanalyst report_list + StockEasy stock-info/064290 [컨센 요약]",
    "asof": "2026-09-30",
    "fetched_at": "2026-09-30T15:50:00+09:00",
    "kind": "estimate",
@@ -149,7 +152,7 @@
   "consensus_average": {
    "value": 75000.0,
    "status": "ok",
-   "source": "StockEasy stock-info/064290 [컨센 요약]",
+   "source": "autoanalyst report_list + StockEasy stock-info/064290 [컨센 요약]",
    "asof": "2026-09-30",
    "fetched_at": "2026-09-30T15:50:00+09:00",
    "kind": "estimate",
@@ -158,7 +161,7 @@
   "consensus_high": {
    "value": 75000.0,
    "status": "ok",
-   "source": "StockEasy stock-info/064290 [컨센 요약]",
+   "source": "autoanalyst report_list + StockEasy stock-info/064290 [컨센 요약]",
    "asof": "2026-09-30",
    "fetched_at": "2026-09-30T15:50:00+09:00",
    "kind": "estimate",

@@ -177,8 +177,18 @@ children at `run_child` with their real `--json` output.
 
 ## Consensus and target-price range
 
+The target-price history the consensus reads is autoanalyst's report list merged with
+StockEasy's `target_price_history` (`merge_target_history`): a StockEasy row that matches an autoanalyst row
+(broker name with its 증권/투자증권/금융투자 suffix stripped, report date within three days, same target) is the same
+report and counts once; any other StockEasy row is kept under autoanalyst's spelling of the broker, so
+`DB금융투자` and `DB증권` stay one broker. Report summaries come from autoanalyst and fall back to StockEasy
+`securities-reports` only when no autoanalyst report in the window carries one (user decision, 2026-11-09).
+A broker's latest target more than `OUTLIER_FACTOR` (3×) away from the median of every numeric target in that
+history is left out as `이상치` with the ratio in `target_status`, like a Not Rated latest — autoanalyst carried
+APR's DB Securities target as 71,860원 against a 510,000원 median and StockEasy's 500,000원 for the same report.
+
 The `[컨센 요약]` line aggregates **the latest report per broker**, not every row
-in `target_price_history`. One broker publishing six times a year would otherwise
+in the merged history. One broker publishing six times a year would otherwise
 count six times, and targets cut since publication would drag the average toward
 stale highs — the blend in step 9 needs today's consensus. The all-history simple
 average is still printed on the following `↳` line, labelled as not being the

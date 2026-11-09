@@ -4,6 +4,11 @@
 stockeasy.intellio.kr의 `/stockdata/api/v1/**` JSON API에서 개별 종목의 시세·멀티플·
 증권사별 목표주가 추이·컨센서스 추정 실적·뉴스를 받아 압축 요약을 출력한다.
 
+증권사 목표가·리포트 요약은 autoanalyst(`invagent.datafeed.autoanalyst`, 무인증)가 기본이다.
+목표가 이력은 이미 받은 `info-tab`의 `target_price_history`로 빈 곳을 채우고(`merge_target_history`),
+요약은 autoanalyst에 요약이 붙은 리포트가 없거나 호출이 실패할 때만 StockEasy `securities-reports`를
+부른다. 두 출처의 커버리지가 서로 겹치지 않는 부분이 있어서다(2026-11-09 5종목 대조).
+
 종목정보 페이지(`/stock-analysis/stock-info/<ticker>`)는 클라이언트 렌더링이라 HTML에
 데이터가 없다. `fetch_market_signals.py`와 같은 방식으로 페이지가 실제 호출하는 API를 친다.
 
@@ -33,7 +38,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from math import isfinite
 
-from invagent.datafeed import cache as http_cache, daily, stockeasy, stockinfo, tickers
+from invagent.datafeed import autoanalyst, cache as http_cache, daily, stockeasy, stockinfo, tickers
 
 # 추정치는 컨센서스이지 공시가 아니다. 표 헤더에 그대로 박아 보고서로 흘려보낸다.
 ESTIMATE_NOTE = "추정 — 컨센서스, DART 데이터 아님"
@@ -265,6 +270,18 @@ def numeric_target(value) -> float | None:
     return target if isfinite(target) and target > 0 else None
 
 
+# 이력 중앙값에서 이 배수 넘게 떨어진 목표가는 추출 오류로 보고 집계에서 뺀다. autoanalyst가 에이피알
+# DB증권 목표가를 71,860원으로 실었다(같은 리포트 StockEasy 500,000원, 중앙값 510,000원 — 2026-11-09).
+# 실측 5종목에서 정상 목표가의 중앙값 대비 폭은 0.59~1.33배였다.
+OUTLIER_FACTOR = 3.0
+
+
+def _outlier_status(target: float, median: float | None) -> str | None:
+    if median is None or median / OUTLIER_FACTOR <= target <= median * OUTLIER_FACTOR:
+        return None
+    return f"이상치 {target:,.0f}원 (이력 중앙값 {median:,.0f}원의 {target / median:.2f}배)"
+
+
 def build_consensus_summary(history: list, current_price: float | None = None) -> dict:
     """증권사별 최신 보고서를 먼저 고른 뒤 숫자 목표가만 집계한다.
 
@@ -277,17 +294,25 @@ def build_consensus_summary(history: list, current_price: float | None = None) -
         broker = str(row.get("securities_company") or "미상")
         latest.setdefault(broker, row)
 
+    numeric = sorted(t for t in (numeric_target(r.get("target_price")) for r in rows) if t is not None)
+    median = (
+        (numeric[(len(numeric) - 1) // 2] + numeric[len(numeric) // 2]) / 2 if numeric else None
+    )
+
     included: list[dict] = []
     excluded: list[dict] = []
     for broker, row in latest.items():
         target = numeric_target(row.get("target_price"))
-        if target is None:
+        status = (
+            str(row.get("target_price") or "NR/미제시") if target is None else _outlier_status(target, median)
+        )
+        if status is not None:
             excluded.append(
                 {
                     "broker": broker,
                     "report_date": row.get("report_date"),
                     "opinion": row.get("investment_opinion"),
-                    "target_status": str(row.get("target_price") or "NR/미제시"),
+                    "target_status": status,
                 }
             )
             continue
@@ -385,7 +410,7 @@ def build_consensus_envelopes(consensus_input: dict | None, code: str, fetched: 
     for name, key in CONSENSUS_ENVELOPE_FIELDS.items():
         envelope = {
             "status": "missing" if consensus_input is None else "ok",
-            "source": f"StockEasy stock-info/{code} [컨센 요약]",
+            "source": f"autoanalyst report_list + StockEasy stock-info/{code} [컨센 요약]",
             "asof": stamp.date().isoformat(),
             "fetched_at": stamp.isoformat(timespec="seconds"),
             "kind": "estimate",
@@ -543,7 +568,11 @@ def _detail_text(detail) -> str:
 def print_reports(reports: dict | None, limit: int, detail_chars: int) -> None:
     """증권사 리포트 요약. 로그인 쿠키가 있어야 채워진다."""
     items = (reports or {}).get("items") or []
-    print(f"[리포트 요약] {min(len(items), limit)}건 (총 {(reports or {}).get('total_count', len(items))}건)")
+    source = (reports or {}).get("source") or "StockEasy"
+    print(
+        f"[리포트 요약] {min(len(items), limit)}건 (총 {(reports or {}).get('total_count', len(items))}건)"
+        f" · 출처 {source}"
+    )
     if not items:
         print("  (없음)")
         return
@@ -623,6 +652,55 @@ def news_coverage(news: dict | None, requested_limit: int, since: str | None) ->
     }
 
 
+# 같은 리포트로 보는 두 출처의 발간일 차이 상한. 실측에서 하루 이틀 어긋났다(2026-11-09).
+SAME_REPORT_DAYS = 3
+# 증권사 이름 꼬리. 출처마다 `DB금융투자`/`DB증권`, `DS투자증권`/`DS증권`처럼 다르게 적는다.
+BROKER_SUFFIXES = ("금융투자", "투자증권", "증권", "투자")
+# autoanalyst 행에 없어 StockEasy 같은 리포트에서 옮겨 오는 칸.
+STOCKEASY_ONLY_FIELDS = ("author", "current_price", "upside_potential")
+
+
+def broker_key(name) -> str:
+    """증권사 이름에서 꼬리를 떼어 두 출처의 표기를 맞춘다."""
+    key = str(name or "미상").replace(" ", "")
+    for suffix in BROKER_SUFFIXES:
+        if key.endswith(suffix) and len(key) > len(suffix):
+            return key[: -len(suffix)]
+    return key
+
+
+def _same_report(primary: dict, other: dict) -> bool:
+    if broker_key(primary.get("securities_company")) != broker_key(other.get("securities_company")):
+        return False
+    a, b = _iso_date(primary.get("report_date")), _iso_date(other.get("report_date"))
+    if a is None or b is None or abs((a - b).days) > SAME_REPORT_DAYS:
+        return False
+    return numeric_target(primary.get("target_price")) == numeric_target(other.get("target_price"))
+
+
+def merge_target_history(primary: list, fallback: list) -> list:
+    """autoanalyst 리포트(`primary`)에 StockEasy 목표가 이력(`fallback`)을 합친다.
+
+    같은 리포트(증권사 같고 발간일 ±`SAME_REPORT_DAYS`일, 목표가 같음)는 `primary` 행 하나로 남기고
+    StockEasy에만 있는 칸을 옮겨 온다. StockEasy에만 있는 리포트는 그대로 살리되 증권사 이름을
+    `primary` 표기로 맞춘다 — 증권사별 최신 1건 집계가 같은 증권사를 둘로 세지 않게 하려는 것이다.
+    """
+    merged = [dict(row) for row in primary or []]
+    names = {}
+    for row in merged:
+        names.setdefault(broker_key(row.get("securities_company")), row.get("securities_company"))
+    for row in fallback or []:
+        twin = next((m for m in merged if m.get("source") == autoanalyst.SOURCE and _same_report(m, row)), None)
+        if twin is not None:
+            for key in STOCKEASY_ONLY_FIELDS:
+                if twin.get(key) is None and row.get(key) is not None:
+                    twin[key] = row[key]
+            continue
+        name = names.get(broker_key(row.get("securities_company")), row.get("securities_company"))
+        merged.append({**row, "securities_company": name, "source": row.get("source") or "stockeasy"})
+    return sorted(merged, key=lambda r: r.get("report_date") or "", reverse=True)
+
+
 @dataclass
 class StockPayloads:
     """한 종목에 대해 받은 것 전부. 우선주 분기는 `info`(`StockInfo`)가 한 번 정한다.
@@ -635,7 +713,16 @@ class StockPayloads:
     news: dict | None = None
     reports: dict | None = None
     analysis: dict | None = None
+    # autoanalyst 리포트 목록(StockEasy 행 모양). 실패하면 None이고 사유는 `errors["autoanalyst"]`.
+    analyst_reports: list | None = None
     errors: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def target_history(self) -> list:
+        """목표가 이력 — autoanalyst 기본, 이미 받은 `info-tab` 이력으로 빈 곳을 채운다."""
+        return merge_target_history(
+            self.analyst_reports or [], (self.fundamentals or {}).get("target_price_history") or []
+        )
 
     @property
     def fundamentals(self) -> dict | None:
@@ -667,7 +754,7 @@ def build_summary(
     regular_close = regular_price(price, fetched)
     parent_prc = regular_price(info, fetched)
     own_prc = regular_close if payloads.info.is_preferred else None
-    history = info.get("target_price_history") or []
+    history = payloads.target_history
     # 목표주가는 본주에 매겨진다 — 우선주 주가에 대면 괴리율만큼 상승여력이 부풀려진다.
     consensus = build_consensus_summary(history, parent_prc)
     consensus_input, consensus_gaps = build_consensus_input(consensus, history, fetched.astimezone(KST).date())
@@ -688,7 +775,7 @@ def build_summary(
         "sector_info": info.get("sector_info"),
         "rs_data": info.get("rs_data"),
         "investment": info.get("investment"),
-        "target_price_history": info.get("target_price_history"),
+        "target_price_history": history,
         "consensus": consensus,
         # 9단계 `valuation_decision.py` 입력의 `consensus` 블록 그대로. null 칸은 `consensus_input_gaps` 사유대로 모델이 채운다.
         "consensus_input": consensus_input,
@@ -731,6 +818,10 @@ def collect_stock_payloads(
     referer = f"{stockeasy.PAGE_BASE}/{company}"
     cookie = stockeasy.load_cookie()
 
+    payloads.analyst_reports, aa_err = autoanalyst.fetch_reports(company)
+    if aa_err:
+        payloads.errors["autoanalyst"] = aa_err
+
     def fetch(name: str, path: str, params: dict | None = None, job_referer: str = referer) -> dict | None:
         payload, err = stockeasy.fetch_stock_json(path, params, referer=job_referer, cookie=cookie)
         if err:
@@ -742,7 +833,15 @@ def collect_stock_payloads(
     if disclosures:
         payloads.analysis = fetch("analysis", stockeasy.ENDPOINTS["analysis_tab"].format(code=company))
     if summaries:
-        if cookie:
+        summarized = [
+            row
+            for row in payloads.analyst_reports or []
+            if row.get("summary_points") and (not since or (row.get("report_date") or "") >= since)
+        ]
+        if summarized:
+            # 요약은 autoanalyst가 기본 — StockEasy `securities-reports` 요청 하나를 아낀다.
+            payloads.reports = {"items": summarized, "total_count": len(summarized), "source": autoanalyst.SOURCE}
+        elif cookie:
             params = {"stock_code": company, "page": 1, "page_size": max(summaries, 10)}
             if since:
                 params["date_from"] = since
@@ -846,7 +945,7 @@ def main(argv: list[str] | None = None) -> int:
     print_grades(info.get("investment"))
     # 목표주가는 본주에 매겨진다 — 우선주 주가에 대면 상승여력이 괴리율만큼 부풀려진다.
     print_target_prices(
-        info.get("target_price_history") or [],
+        payloads.target_history,
         regular_price(info, now),
         args.reports,
         args.since,

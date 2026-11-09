@@ -181,6 +181,21 @@ REPORTS_PAYLOAD = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _no_real_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`fetch_stock_json`만 막는 테스트도 autoanalyst 요청은 `read_url`로 나간다 — 빈 목록을 준다.
+
+    StockEasy 요청이 여기까지 오면 막는다. 자기 `read_url`을 까는 테스트는 이것을 덮어쓴다.
+    """
+
+    def read_url(url, headers, timeout):
+        if "/report_list_get_by_recent" in url:
+            return b'{"total_count": 0, "count": 0, "data": []}'
+        raise AssertionError(f"예상 밖 실제 요청: {url}")
+
+    monkeypatch.setattr(datafeed_http, "read_url", read_url)
+
+
 def _patch_stock_info_fetch(
     module, monkeypatch: pytest.MonkeyPatch, search=None, cookie="session=abc", reports_error=None
 ) -> None:
@@ -712,8 +727,16 @@ PREFERRED_PARENT_PAYLOAD = {
 }
 
 
-def _golden_network(monkeypatch: pytest.MonkeyPatch, info_tabs: dict[str, dict], parent: str) -> list[str]:
-    """URL로 응답을 고르는 가짜 `read_url`. 요청된 URL을 순서대로 기록한다."""
+def _golden_network(
+    monkeypatch: pytest.MonkeyPatch,
+    info_tabs: dict[str, dict],
+    parent: str,
+    autoanalyst_rows: list[dict] | None = None,
+) -> list[str]:
+    """URL로 응답을 고르는 가짜 `read_url`. 요청된 URL을 순서대로 기록한다.
+
+    autoanalyst 리포트 목록은 `autoanalyst_rows`(원 API 행)를 돌려준다. 없으면 빈 목록이다.
+    """
     import urllib.parse
 
     seen: list[str] = []
@@ -723,6 +746,9 @@ def _golden_network(monkeypatch: pytest.MonkeyPatch, info_tabs: dict[str, dict],
     def read_url(url, headers, timeout):
         seen.append(url)
         path = urllib.parse.urlparse(url).path
+        if path.endswith("/report_list_get_by_recent"):
+            rows = autoanalyst_rows or []
+            return json.dumps({"total_count": len(rows), "count": len(rows), "data": rows}).encode()
         for code, payload in info_tabs.items():
             if path.endswith(f"/stock-info/info-tab/{code}"):
                 return json.dumps(after_hours if payload is STOCK_INFO_PAYLOAD else payload).encode()
@@ -806,10 +832,10 @@ def _kst(*args):
     return datetime(*args, tzinfo=timezone(timedelta(hours=9)))
 
 
-def _consensus_json(monkeypatch, capsys, argv, info_tabs, parent, now):
+def _consensus_json(monkeypatch, capsys, argv, info_tabs, parent, now, autoanalyst_rows=None):
     module = load_script("analyze-stock", "fetch_stock_info")
     monkeypatch.setattr(module, "_now", lambda: now)
-    _golden_network(monkeypatch, info_tabs, parent)
+    _golden_network(monkeypatch, info_tabs, parent, autoanalyst_rows)
     assert module.main([*argv, "--json"]) == 0
     return json.loads(capsys.readouterr().out)
 
@@ -868,7 +894,7 @@ def test_consensus_envelopes_pass_validate_inputs(monkeypatch, capsys):
     assert envelopes["consensus_low"] == {
         "value": 60000.0,
         "status": "ok",
-        "source": "StockEasy stock-info/064290 [컨센 요약]",
+        "source": "autoanalyst report_list + StockEasy stock-info/064290 [컨센 요약]",
         "asof": "2026-07-20",
         "fetched_at": "2026-07-20T15:50:00+09:00",
         "kind": "estimate",
@@ -901,7 +927,7 @@ def test_preferred_consensus_upside_is_measured_against_the_common_share(monkeyp
     # 메리츠 75,000 vs 본주 80,000원 → -6.25% (우선주 61,000원에 대면 +23.0%로 부풀려진다)
     assert summary["consensus"]["upside_percent"] == pytest.approx(-6.25)
     assert summary["consensus_input"]["average"] == 75000.0
-    assert summary["consensus_envelopes"]["consensus_average"]["source"] == "StockEasy stock-info/005930 [컨센 요약]"
+    assert summary["consensus_envelopes"]["consensus_average"]["source"] == "autoanalyst report_list + StockEasy stock-info/005930 [컨센 요약]"
 
 
 def _with_chart(payload: dict, bars: list[tuple[str, float]], **extra) -> dict:
@@ -972,3 +998,97 @@ def test_preferred_share_measures_both_axes_on_their_regular_session_closes(monk
     out = capsys.readouterr().out
     assert "괴리율 -24.1%" in out
     assert "[시세] 60,000원" in out
+
+
+# --- autoanalyst 리포트 합치기 ---------------------------------------------------
+# 목표가·요약은 autoanalyst가 기본이고, 이미 받은 `info-tab` 목표가 이력으로 빈 곳을 채운다.
+# 두 출처의 커버리지가 서로 겹치지 않는 부분이 있어서다(2026-11-09 5종목 대조).
+
+
+def _aa_row(date: str, broker: str, target, summary: str = "", change=None) -> dict:
+    return {
+        "id": hash((date, broker)),
+        "report_date": date,
+        "brokerage": broker,
+        "title": f"{broker} 리포트",
+        "summerized_contents": summary,
+        "manual_target_price": target,
+        "manual_price_change_type": change,
+        "opinion_extracted": "BUY" if target else None,
+    }
+
+
+ALIAS_HISTORY_PAYLOAD = {
+    **STOCK_INFO_PAYLOAD,
+    "target_price_history": [
+        *STOCK_INFO_PAYLOAD["target_price_history"],
+        {"report_date": "2026-05-01", "securities_company": "DB금융투자",
+         "investment_opinion": "Buy", "target_price": 50000},
+    ],
+}
+
+
+def test_merged_history_counts_one_report_once_and_keeps_both_sides(monkeypatch, capsys):
+    rows = [
+        # StockEasy 메리츠 07-03 75,000과 같은 리포트 — 날짜가 하루 어긋나 있다.
+        _aa_row("2026-07-04", "메리츠증권", 75000),
+        # autoanalyst에만 있는 증권사.
+        _aa_row("2026-07-10", "한국투자증권", 90000),
+        # StockEasy `DB금융투자`와 같은 증권사 — 최신 1건만 센다.
+        _aa_row("2026-07-01", "DB증권", 55000),
+    ]
+    summary = _consensus_json(
+        monkeypatch, capsys, ["064290", "--summaries", "0"], {"064290": ALIAS_HISTORY_PAYLOAD},
+        "064290", _kst(2026, 9, 30, 15, 50), rows,
+    )
+
+    assert len(summary["target_price_history"]) == 6
+    consensus = summary["consensus"]
+    assert consensus["coverage_brokers"] == 4
+    assert {row["target_price"] for row in consensus["included"]} == {75000, 90000, 55000}
+    assert consensus["average"] == pytest.approx((75000 + 90000 + 55000) / 3)
+
+
+def _run_with_reports(monkeypatch, capsys, rows, argv=("064290",)):
+    module = load_script("analyze-stock", "fetch_stock_info")
+    monkeypatch.setattr(module, "_now", lambda: _kst(2026, 9, 30, 15, 50))
+    seen = _golden_network(monkeypatch, COMMON_TABS, "064290", rows)
+    assert module.main(list(argv)) == 0
+    return capsys.readouterr().out, seen
+
+
+def test_summaries_come_from_autoanalyst_without_a_stockeasy_reports_call(monkeypatch, capsys):
+    rows = [_aa_row("2026-07-10", "한국투자증권", 90000, "수주잔고 최대. /// 마진 개선.", "상향")]
+
+    out, seen = _run_with_reports(monkeypatch, capsys, rows)
+
+    assert not any("securities-reports" in url for url in seen)
+    assert "[리포트 요약] 1건" in out
+    assert "2026-07-10 [한국투자증권]" in out
+    assert "· 수주잔고 최대." in out
+    assert "· 마진 개선." in out
+
+
+def test_stockeasy_reports_are_asked_when_autoanalyst_has_no_summary(monkeypatch, capsys):
+    rows = [_aa_row("2026-07-10", "한국투자증권", 90000)]
+
+    _, seen = _run_with_reports(monkeypatch, capsys, rows)
+
+    assert any("securities-reports" in url for url in seen)
+
+
+def test_a_target_far_off_the_history_median_is_left_out_of_the_consensus(monkeypatch, capsys):
+    """autoanalyst는 에이피알 DB증권 목표가를 71,860원으로 실었다(실제 50만 원대, 2026-11-09)."""
+    rows = [
+        _aa_row("2026-07-10", "한국투자증권", 90000),
+        _aa_row("2026-07-12", "DB증권", 7186),
+    ]
+    summary = _consensus_json(
+        monkeypatch, capsys, ["064290", "--summaries", "0"], COMMON_TABS,
+        "064290", _kst(2026, 9, 30, 15, 50), rows,
+    )
+
+    consensus = summary["consensus"]
+    assert {row["target_price"] for row in consensus["included"]} == {75000, 90000}
+    excluded = {row["broker"]: row["target_status"] for row in consensus["excluded_latest"]}
+    assert excluded["DB증권"].startswith("이상치")

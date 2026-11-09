@@ -30,7 +30,7 @@ design notes to `docs/`.
 `src/invagent/datafeed/` is the only place that talks to a market data source, and
 `http.get_json` is the single request path — the response cache (`src/invagent/datafeed/cache.py`)
 and the per-host rate limit sit inside it, so every caller gets both without asking. Its modules
-are `stockeasy`, `fsc`, `naver`, `daily` (the judgement bars every price verdict reads), `cache`,
+are `stockeasy`, `autoanalyst` (broker target prices and report summaries, no login), `fsc`, `naver`, `daily` (the judgement bars every price verdict reads), `cache`,
 `ratelimit`, `env`, `series`, `tickers`, `stockinfo` (the `info-tab` pair), `opendart` (the
 OpenDART filing list the briefing matches against holdings; bodies stay on the MCP) and `snapshot`.
 **Add a new source here, never in a skill script.** A skill script fetches nothing itself; it calls

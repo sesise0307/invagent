@@ -7,7 +7,14 @@ Maintainer notes for `src/invagent/datafeed/`: how each module behaves and why. 
 `src/invagent/datafeed/` is the only place that talks to a market data source.
 `http.get_json` is the single request path and every other module goes through it:
 `stockeasy` (the `/stockdata/api/v1/**` stock endpoints and the `.../market/**`
-ones, the `STOCKEASY_COOKIE` session, stock resolution, `gap_reason` — the one 401/cookie hint text every caller quotes), `fsc` (the Financial Services
+ones, the `STOCKEASY_COOKIE` session, stock resolution, `gap_reason` — the one 401/cookie hint text every caller quotes), `autoanalyst` (the
+login-free `api.autoanalyst.ai.kr` broker-report list — target price, opinion, change and a `///`-separated summary
+per report — returned in StockEasy's row keys with `source: autoanalyst`; it is the default for target prices and
+report summaries because it costs no StockEasy request, and `fetch_stock_info` merges it with the `info-tab`
+`target_price_history` it already holds, since on 2026-11-09 the two matched on every shared report's target but
+each carried reports the other lacked — Korea Investment, BNK and Heungkuk here, SK Securities and Growth Research there.
+Its `finance_price_basic` quote carries only weekly bars and a `volume` a thousand times too large, so nothing here
+reads prices from it), `fsc` (the Financial Services
 Commission's official KRX daily prices on data.go.kr, keyed by `DATA_GO_KR_SERVICE_KEY`; an ETF, absent
 from the stock-price service, is asked of the securities-product service `getETFPriceInfo_V2` instead —
 without it ETFs fell through to StockEasy's three years even intraday and a KODEX 200 scan started a
