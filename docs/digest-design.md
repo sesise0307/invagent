@@ -78,7 +78,9 @@ Sheets file `주식 포트폴리오` (sheet `포트폴리오`) through the conne
 formatted range reads (the collection procedure is owned by `market-data`), parses it with
 `.agents/skills/daily-digest/scripts/extract_portfolio.py`, and stores the
 snapshot in `output/portfolio/<yyyy>/<mm>/<yyyy-mm-dd>.md`. `analyze-stock` and `advice` read
-the latest snapshot instead of re-fetching the sheet. `output/` is gitignored, so
+the latest snapshot instead of re-fetching the sheet. The briefing itself always re-fetches the
+sheet and overwrites today's snapshot, even when the file exists (user decision 2026-11-09): a
+morning snapshot missed that day's ESS sale and the briefing's cash had to be patched by hand. `output/` is gitignored, so
 portfolio data never enters the repository.
 
 Snapshots and briefings share one dated layout, `<root>/<yyyy>/<mm>/<yyyy-mm-dd>.md`,
