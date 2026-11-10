@@ -679,7 +679,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--portfolio-dir", type=Path, help="계좌 MDD용 스냅샷 루트 (기본: 스냅샷의 <yyyy>/<mm> 위 디렉토리)")
     parser.add_argument("--state-file", type=Path, help="MDD 최초 발동일과 재개 상태 JSON")
     parser.add_argument("--sessions", type=Path, help="검증된 거래일 날짜 목록(JSON 또는 한 줄 한 날짜)")
-    parser.add_argument("--review-completed", action="store_true", help="-15% 발동 후 복기 완료를 명시한다")
+    parser.add_argument("--review-completed", action="store_true", help="-15%% 발동 후 복기 완료를 명시한다")
     parser.add_argument("--resume-authorized", action="store_true", help="해제 조건 충족으로 신규 매수 재개를 기록한다")
     parser.add_argument("--json", action="store_true", help="렌더링 대신 구조화 JSON을 출력한다")
     args = parser.parse_args(argv)

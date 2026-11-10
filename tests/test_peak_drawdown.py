@@ -942,3 +942,13 @@ def test_record_history_restarts_after_full_exit_and_reentry(tmp_path: Path) -> 
     assert result["band"] == -10.0
     # 계속 보유한 종목의 이력은 그대로다
     assert [d for d, _ in history["베타파마"]] == ["2026-08-10", "2026-09-10", "2026-10-22"]
+
+
+def test_help_prints_usage_without_crashing(capsys):
+    module = load_script("daily-digest", "peak_drawdown")
+    with pytest.raises(SystemExit) as exc:
+        module.main(["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "--review-completed" in out
+    assert "-15% 발동 후 복기 완료" in out
