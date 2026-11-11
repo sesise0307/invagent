@@ -38,6 +38,7 @@ BASE_MIN_AGE = 15        # 저점 이후 신저가 없이 버텨야 하는 최�
 TURN_PIVOT_K = 5         # 단기 스윙 프랙탈 반경 (좌우 거래일). stage_scan의 10일의 절반
 MA_SHORT = 20            # 단기 추세선
 MA_SHORT_RISE_DAYS = 5   # 20일선 "상승" = 5거래일 전보다 높다
+MA_20WEEK = 100         # 20주선 알림용 일봉 근사 (stage_scan `MA_20WEEK`과 같은 값)
 MA_MID = 60              # 2차 증량 트리거의 중기선
 MA_MID_SLOPE_DAYS = 20   # 60일선 "상향 전환" = 20거래일 변화율 > 0
 EXTENDED_FROM_LOW_PCT = 35.0     # 저점 대비 이만큼 넘게 올랐으면 초입이 아니다
@@ -266,6 +267,9 @@ def analyze_turn(bars: list[dict]) -> dict:
         "past_pivot_pct": past_pivot_pct,
         "ma20": ma20_now,
         "ma20_rising": checks["20일선 상승"],
+        # 「기술적 분석 규칙 2」 20일선·20주선 종가 돌파·하회 알림 — 상태·매수 조건에는 쓰지 않는다(2026-11-11 사용자 결정).
+        "ma20_cross": series.ma_cross(closes, MA_SHORT),
+        "ma20w_cross": series.ma_cross(closes, MA_20WEEK),
         "ma60": ma60[-1],
         "ma60_slope_pct": ma60_slope_pct,
         "ma60_rising": ma60_slope_pct is not None and ma60_slope_pct > 0,
@@ -325,6 +329,10 @@ def print_result(name: str, code: str, r: dict, source: str = "StockEasy 일봉"
         f"  {MA_SHORT}일선: {_won(r['ma20'])} ({'상승' if r['ma20_rising'] else '상승 아님'}) · "
         f"앵커드 VWAP(바닥부터): {_won(r['avwap'])}"
     )
+    for key, line in (("ma20_cross", f"{MA_SHORT}일선"), ("ma20w_cross", "20주선")):
+        label = {"up": "돌파", "down": "하회"}.get(r[key]["event"])
+        if label:
+            print(f"  🔔 오늘 {line} 종가 {label} (알림 — 매매 조건 아님)")
     slope = "-" if r["ma60_slope_pct"] is None else f"{r['ma60_slope_pct']:+.1f}%"
     print(f"  {MA_MID}일선: {_won(r['ma60'])} · {MA_MID_SLOPE_DAYS}일 변화율 {slope} "
           f"({'상향 전환' if r['ma60_rising'] else '상향 전환 전'})")

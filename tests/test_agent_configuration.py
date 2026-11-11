@@ -205,10 +205,10 @@ def test_value_path_waits_for_the_scripted_turn() -> None:
 
 
 def test_analyze_stock_keeps_the_20week_rule_advisory() -> None:
-    """「기술적 분석 규칙 1」은 단독 절대 조건이 아니라고 못 박는다 — 스킬이 이를 진입 금지로 격상하면 안 된다."""
+    """「기술적 분석 규칙 1」은 참고 지표다(2026-11-11 단순화) — 스킬이 이를 진입 금지로 격상하면 안 된다."""
     rules = _my_rules()
-    assert "단독으로 매수·매도를 결정하는 절대 조건으로 삼지 않는다" in rules
-    assert "20주선 아래에서도 분할 진입할 수 있다" in rules
+    assert "주봉 20주선은 중요한 장기 주가 추세 참고 지표다" in rules
+    assert "20주선이 하락 중이면 추세 위험이 높다고 보고 신중히 접근한다" in rules
 
     skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
     line = [ln for ln in skill.splitlines() if "주봉 20주선 방향" in ln]
@@ -1048,3 +1048,29 @@ def test_market_regime_constants_match_my_rules_and_skill() -> None:
         ("BEAR_DRAWDOWN_PCT", f"{module.BEAR_DRAWDOWN_PCT:g}%"),
     ):
         assert f"| `{name}` | {value} |" in skill, name
+
+
+def test_breakout_regime_ma_matches_my_rules_and_skill() -> None:
+    """「매매 규칙 20」의 200일선은 룰 원문·스크립트 상수·daily-digest SKILL.md가 같아야 한다."""
+    module = load_script("daily-digest", "fetch_market_signals")
+    skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
+    rule = next(ln for ln in _my_rules().splitlines() if ln.startswith("20. **추세·돌파 매매**"))
+
+    assert f"종가가 {module.BREAKOUT_REGIME_MA_DAYS}일 이동평균선 위인 날에만 매수" in rule
+    assert f"| `BREAKOUT_REGIME_MA_DAYS` | {module.BREAKOUT_REGIME_MA_DAYS} |" in skill
+    assert "`[매매 규칙 20]`" in skill
+    assert "매매 규칙 21" not in skill
+
+
+def test_moving_average_alerts_match_my_rules_and_skill() -> None:
+    """20일선·20주선 알림은 룰 원문(「기술적 분석 규칙 2」)·스크립트 상수·SKILL.md가 같아야 한다."""
+    module = load_script("daily-digest", "peak_drawdown")
+    stage = load_script("stage-analysis", "stage_scan")
+    rules = _my_rules()
+    skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert module.MA_20WEEK_DAYS == stage.MA_20WEEK
+    assert f"종가가 {module.MA_ALERT_DAYS}일 이동평균선이나 20주선을 돌파하거나 하회하면 종목별로 알린다" in rules
+    assert "🔔 20일선 종가" in skill
+    assert "🔔 20주선 종가" in skill
+    assert "⚠️ 20주선 종가 이탈" not in skill

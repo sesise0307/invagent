@@ -34,3 +34,16 @@ def swing_pivots(
         if bars[i][low_key] <= min(b[low_key] for b in window):
             lows.append({"date": bars[i]["date"], "price": bars[i][low_key], "index": i})
     return highs, lows
+
+
+def ma_cross(closes: list[float], window: int) -> dict:
+    """마지막 종가가 `window`일 이동평균을 오늘 종가로 돌파했는가."""
+    averages = sma(closes, window)
+    if len(closes) < window + 1:
+        return {"average": averages[-1] if averages else None, "above": None, "event": None, "insufficient": True}
+    above = closes[-1] > averages[-1]
+    below = closes[-1] < averages[-1]
+    was_above = closes[-2] > averages[-2]
+    was_below = closes[-2] < averages[-2]
+    event = "up" if above and not was_above else "down" if below and not was_below else None
+    return {"average": averages[-1], "above": above, "event": event, "insufficient": False}

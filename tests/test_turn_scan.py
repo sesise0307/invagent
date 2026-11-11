@@ -373,3 +373,21 @@ def test_cli_names_the_official_bars_when_they_served_the_history(monkeypatch, c
     assert turn_scan.main(["가나"]) == 0
     header = capsys.readouterr().out.splitlines()[0]
     assert f"출처 금융위 KRX 공식 일봉 ~{bars[-1]['date']}" in header
+
+
+def test_analyze_turn_reports_a_20_day_line_cross_as_an_alert_only() -> None:
+    """20일선 종가 돌파·하회는 알림이다 — 상태 판정과 별개로 결과에 실린다(2026-11-11 사용자 결정)."""
+    closes = [100.0] * 150 + [95.0, 106.0]   # 어제 20일선 아래, 오늘 위로 돌파
+
+    r = turn_scan.analyze_turn(_bars(closes))
+
+    assert r["ma20_cross"]["event"] == "up"
+
+
+def test_analyze_turn_reports_a_20_week_line_cross_as_an_alert_only() -> None:
+    """「기술적 분석 규칙 2」: 20주선(100일 근사) 종가 돌파·하회도 알림으로 결과에 실린다."""
+    closes = [100.0] * 150 + [95.0, 106.0]   # 어제 100일선 아래, 오늘 위로 돌파
+
+    r = turn_scan.analyze_turn(_bars(closes))
+
+    assert r["ma20w_cross"]["event"] == "up"

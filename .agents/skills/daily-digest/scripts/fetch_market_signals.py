@@ -39,6 +39,9 @@ VOLATILE_DAY_TRIGGER = 3      # 이 수 이상이면 발동
 LEVERAGE_MARKETS = ("KOSPI", "KOSDAQ")
 # 「계좌 규칙 1」 -10% 매수 중단 해제선 (2026-11-01 사용자 결정).
 MDD_RELEASE_MA_DAYS = 3
+# 「매매 규칙 20」 추세·돌파 매수 시장 필터 — 종목이 상장된 지수의 종가가 200일선 위인 날만 (2026-11-11 사용자 결정 ·
+# 백테스트 2021~2026 전종목: 지수 200일선 위 52주 신고가 돌파 1건 평균 +1.1%, 아래 +0.1%).
+BREAKOUT_REGIME_MA_DAYS = 200
 
 # --- 「레버리지 규칙 2」 반대매매 클라이맥스 예외 -----------------------------
 # 룰 원문: 반대매매 금액 또는 비중이 평소(직전 120거래일) 대비 +2σ 이상인 날은 「레버리지 규칙 3」
@@ -491,6 +494,32 @@ def mdd_release(rows: list[dict]) -> dict:
     return {"released": any(m["recovered"] for m in markets.values()), "markets": markets}
 
 
+def breakout_regime(rows: list[dict]) -> dict:
+    """「매매 규칙 20」: 지수별로 종가가 200일선 위인가. 추세·돌파 매수는 종목이 상장된 지수가 위일 때만."""
+    out: dict[str, dict] = {}
+    for market in LEVERAGE_MARKETS:
+        closes = [r[market] for r in rows if r.get(market)][-BREAKOUT_REGIME_MA_DAYS:]
+        insufficient = len(closes) < BREAKOUT_REGIME_MA_DAYS
+        average = None if insufficient else sum(closes) / BREAKOUT_REGIME_MA_DAYS
+        out[market] = {
+            "insufficient": insufficient,
+            "close": closes[-1] if closes else None,
+            "average": average,
+            "above": not insufficient and closes[-1] > average,
+        }
+    return out
+
+
+def print_breakout_regime(rows: list[dict]) -> None:
+    print(f"[매매 규칙 20] 추세·돌파 매수 = 종목이 상장된 지수 종가 {BREAKOUT_REGIME_MA_DAYS}일선 위")
+    for market, m in breakout_regime(rows).items():
+        if m["insufficient"]:
+            print(f"  {market}: ❔ 판정 불가 — 일봉 부족")
+        else:
+            state = "✅ 위 — 추세·돌파 매수 가능" if m["above"] else "⛔ 아래 — 추세·돌파 매수 안 함"
+            print(f"  {market}: 종가 {m['close']:,.2f} · {BREAKOUT_REGIME_MA_DAYS}일선 {m['average']:,.2f} → {state}")
+
+
 def print_mdd_release(rows: list[dict]) -> None:
     verdict = mdd_release(rows)
     print("[계좌 규칙 1] -10% 매수 중단 해제 = KOSPI·KOSDAQ 중 하나 종가 3일선 위")
@@ -656,6 +685,7 @@ def main(argv: list[str] | None = None) -> int:
         session_rows, session_note = with_session_close(mm.get("data", []), indices_data or {}, bp or {})
         print_drawdown_ladder(session_rows, session_note)
         print_mdd_release(session_rows)
+        print_breakout_regime(session_rows)
     # 일부만 실패한 경우: 받은 부분은 출력하고 누락 사실을 남긴다
     for name, err in errors.items():
         print(f"[누락] {name} — {err}", file=sys.stderr)

@@ -46,7 +46,7 @@ from pathlib import Path
 
 from invagent.core.archive import archive_root, dated_files
 from invagent.core.files import atomic_write
-from invagent.datafeed import cache as http_cache, daily
+from invagent.datafeed import cache as http_cache, daily, series
 from invagent.datafeed.snapshot import holding_name, parse_balance, parse_holdings, to_float
 from invagent.datafeed.tickers import load_overrides, resolve_code
 
@@ -55,6 +55,10 @@ from invagent.datafeed.tickers import load_overrides, resolve_code
 PEAK_WINDOW_DAYS = 250      # 전고점 탐색 구간 (거래일 ≈ 52주)
 FETCH_CALENDAR_DAYS = 400   # 250거래일을 확보하기 위한 달력일 요청 폭
 DRAWDOWN_BANDS = (-10.0, -15.0, -20.0, -30.0)   # 종목 경보 밴드
+# 「기술적 분석 규칙 2」 이평선 알림 (2026-11-11 사용자 결정). 20일선·20주선 종가 돌파·하회는 알림일 뿐
+# 매매 조건이 아니다. 20주선은 일봉 100일로 근사한다(stage_scan `MA_20WEEK`과 같은 값).
+MA_ALERT_DAYS = 20
+MA_20WEEK_DAYS = 100
 ACCOUNT_MDD_BANDS = (-10.0, -15.0)              # 「계좌 규칙 1」 계좌 MDD 밴드
 # 다음 밴드에 이만큼(%p) 안으로 들어오면 발동 전에 미리 경고한다. 밴드가 요구하는 대응
 # (계좌 = 레버리지 정리·현금 확보·신규 매수 금지 / 종목 = trailing stop·분할 매도 기준 확정)은
@@ -187,6 +191,9 @@ def analyze_holdings(
                 entry["error"] = f"시세 수집 실패 — {bars.error or '응답 없음'}"
                 continue
             entry.update(peak_drawdown(bars))
+            closes = [row["close"] for row in bars.rows]
+            entry["ma20_cross"] = series.ma_cross(closes, MA_ALERT_DAYS)
+            entry["ma20w_cross"] = series.ma_cross(closes, MA_20WEEK_DAYS)
             entry["band"] = band_for(entry["drawdown"])
             entry["approach"] = approaching_band(
                 pending_bands(entry["drawdown"], entry["peak"], DRAWDOWN_BANDS),
@@ -542,6 +549,13 @@ def render(
         lines += ["", f"- 전고점 낙폭 판정(52주 시장 종가 기준): {desc}"]
     else:
         lines += ["", "- 전고점 낙폭 판정(52주 시장 종가 기준): 해당 없음"]
+
+    priced = [r for r in results if not r["error"] and r.get("ma20_cross")]
+    for key, line in (("ma20_cross", f"{MA_ALERT_DAYS}일선"), ("ma20w_cross", "20주선")):
+        for event, label in (("up", "돌파"), ("down", "하회")):
+            names = [r["종목"] for r in priced if r[key]["event"] == event]
+            if names:
+                lines.append(f"- 🔔 {line} 종가 {label}(알림 — 매매 조건 아님): {', '.join(names)}")
 
     market_near = approach_line(
         "52주 시장 종가 기준",

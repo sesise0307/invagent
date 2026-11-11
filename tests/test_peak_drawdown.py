@@ -952,3 +952,26 @@ def test_help_prints_usage_without_crashing(capsys):
     out = capsys.readouterr().out
     assert "--review-completed" in out
     assert "-15% 발동 후 복기 완료" in out
+
+
+def test_holdings_report_20_day_and_20_week_line_crosses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """「기술적 분석 규칙 2」: 보유 종목마다 20일선·20주선 종가 돌파·하회를 알림으로 낸다(매매 조건 아님)."""
+    module = load_script("daily-digest", "peak_drawdown")
+    monkeypatch.setattr(
+        datafeed_tickers, "resolve_stock", lambda name, overrides=None: ({"stock_code": "000660"}, None, 0)
+    )
+    # 100일 100원 → 20일 110원 → 오늘 95원.
+    # 20일선: 어제 110 = 종가 110(위 아님) → 오늘 (19×110+95)/20 = 109.25 > 95 → 하회.
+    # 20주선(100일 근사): 어제 102 < 110 → 오늘 (79×100+20×110+95)/100 = 101.95 > 95 → 하회.
+    closes = [100.0] * 100 + [110.0] * 20 + [95.0]
+    rows = _bars([(f"2026{(i // 28) + 1:02d}{(i % 28) + 1:02d}", c) for i, c in enumerate(closes)])
+    monkeypatch.setattr(module.daily, "fetch_daily_bars", lambda code, days, asof=None: Bars(rows))
+
+    results = module.analyze_holdings(module.parse_holdings(PEAK_SNAPSHOT), {}, {}, "2026-08-28")
+    section = module.render(results, {"error": "잔고 이력 없음"})
+
+    assert results[0]["ma20_cross"]["event"] == "down"
+    assert results[0]["ma20w_cross"]["event"] == "down"
+    assert "- 🔔 20일선 종가 하회(알림 — 매매 조건 아님): 알파전자, 베타파마" in section
+    assert "- 🔔 20주선 종가 하회(알림 — 매매 조건 아님): 알파전자, 베타파마" in section
+    assert "⚠️ 20주선 종가 이탈" not in section

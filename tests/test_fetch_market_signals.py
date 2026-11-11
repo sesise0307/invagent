@@ -760,3 +760,25 @@ def test_leverage_rule_three_fires_when_the_run_breaks_below_its_start() -> None
 
     assert verdict["count"] == 3
     assert verdict["exempt"] is False and verdict["fired"] is True
+
+
+def test_breakout_regime_judges_each_index_close_against_its_200_day_average() -> None:
+    """「매매 규칙 20」: 추세·돌파 매수는 소속 지수 종가가 200일선 위인 날에만 한다 — 지수별로 따로 판정."""
+    module = load_script("daily-digest", "fetch_market_signals")
+    # KOSPI 200일선 = (199×100 + 110)/200 = 100.05 < 110 → 위. KOSDAQ = (199×100 + 90)/200 = 99.95 > 90 → 아래.
+    verdict = module.breakout_regime(_monitor_rows([100.0] * 199 + [110.0], [100.0] * 199 + [90.0]))
+
+    assert verdict["KOSPI"]["above"] is True
+    assert verdict["KOSPI"]["average"] == 100.05
+    assert verdict["KOSDAQ"]["above"] is False
+
+
+def test_breakout_regime_with_fewer_than_200_bars_is_undecided_not_open() -> None:
+    """일봉이 200개 안 되면 200일선을 만들 수 없다 — 열린 것으로 보지 않고 판정 불가로 낸다."""
+    module = load_script("daily-digest", "fetch_market_signals")
+
+    verdict = module.breakout_regime(_monitor_rows([100.0] * 198 + [120.0]))
+
+    assert verdict["KOSPI"]["insufficient"] is True
+    assert verdict["KOSPI"]["above"] is False
+    assert verdict["KOSPI"]["average"] is None

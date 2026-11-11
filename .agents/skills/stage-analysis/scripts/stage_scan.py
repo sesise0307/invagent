@@ -49,7 +49,7 @@ WEEK_COUNT = 20          # 「기술적 분석 규칙 1」의 실제 주봉 종�
 # 「매매 규칙 12」의 장대 양봉 정의(2026-09-05 사용자 확정): 전일 종가 대비 +8% 이상.
 # 정의는 `context/my_rules.md`가 정본이고 테스트가 원문에서 파싱해 이 상수와 대조한다.
 LONG_BULL_PCT = 8.0
-LONG_BULL_WINDOW = 20    # 진입가를 구속하는 최근 구간 (거래일). 반년 전 양봉은 오늘과 무관하다
+LONG_BULL_WINDOW = 1     # 오늘 하루만 본다 — 「매매 규칙 12」는 장대 양봉 당일에만 따라붙지 않는다(2026-11-11 단순화)
 SLOPE_WINDOW = 20        # 기울기 측정 구간 (거래일)
 SLOPE_FLAT_PCT = 1.5     # ±1.5%/20일 이내면 "평탄"
 POSITION_WINDOW = 20     # 주가-이평선 위치 판정 구간 (거래일)
@@ -168,10 +168,9 @@ def ma_slope(ma: list[float | None], window: int = SLOPE_WINDOW) -> tuple[str, f
 
 
 def long_bull_days(bars: list[dict], window: int = LONG_BULL_WINDOW) -> list[dict]:
-    """최근 구간의 장대 양봉(전일 종가 대비 +`LONG_BULL_PCT`% 이상) 목록.
+    """최근 `window`봉의 장대 양봉(전일 종가 대비 +`LONG_BULL_PCT`% 이상) 목록. 기본은 오늘 하루.
 
-    「매매 규칙 12」는 장대 양봉 위에 진입가를 잡는 것을 막는다. 막으려면 그 날의 종가를
-    알아야 하므로 날짜·등락률·종가를 함께 낸다.
+    「매매 규칙 12」는 장대 양봉 당일 매수를 막는다. 날짜·등락률·종가를 함께 낸다.
     """
     out: list[dict] = []
     for prev, cur in zip(bars[-window - 1 :], bars[-window:]):
@@ -691,9 +690,9 @@ def print_result(name: str, code: str, result: dict, sources: list[str]) -> None
         days = " · ".join(
             f"{d['date']} {d['change']:+.1f}% (종가 {d['close']:,.0f}원)" for d in p["long_bull"]
         )
-        print(f"  장대 양봉(「매매 규칙 12」 +{LONG_BULL_PCT:.0f}% 이상, 최근 {LONG_BULL_WINDOW}일): {days}")
+        print(f"  장대 양봉(「매매 규칙 12」 +{LONG_BULL_PCT:.0f}% 이상, 오늘 — 오늘은 매수하지 않는다): {days}")
     else:
-        print(f"  장대 양봉(최근 {LONG_BULL_WINDOW}일): 없음")
+        print("  장대 양봉(오늘): 없음")
     highs = " → ".join(f"{h['price']:,.0f}" for h in p["pivot_highs"]) or "-"
     lows = " → ".join(f"{l['price']:,.0f}" for l in p["pivot_lows"]) or "-"
     print(f"  스윙: 저점·고점 {p['swing']} (고점 {highs} / 저점 {lows})")
