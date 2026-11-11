@@ -25,11 +25,11 @@ def _downside_blocked_payload() -> dict:
 
 
 def test_reward_risk_denominator_is_separate_from_the_position_sizing_floor() -> None:
-    """손익비 분모(15%)와 2%룰 분모(15%)는 숫자가 같아도 다른 것을 잰다.
+    """손익비 분모(15%)와 2%룰 분모(12%)는 다른 것을 잰다.
 
-    2%룰 하한은 「매매 규칙 6」의 전량 이탈선이라 1회 최대 손실을 정하고, 그래서
-    「기본 원칙 4(2%룰)」의 분모로 남아야 한다. 손익비는 시나리오 하방 대비
-    보상을 재는 값이므로 실행 손절선에 묶이면 기대수익의 재진술이 된다.
+    2%룰 하한은 「매매 규칙 6」 세 티어의 가중 손실(30% × 8% + 30% × 12% + 40% × 15% = 12%)이다
+    (「매매 규칙 9」 2026-11-11 개정) — 티어대로 팔았을 때 포지션이 실제로 내는 손실이다.
+    손익비는 시나리오 하방 대비 보상을 재는 값이므로 실행 손절선에 묶이면 기대수익의 재진술이 된다.
     """
     module = load_script("analyze-stock", "valuation_decision")
 
@@ -41,9 +41,11 @@ def test_reward_risk_denominator_is_separate_from_the_position_sizing_floor() ->
     assert risk["reward_risk_denominator"] == pytest.approx(module.MIN_REWARD_RISK_STOP)
     assert module.MIN_REWARD_RISK_STOP == pytest.approx(0.15)
     assert risk["reward_risk"] == pytest.approx(center_return / module.MIN_REWARD_RISK_STOP)
-    # 2%룰과 실행 손절선은 「매매 규칙 6」 전량 이탈선 15%에 묶여 있다 (2026-10-21 개정).
-    assert risk["effective_stop_loss"] == pytest.approx(0.15)
-    assert risk["max_purchase_fraction"] == pytest.approx(0.02 / 0.15)
+    # 2%룰 분모는 티어 가중 손실 12%다 — 매수원금 상한은 계좌의 1/6(약 16.7%).
+    assert risk["effective_stop_loss"] == pytest.approx(0.12)
+    assert risk["max_purchase_fraction"] == pytest.approx(1 / 6)
+    # 전량 이탈선 가격은 여전히 -15%다.
+    assert risk["stop_prices"]["full_exit"] == pytest.approx(risk["entry_price"] * 0.85)
 
 
 def test_stop_prices_follow_the_three_stop_tiers() -> None:
@@ -91,7 +93,7 @@ def test_value_band_floor_blocks_downside_for_the_grade() -> None:
     assert result["decision"]["base_grade"] == "buy_candidate"
     # 손익비와 2%룰 분모는 여전히 실측 하방으로 계산한다.
     assert result["risk"]["downside"] == pytest.approx(0.05)
-    assert result["risk"]["effective_stop_loss"] == pytest.approx(0.15)
+    assert result["risk"]["effective_stop_loss"] == pytest.approx(0.12)
 
 
 def test_value_band_floor_must_be_a_boolean() -> None:

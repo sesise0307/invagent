@@ -62,7 +62,7 @@ states sector overlap as a fact, not as a reason to shrink a position.
 - 「매매 규칙 6」 narrowed from -15%/-20% on 2026-10-21 and applied to existing holdings: a three-year
   closing-price backtest over about 190 names found this pair the most stable for both entry paths;
   -8~-10% full stops were rejected for noise stops.
-- 「매매 규칙 18」: lowering a line during a crash defeats the reason it was set in advance.
+- 「매매 규칙 7」: lowering a line during a crash defeats the reason it was set in advance.
 - Closing-price basis: an intraday spike that fires a stop defeats the plan; 「레버리지 규칙 3」 counts ±5% on
   closes for the same reason.
 - 「계좌 규칙 1」 index ETF exception: a -15% account drawdown usually coincides with an index crash, and buying
@@ -106,7 +106,7 @@ position that ran up and then rolled over stays silent while it is still in
 profit. `.agents/skills/daily-digest/scripts/peak_drawdown.py` adds the
 **peak** axis: it reads the snapshot that script just wrote, computes each
 holding's drawdown from its highest close over the last 250 trading days, and
-flags the -10 / -15 / -20 / -30% bands that map to 「매매 규칙 3·15」. A second
+flags the -10 / -15 / -20 / -30% bands that map to 「기본 원칙 3」·「매매 규칙 10」. A second
 axis, the highest `현재가` recorded across past snapshots, is printed beside it
 but is alert-only: that price is the Sheet's collected (intraday/delayed) quote,
 and `context/my_rules.md` 「적용 방법」 bars it from triggering any rule, so the

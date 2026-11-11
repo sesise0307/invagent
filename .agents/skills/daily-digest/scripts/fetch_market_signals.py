@@ -39,7 +39,7 @@ VOLATILE_DAY_TRIGGER = 3      # 이 수 이상이면 발동
 LEVERAGE_MARKETS = ("KOSPI", "KOSDAQ")
 # 「계좌 규칙 1」 -10% 매수 중단 해제선 (2026-11-01 사용자 결정).
 MDD_RELEASE_MA_DAYS = 3
-# 「매매 규칙 20」 추세·돌파 매수 시장 필터 — 종목이 상장된 지수의 종가가 200일선 위인 날만 (2026-11-11 사용자 결정 ·
+# 「매매 규칙 3」 추세·돌파 매수 시장 필터 — 종목이 상장된 지수의 종가가 200일선 위인 날만 (2026-11-11 사용자 결정 ·
 # 백테스트 2021~2026 전종목: 지수 200일선 위 52주 신고가 돌파 1건 평균 +1.1%, 아래 +0.1%).
 BREAKOUT_REGIME_MA_DAYS = 200
 
@@ -68,7 +68,7 @@ MARGIN_CALL_RATIO_SIGMA = 2.0
 # (3/3 당일 92억 → +2일 776억 · 7/28 당일 138억 → +3일 1,220억) 급락 당일엔 거의 못 잡는다.
 # 옛 정의(3거래일 연속 하락 + 반대매매 +1σ)는 직전 1년 -4.5% 이상 하락일 31일 중 급락 0일이었다.
 # 새 정의 백테스트(직전 1년): KOSPI 12일 · KOSDAQ 9일. 반대매매는 클라이맥스 판정에만 남는다.
-# 지수 ETF 바텀피싱(「지수 ETF 규칙 2」)과 「매매 규칙 6」 시장 급락 재량이 이 판정을 쓴다.
+# 지수 ETF 바텀피싱(「지수 ETF 규칙 2」)과 「매매 규칙 6」 급락일 보류 1회가 이 판정을 쓴다.
 CRASH_WINDOW_DAYS = 3
 CRASH_DROP_PCT = -3.0
 CRASH_CUMULATIVE_PCT = -8.0
@@ -495,7 +495,7 @@ def mdd_release(rows: list[dict]) -> dict:
 
 
 def breakout_regime(rows: list[dict]) -> dict:
-    """「매매 규칙 20」: 지수별로 종가가 200일선 위인가. 추세·돌파 매수는 종목이 상장된 지수가 위일 때만."""
+    """「매매 규칙 3」: 지수별로 종가가 200일선 위인가. 추세·돌파 매수는 종목이 상장된 지수가 위일 때만."""
     out: dict[str, dict] = {}
     for market in LEVERAGE_MARKETS:
         closes = [r[market] for r in rows if r.get(market)][-BREAKOUT_REGIME_MA_DAYS:]
@@ -511,7 +511,7 @@ def breakout_regime(rows: list[dict]) -> dict:
 
 
 def print_breakout_regime(rows: list[dict]) -> None:
-    print(f"[매매 규칙 20] 추세·돌파 매수 = 종목이 상장된 지수 종가 {BREAKOUT_REGIME_MA_DAYS}일선 위")
+    print(f"[매매 규칙 3] 추세·돌파 매수 = 종목이 상장된 지수 종가 {BREAKOUT_REGIME_MA_DAYS}일선 위 · 종목 종가 20일선 위")
     for market, m in breakout_regime(rows).items():
         if m["insufficient"]:
             print(f"  {market}: ❔ 판정 불가 — 일봉 부족")

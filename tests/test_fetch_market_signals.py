@@ -763,7 +763,7 @@ def test_leverage_rule_three_fires_when_the_run_breaks_below_its_start() -> None
 
 
 def test_breakout_regime_judges_each_index_close_against_its_200_day_average() -> None:
-    """「매매 규칙 20」: 추세·돌파 매수는 소속 지수 종가가 200일선 위인 날에만 한다 — 지수별로 따로 판정."""
+    """「매매 규칙 3」: 추세·돌파 매수는 소속 지수 종가가 200일선 위인 날에만 한다 — 지수별로 따로 판정."""
     module = load_script("daily-digest", "fetch_market_signals")
     # KOSPI 200일선 = (199×100 + 110)/200 = 100.05 < 110 → 위. KOSDAQ = (199×100 + 90)/200 = 99.95 > 90 → 아래.
     verdict = module.breakout_regime(_monitor_rows([100.0] * 199 + [110.0], [100.0] * 199 + [90.0]))

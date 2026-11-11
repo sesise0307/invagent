@@ -449,7 +449,7 @@ def test_twenty_week_line_is_a_documented_approximation():
     assert "근사" in skill
 
 def test_long_bull_candle_uses_the_threshold_from_my_rules():
-    """「매매 규칙 12」의 '장대 양봉'은 2026-09-05에 +8% 이상으로 정의됐다. 정의는 룰 파일이 정본이다."""
+    """「매매 규칙 11」의 '장대 양봉'은 2026-09-05에 +8% 이상으로 정의됐다. 정의는 룰 파일이 정본이다."""
     import re
 
     rules = (REPO_ROOT / "context" / "my_rules.md").read_text(encoding="utf-8")
@@ -459,7 +459,7 @@ def test_long_bull_candle_uses_the_threshold_from_my_rules():
 
 
 def test_only_todays_long_bull_candle_counts():
-    """「매매 규칙 12」(2026-11-11 단순화): 장대 양봉 당일에만 따라붙지 않는다 — 그 전 양봉은 진입을 막지 않는다."""
+    """「매매 규칙 11」(2026-11-11 단순화): 장대 양봉 당일에만 따라붙지 않는다 — 그 전 양봉은 진입을 막지 않는다."""
     closes = [100.0] * 200 + [100.0, 109.0, 110.0, 111.0]   # 3일 전 +9.0%, 오늘은 +0.9%
 
     assert stage_scan.analyze(_bars(closes))["price"]["long_bull"] == []

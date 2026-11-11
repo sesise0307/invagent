@@ -15,11 +15,16 @@ MIN_STOP_LOSS = 0.15
 # 「매매 규칙 6」 세 티어(2026-11-01 개정) — 진입가 대비 30% 축소선 둘. 전량 매도선은 MIN_STOP_LOSS다.
 FIRST_TRIM_STOP = 0.08
 SECOND_TRIM_STOP = 0.12
-# 손익비 분모의 하한. 실행 손절선(MIN_STOP_LOSS)과 일부러 분리해 둔다 — 실행 손절선은
-# 「매매 규칙 6」의 전량 이탈선이라 1회 최대 손실을 정하고 「기본 원칙 4(2%룰)」의
-# 분모로 남아야 하지만, 손익비 분모는 하방이 막힌 종목이 낮은 분모를 받도록 따로 정한
-# 값이다 (사용자 확정 2026-09-22). 2026-10-21 개정으로 둘 다 15%가 됐지만 재는 것이
-# 다르다 — 한쪽이 바뀌어도 다른 쪽이 따라가지 않게 두 값을 합치지 마라.
+TRIM_FRACTION = 0.30
+# 「매매 규칙 9」(2026-11-11 개정): 2%룰 분모는 세 티어의 가중 손실이다 —
+# 30% × 8% + 30% × 12% + 40% × 15% = 12%. 티어대로 팔았을 때 포지션이 실제로 내는 손실이다.
+WEIGHTED_STOP_LOSS = (
+    TRIM_FRACTION * FIRST_TRIM_STOP + TRIM_FRACTION * SECOND_TRIM_STOP
+    + (1 - 2 * TRIM_FRACTION) * MIN_STOP_LOSS
+)
+# 손익비 분모의 하한. 2%룰 분모(WEIGHTED_STOP_LOSS)·실행 손절선(MIN_STOP_LOSS)과 일부러 분리해
+# 둔다 — 손익비 분모는 하방이 막힌 종목이 낮은 분모를 받도록 따로 정한 값이다
+# (사용자 확정 2026-09-22). 재는 것이 다르다 — 한쪽이 바뀌어도 다른 쪽이 따라가지 않게 합치지 마라.
 MIN_REWARD_RISK_STOP = 0.15
 MIN_REWARD_RISK = 2.0
 ACCOUNT_RISK_LIMIT = 0.02
@@ -217,7 +222,7 @@ def decide(payload: Any) -> dict[str, Any]:
         raise DecisionInputError("at_value_band_floor must be a boolean")
     # 「하방이 막힌」(my_rules 「적용 방법」): 하단목표가 ≥ 현재가 또는 현재가가 밸류 밴드 최하단.
     downside_blocked = downside <= 0 or at_band_floor
-    effective_stop = max(downside, MIN_STOP_LOSS)
+    effective_stop = max(downside, WEIGHTED_STOP_LOSS)
     reward_risk_stop = max(downside, MIN_REWARD_RISK_STOP)
     reward_risk = returns["center"] / reward_risk_stop
     if returns["center"] >= 0.50:
@@ -246,7 +251,7 @@ def decide(payload: Any) -> dict[str, Any]:
         max_shares = math.floor(max_amount / entry_price)
     width = (high - low) / center
     confidence, confidence_reasons = _confidence(width, consensus, scenario_targets, payload)
-    audit.append({"operation": "risk", "downside": downside, "stop_floor": MIN_STOP_LOSS,
+    audit.append({"operation": "risk", "downside": downside, "stop_floor": WEIGHTED_STOP_LOSS,
                   "reward_risk_stop": reward_risk_stop,
                   "effective_stop": effective_stop, "center_return": returns["center"],
                   "reward_risk": reward_risk, "position_cap": position_cap})

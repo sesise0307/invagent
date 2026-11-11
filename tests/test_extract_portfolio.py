@@ -60,7 +60,9 @@ def test_portfolio_parser_unescapes_and_flags_rules() -> None:
     assert "매매 규칙 6(-12% 30% 축소): 해당 없음" in snapshot
     # -9.20%는 「매매 규칙 6」의 -8% 선을 넘었다.
     assert "매매 규칙 6(-8% 30% 축소): 감마엔터 -9.20% (비중 2.7%) ← **위반**" in snapshot
-    assert "매매 규칙 11(24~30%↑ 익절 쿠션): 알파전자 +108.36% (비중 26.3%)" in snapshot
+    # 「매매 규칙 10」은 두 티어다(+24% 10% 이상 · +30% 추가 10% 이상). 깊은 티어가 얕은 티어를 흡수한다.
+    assert "매매 규칙 10(+30%↑ 쿠션 2차 — 추가 10% 이상 매도): 알파전자 +108.36% (비중 26.3%)" in snapshot
+    assert "매매 규칙 10(+24%↑ 쿠션 1차 — 10% 이상 매도): 해당 없음" in snapshot
     assert "매매 규칙 9(평가 비중 35% 상한): 해당 없음" in snapshot
     # 현금은 종목 수·룰 판정에서 제외
     assert "매매 규칙 9(종목 수 5~12): 3종목 ← **미달**" in snapshot
@@ -434,3 +436,63 @@ def test_snapshot_names_price_basis_and_sheet_fallbacks() -> None:
     snapshot = module.build_snapshot(PORTFOLIO_DUMP, "2026-08-09", closes={"베타파마": 61_000})
 
     assert "> 가격: 정규장 종가 × 보유 수량 · 시트 현재가 사용 = 알파전자, 감마엔터" in snapshot
+
+
+def test_cushion_floor_fires_when_a_stock_that_reached_24_percent_closes_below_cost_plus_5() -> None:
+    """「매매 규칙 10」: +24%를 달성한 종목은 trailing stop 하한이 평단 +5%다 — 그 아래 종가면 전량 매도."""
+    module = load_script("daily-digest", "extract_portfolio")
+
+    snapshot = module.build_snapshot(
+        PORTFOLIO_DUMP, "2026-11-13", closes={"감마엔터": 31_000},
+        history=[("2026-11-12", {"감마엔터": 26.0})],
+    )
+
+    # 평단 30,278원 × 1.05 = 31,792원. 종가 31,000원(+2.38%)은 그 아래다.
+    assert (
+        "- 매매 규칙 10(+24% 달성 뒤 평단 +5% 하회 = 전량 매도): "
+        "감마엔터 +2.38% (하한 ₩31,792 · +24% 달성 2026-11-12) ← **발동**"
+        " · 하한 감시: 알파전자 ₩738,754"
+    ) in snapshot
+
+
+@pytest.mark.parametrize(
+    "history",
+    [
+        # 규칙 개정(2026-11-11) 전의 달성은 소급하지 않는다.
+        [("2026-11-05", {"감마엔터": 30.0})],
+        # 달성 뒤 전량 매도로 보유가 끊겼다가 다시 산 포지션은 새로 센다.
+        [("2026-11-12", {"감마엔터": 30.0}), ("2026-11-13", {"알파전자": 100.0})],
+    ],
+)
+def test_cushion_floor_ignores_gains_from_before_the_rule_or_a_closed_position(history) -> None:
+    module = load_script("daily-digest", "extract_portfolio")
+
+    snapshot = module.build_snapshot(
+        PORTFOLIO_DUMP, "2026-11-14", closes={"감마엔터": 31_000}, history=history
+    )
+
+    assert (
+        "- 매매 규칙 10(+24% 달성 뒤 평단 +5% 하회 = 전량 매도): 해당 없음 · 하한 감시: 알파전자 ₩738,754"
+    ) in snapshot
+
+
+def test_load_history_reads_each_earlier_snapshots_returns(tmp_path: Path) -> None:
+    """지난 스냅샷의 `## 보유` 표에서 종목별 수익률을 일자순으로 읽는다 — 오늘 이후 파일은 뺀다."""
+    module = load_script("daily-digest", "extract_portfolio")
+    body = (
+        "# 포트폴리오 스냅샷\n\n## 보유 (1종목 + 현금)\n\n"
+        "| 종목 | 섹터 | 보유 | 평단 | 현재가 | 수익률 | 비중 | 평가금액 |\n"
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n"
+        "| _현금 | 현금 | 1 | ₩5,000,000 | ₩5,000,000 | 0.00% | 25.0% | ₩5,000,000 |\n"
+        "| 감마엔터 | 소비재 | 500 | ₩30,278 | ₩38,150 | {pct} | 75.0% | ₩19,075,000 |\n"
+    )
+    month = tmp_path / "2026" / "11"
+    month.mkdir(parents=True)
+    (month / "2026-11-12.md").write_text(body.format(pct="26.00%"), encoding="utf-8")
+    (month / "2026-11-13.md").write_text(body.format(pct="-3.00%"), encoding="utf-8")
+    (month / "2026-11-14.md").write_text(body.format(pct="99.00%"), encoding="utf-8")
+
+    assert module.load_history(tmp_path, "2026-11-14") == [
+        ("2026-11-12", {"감마엔터": 26.0}),
+        ("2026-11-13", {"감마엔터": -3.0}),
+    ]

@@ -12,6 +12,8 @@
 종가로 다시 계산한다. 종가를 못 받은 종목만 시트 값을 쓰고 출처 줄에 이름을 남긴다.
 `--sheet-prices`면 종가를 받지 않는다(네트워크 없음).
 
+「매매 규칙 10」의 평단 +5% 하한은 `--out` 폴더의 지난 스냅샷에서 +24% 달성 여부를 읽어 판정한다.
+
 의존성: 프로젝트 환경(`invagent.datafeed`)만.
 실패 시 stderr에 에러 출력 후 exit 1 — 호출측(스킬)은 실패해도 브리핑을 계속 진행한다.
 """
@@ -26,7 +28,9 @@ import re
 import sys
 from pathlib import Path
 
+from invagent.core.archive import archive_root, dated_files
 from invagent.datafeed import daily
+from invagent.datafeed import snapshot as snapshot_format
 from invagent.datafeed.snapshot import CASH_SECTOR, to_float, unescape
 from invagent.datafeed.tickers import load_overrides, resolve_code
 from invagent.datafeed.snapshot import split_row as _split_row
@@ -40,9 +44,12 @@ NEXT_SHEET_MARKER = "최초 투자"
 STOP_LOSS_PCT = -12.0  # 매매 규칙 6: -12%에서 30% 축소, -15%에서 전량
 STOP_FULL_PCT = -15.0  # 매매 규칙 6: -15% 전량 매도
 TRIM_PCT = -8.0  # 매매 규칙 6: -8% 30% 축소
-PROFIT_CUSHION_PCT = 24.0  # 매매 규칙 11: 24~30% 수익 시 보유량 10~30% 익절
+PROFIT_CUSHION_PCT = 24.0  # 매매 규칙 10: +24%에서 보유 물량의 10% 이상 매도
+PROFIT_CUSHION_SECOND_PCT = 30.0  # 매매 규칙 10: +30%에서 추가로 10% 이상 매도
+CUSHION_FLOOR_PCT = 5.0  # 매매 규칙 10: +24% 달성 종목의 trailing stop 하한 = 평단 +5%, 하회 시 전량 매도
+CUSHION_FLOOR_SINCE = "2026-11-11"  # 하한은 이날 개정으로 생겼다 — 그 전의 +24% 달성은 소급하지 않는다(사용자 확정)
 # 매매 규칙 9는 두 축을 나눈다. 아래는 **평가 비중** 축(주가 상승분 허용, 최대 35%)이다.
-# 매수원금 비중 상한(= 2% ÷ 계획 손절률)은 스냅샷이 아니라 진입 판단에서 계산한다.
+# 매수원금 비중 상한(= 2% ÷ 계획 손실률)은 스냅샷이 아니라 진입 판단에서 계산한다.
 MAX_WEIGHT_PCT = 35.0
 WEIGHT_WARN_PCT = 30.0  # 상한 근접 경고선
 # 지수 ETF 규칙 3: 지수별 최종 비중 최대 30%, 합계 60% (2026-11-01, 2%룰 비중 계산·종목 수 대신).
@@ -213,10 +220,32 @@ def index_etf_caps(today: str) -> dict[str, float]:
     return INDEX_ETF_YEAR_CAPS.get(year, {"KOSPI": INDEX_ETF_MAX_WEIGHT_PCT, "KOSDAQ": INDEX_ETF_MAX_WEIGHT_PCT})
 
 
-def rule_findings(holdings: list[dict], today: str) -> list[str]:
+History = list[tuple[str, dict[str, float]]]
+
+
+def cushion_reached(name: str, today_pct: float | None, today: str, history: History) -> str | None:
+    """종목이 +24%를 달성한 가장 이른 날짜(없으면 None). `history`는 (일자, 종목명 → 수익률%) 오래된 순.
+
+    개정일(`CUSHION_FLOOR_SINCE`) 전의 달성은 소급하지 않고, 보유가 끊긴 날 앞의 기록은 지난 포지션이라 버린다.
+    """
+    run: list[tuple[str, float]] = []
+    for day, returns in history:
+        if day < CUSHION_FLOOR_SINCE or day >= today:
+            continue
+        if name in returns:
+            run.append((day, returns[name]))
+        else:
+            run = []
+    if today_pct is not None and today >= CUSHION_FLOOR_SINCE:
+        run.append((today, today_pct))
+    reached = [day for day, pct in run if pct >= PROFIT_CUSHION_PCT]
+    return reached[0] if reached else None
+
+
+def rule_findings(holdings: list[dict], today: str, history: History | None = None) -> list[str]:
     """보유 현황을 my_rules.md 임계값과 대조해 판정 문구 생성."""
     positions = [h for h in holdings if h["섹터"] != CASH_SECTOR]
-    # 지수 ETF는 「매매 규칙 6·11」과 평가 비중 35%·종목 수 대신 「지수 ETF 규칙 3·4」를 따른다.
+    # 지수 ETF는 「매매 규칙 6·10」과 평가 비중 35%·종목 수 대신 「지수 ETF 규칙 3·4」를 따른다.
     stocks = [h for h in positions if not is_index_etf(h)]
     findings: list[str] = []
 
@@ -232,7 +261,7 @@ def rule_findings(holdings: list[dict], today: str) -> list[str]:
     full_exit = names(lambda v: v <= STOP_FULL_PCT)
     findings.append(
         f"{full_label}: {', '.join(full_exit)} "
-        "← **위반** (임계 도달 · 이행 여부 미확인 · 시장 급락 재량 미확인)" if full_exit
+        "← **위반** (임계 도달 · 이행 여부 미확인 · 급락·클라이맥스 보류 1회 미확인)" if full_exit
         else f"{full_label}: 해당 없음"
     )
 
@@ -240,7 +269,7 @@ def rule_findings(holdings: list[dict], today: str) -> list[str]:
     tier1 = names(lambda v: STOP_LOSS_PCT >= v > STOP_FULL_PCT)
     findings.append(
         f"{tier1_label}: {', '.join(tier1)} "
-        "← **위반** (임계 도달 · 이행 여부 미확인 · 시장 급락 재량 미확인)" if tier1
+        "← **위반** (임계 도달 · 이행 여부 미확인 · 급락·클라이맥스 보류 1회 미확인)" if tier1
         else f"{tier1_label}: 해당 없음"
     )
 
@@ -248,15 +277,39 @@ def rule_findings(holdings: list[dict], today: str) -> list[str]:
     trim = names(lambda v: TRIM_PCT >= v > STOP_LOSS_PCT)
     findings.append(
         f"{trim_label}: {', '.join(trim)} "
-        "← **위반** (임계 도달 · 이행 여부 미확인 · 시장 급락 재량 미확인)" if trim
+        "← **위반** (임계 도달 · 이행 여부 미확인 · 급락·클라이맥스 보류 1회 미확인)" if trim
         else f"{trim_label}: 해당 없음"
     )
 
-    cushion = names(lambda v: v >= PROFIT_CUSHION_PCT)
-    findings.append(
-        f"- 매매 규칙 11(24~30%↑ 익절 쿠션): {', '.join(cushion)}" if cushion
-        else "- 매매 규칙 11(24~30%↑ 익절 쿠션): 해당 없음"
+    # 「매매 규칙 10」은 두 티어다. 손절과 같이 깊은 티어가 얕은 티어를 흡수한다.
+    second_label = f"- 매매 규칙 10(+{PROFIT_CUSHION_SECOND_PCT:.0f}%↑ 쿠션 2차 — 추가 10% 이상 매도)"
+    second = names(lambda v: v >= PROFIT_CUSHION_SECOND_PCT)
+    findings.append(f"{second_label}: {', '.join(second) if second else '해당 없음'}")
+    first_label = f"- 매매 규칙 10(+{PROFIT_CUSHION_PCT:.0f}%↑ 쿠션 1차 — 10% 이상 매도)"
+    first = names(lambda v: PROFIT_CUSHION_PCT <= v < PROFIT_CUSHION_SECOND_PCT)
+    findings.append(f"{first_label}: {', '.join(first) if first else '해당 없음'}")
+
+    # +24%를 달성한 종목은 평단 +5%가 trailing stop 하한이다 — 그 아래 종가면 전량 매도.
+    fired, watched = [], []
+    for h in stocks:
+        cost, pct = to_float(h["평단"]), h["수익률_v"]
+        reached = cushion_reached(h["종목"], pct, today, history or [])
+        if not reached or not cost or pct is None:
+            continue
+        floor = f"₩{cost * (1 + CUSHION_FLOOR_PCT / 100):,.0f}"
+        if pct < CUSHION_FLOOR_PCT:
+            fired.append(
+                f"{h['종목']} {pct:+.2f}% (하한 {floor} · +{PROFIT_CUSHION_PCT:.0f}% 달성 {reached}) ← **발동**"
+            )
+        else:
+            watched.append(f"{h['종목']} {floor}")
+    floor_line = (
+        f"- 매매 규칙 10(+{PROFIT_CUSHION_PCT:.0f}% 달성 뒤 평단 +{CUSHION_FLOOR_PCT:.0f}% 하회 = 전량 매도): "
+        f"{', '.join(fired) if fired else '해당 없음'}"
     )
+    if watched:
+        floor_line += f" · 하한 감시: {', '.join(watched)}"
+    findings.append(floor_line)
 
     over = [h for h in stocks if h["비중_v"] is not None and h["비중_v"] > MAX_WEIGHT_PCT]
     at_cap = [h for h in stocks if h["비중_v"] == MAX_WEIGHT_PCT]
@@ -359,7 +412,8 @@ def rule_findings(holdings: list[dict], today: str) -> list[str]:
 
 
 def render(
-    holdings: list[dict], sectors: list[dict], totals: dict[str, str], today: str, price_note: str = ""
+    holdings: list[dict], sectors: list[dict], totals: dict[str, str], today: str, price_note: str = "",
+    history: History | None = None,
 ) -> str:
     positions = [h for h in holdings if h["섹터"] != CASH_SECTOR]
     has_cash = len(positions) != len(holdings)
@@ -400,7 +454,7 @@ def render(
         for s in sectors:
             lines.append("| " + " | ".join(s.get(c, "") for c in cols) + " |")
 
-    lines += ["", "## 룰 자동 판정", "", *rule_findings(holdings, today), ""]
+    lines += ["", "## 룰 자동 판정", "", *rule_findings(holdings, today, history), ""]
     return "\n".join(lines)
 
 
@@ -446,8 +500,13 @@ def revalue(holdings: list[dict], closes: dict[str, float]) -> float:
     return total
 
 
-def build_snapshot(content: str, today: str, closes: dict[str, float] | None = None) -> str:
-    """덤프 본문 → 스냅샷 마크다운. `closes`(종목명 → 종가)가 있으면 그 가격으로 평가·판정한다."""
+def build_snapshot(
+    content: str, today: str, closes: dict[str, float] | None = None, history: History | None = None
+) -> str:
+    """덤프 본문 → 스냅샷 마크다운. `closes`(종목명 → 종가)가 있으면 그 가격으로 평가·판정한다.
+
+    `history`(지난 스냅샷의 일자별 종목 수익률)가 있으면 「매매 규칙 10」 +24% 달성 여부를 거기서 읽는다.
+    """
     blocks = portfolio_blocks(content)
     if not blocks:
         raise ValueError("포트폴리오 시트 블록을 찾지 못했다 — 시트 순서/구조 변경 가능성")
@@ -470,7 +529,7 @@ def build_snapshot(content: str, today: str, closes: dict[str, float] | None = N
                 totals["총손익"] = f"{'-' if profit < 0 else ''}₩{abs(profit):,.0f}"
                 totals["수익률"] = f"{profit / invested * 100:.2f}%"
     sectors = parse_sectors(blocks[1]) if len(blocks) > 1 else []
-    return render(holdings, sectors, totals, today, price_note)
+    return render(holdings, sectors, totals, today, price_note, history)
 
 
 def csv_to_markdown(text: str) -> str:
@@ -529,6 +588,25 @@ def load_content(path: Path) -> str:
     return csv_to_markdown(raw)
 
 
+def load_history(root: Path, today: str) -> History:
+    """`root` 아래 오늘 전 스냅샷들의 (일자, 종목명 → 수익률%)을 오래된 순으로 읽는다. 못 읽는 파일은 건너뛴다."""
+    history: History = []
+    for path in dated_files(root):
+        if path.stem >= today:
+            continue
+        try:
+            rows = snapshot_format.parse_holdings(path.read_text(encoding="utf-8"), require_rows=False)
+        except (OSError, ValueError):
+            continue
+        returns = {
+            name: pct
+            for row in rows
+            if (name := snapshot_format.holding_name(row)) and (pct := to_float(row.get("수익률"))) is not None
+        }
+        history.append((path.stem, returns))
+    return history
+
+
 def fetch_closes(content: str, today: str) -> tuple[dict[str, float], list[str]]:
     """덤프의 보유 종목마다 정규장 마지막 종가를 받는다 → (종목명 → 종가, 못 받은 종목 사유 목록)."""
     blocks = portfolio_blocks(content)
@@ -568,7 +646,8 @@ def main() -> int:
             closes, missing = fetch_closes(content, args.date)
             for item in missing:
                 print(f"[누락] 종가 — {item} · 시트 현재가 사용", file=sys.stderr)
-        snapshot = build_snapshot(content, args.date, closes or None)
+        history = load_history(archive_root(args.out), args.date) if args.out else None
+        snapshot = build_snapshot(content, args.date, closes or None, history)
     except (OSError, ValueError) as e:
         print(f"ERROR: 포트폴리오 파싱 실패 — {e}", file=sys.stderr)
         return 1

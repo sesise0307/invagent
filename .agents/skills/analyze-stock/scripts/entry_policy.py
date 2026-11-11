@@ -214,41 +214,41 @@ def decide(payload: Any) -> dict[str, Any]:
 
     long_bull = _state(payload, "long_bull")
     if not long_bull or long_bull["status"] != "ok":
-        apply("long_bull", "withhold", "long-bull-day evidence is unknown", "매매 규칙 12(뇌동매매 금지)")
+        apply("long_bull", "withhold", "long-bull-day evidence is unknown", "매매 규칙 11(뇌동매매 금지)")
     elif not isinstance(long_bull.get("active"), bool):
         raise EntryPolicyError("long_bull.active must be boolean")
     elif long_bull["active"]:
         apply("long_bull", "watch", "entry on a >=8% long bullish day is prohibited",
-              "매매 규칙 12(뇌동매매 금지)")
+              "매매 규칙 11(뇌동매매 금지)")
     else:
         apply("long_bull", "eligible", "no active long-bull entry restriction",
-              "매매 규칙 12(뇌동매매 금지)")
+              "매매 규칙 11(뇌동매매 금지)")
 
     earnings = _state(payload, "earnings")
     if not earnings or earnings["status"] != "ok":
         apply("earnings", "withhold", "earnings-event evidence is unknown",
-              "매매 규칙 12(실적 발표 직후 매수 금지)")
+              "매매 규칙 12(실적 발표 대응)")
     elif not isinstance(earnings.get("surprise"), bool):
         raise EntryPolicyError("earnings.surprise must be boolean")
     elif earnings["surprise"] and not earnings.get("cause_analyzed", False):
         apply("earnings", "watch", "surprise cause has not been analyzed",
-              "매매 규칙 12(실적 발표 직후 매수 금지)")
+              "매매 규칙 12(실적 발표 대응)")
     else:
         apply("earnings", "eligible", "no unanalyzed earnings surprise",
-              "매매 규칙 12(실적 발표 직후 매수 금지)")
+              "매매 규칙 12(실적 발표 대응)")
 
     event = _state(payload, "event")
     if not event or event["status"] != "ok":
-        apply("event", "withhold", "event-trade evidence is unknown", "매매 규칙 14(이벤트 매매 제한)")
+        apply("event", "withhold", "event-trade evidence is unknown", "매매 규칙 13(이벤트 매매 제한)")
     elif not isinstance(event.get("enabled"), bool):
         raise EntryPolicyError("event.enabled must be boolean")
     elif event["enabled"]:
         leader = event.get("sector_leader")
         if not isinstance(leader, bool):
-            apply("event", "withhold", "sector-leader status is unknown", "매매 규칙 14(이벤트 매매 제한)")
+            apply("event", "withhold", "sector-leader status is unknown", "매매 규칙 13(이벤트 매매 제한)")
         elif not leader:
             apply("event", "avoid", "event trade is limited to a clear sector leader",
-                  "매매 규칙 14(이벤트 매매 제한)")
+                  "매매 규칙 13(이벤트 매매 제한)")
         else:
             current_event = _fraction(event.get("current_purchase_fraction"),
                                       "event.current_purchase_fraction")
@@ -258,16 +258,16 @@ def decide(payload: Any) -> dict[str, Any]:
             needed = {"date", "expected_scenario", "profit_taking_schedule", "thesis_break"}
             if not isinstance(plan, dict) or any(not plan.get(key) for key in needed):
                 apply("event", "withhold", "required event plan is incomplete",
-                      "매매 규칙 14(이벤트 매매 제한)")
+                      "매매 규칙 13(이벤트 매매 제한)")
             elif current_event + proposed_event > EVENT_LIMIT + 1e-12:
                 apply("event", "avoid", "event purchase principal would exceed 5%",
-                      "매매 규칙 14(이벤트 매매 제한)")
+                      "매매 규칙 13(이벤트 매매 제한)")
             else:
                 cap = min(cap, EVENT_LIMIT - current_event)
                 apply("event", "eligible", "event plan and 5% cap pass",
-                      "매매 규칙 14(이벤트 매매 제한)")
+                      "매매 규칙 13(이벤트 매매 제한)")
     else:
-        apply("event", "eligible", "not an event-based trade", "매매 규칙 14(이벤트 매매 제한)")
+        apply("event", "eligible", "not an event-based trade", "매매 규칙 13(이벤트 매매 제한)")
 
     instrument = _state(payload, "instrument")
     if not instrument or instrument["status"] != "ok":

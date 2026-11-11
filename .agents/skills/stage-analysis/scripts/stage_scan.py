@@ -46,10 +46,10 @@ MA_DAYS = 150            # 통합 버전 기준선. 200일선은 참고로 병�
 MA_REF_DAYS = 200        # 미너비니 원본 기준선 — 참고 표시용
 MA_20WEEK = 100          # 기존 공개 상수: 일봉 근사 길이. 실제 주봉 함수는 WEEK_COUNT를 사용.
 WEEK_COUNT = 20          # 「기술적 분석 규칙 1」의 실제 주봉 종가 표본 수
-# 「매매 규칙 12」의 장대 양봉 정의(2026-09-05 사용자 확정): 전일 종가 대비 +8% 이상.
+# 「매매 규칙 11」의 장대 양봉 정의(2026-09-05 사용자 확정): 전일 종가 대비 +8% 이상.
 # 정의는 `context/my_rules.md`가 정본이고 테스트가 원문에서 파싱해 이 상수와 대조한다.
 LONG_BULL_PCT = 8.0
-LONG_BULL_WINDOW = 1     # 오늘 하루만 본다 — 「매매 규칙 12」는 장대 양봉 당일에만 따라붙지 않는다(2026-11-11 단순화)
+LONG_BULL_WINDOW = 1     # 오늘 하루만 본다 — 「매매 규칙 11」은 장대 양봉 당일에만 따라붙지 않는다(2026-11-11 단순화)
 SLOPE_WINDOW = 20        # 기울기 측정 구간 (거래일)
 SLOPE_FLAT_PCT = 1.5     # ±1.5%/20일 이내면 "평탄"
 POSITION_WINDOW = 20     # 주가-이평선 위치 판정 구간 (거래일)
@@ -74,7 +74,7 @@ STAGE_ACTION = {
     1: "기다리며 지켜본다. 매수 대상이 아니다 — 「기본 원칙 8(풍림화산)」 대기 구간.",
     2: "매수 대상 구간 (경로 A, 추세 확인 진입). 1·3·4단계의 '바닥 다진 후 고개 드는 초반'은 "
        "turn_scan.py의 단기 바닥 전환 판정이 정본이다.",
-    3: "신규 매수 금지. 「매매 규칙 11」 수익 쿠션 확보 · 「매매 규칙 5」 분할 매도 구간.",
+    3: "신규 매수 금지. 「매매 규칙 10」 수익 쿠션 확보 · 「매매 규칙 5」 분할 매도 구간.",
     4: "접근에 신중해야 한다. 「매매 규칙 6」 -8%·-12% 각 30% → -15% 전량 · 「매매 규칙 8」 물타기 금지.",
 }
 
@@ -170,7 +170,7 @@ def ma_slope(ma: list[float | None], window: int = SLOPE_WINDOW) -> tuple[str, f
 def long_bull_days(bars: list[dict], window: int = LONG_BULL_WINDOW) -> list[dict]:
     """최근 `window`봉의 장대 양봉(전일 종가 대비 +`LONG_BULL_PCT`% 이상) 목록. 기본은 오늘 하루.
 
-    「매매 규칙 12」는 장대 양봉 당일 매수를 막는다. 날짜·등락률·종가를 함께 낸다.
+    「매매 규칙 11」은 장대 양봉 당일 매수를 막는다. 날짜·등락률·종가를 함께 낸다.
     """
     out: list[dict] = []
     for prev, cur in zip(bars[-window - 1 :], bars[-window:]):
@@ -690,7 +690,7 @@ def print_result(name: str, code: str, result: dict, sources: list[str]) -> None
         days = " · ".join(
             f"{d['date']} {d['change']:+.1f}% (종가 {d['close']:,.0f}원)" for d in p["long_bull"]
         )
-        print(f"  장대 양봉(「매매 규칙 12」 +{LONG_BULL_PCT:.0f}% 이상, 오늘 — 오늘은 매수하지 않는다): {days}")
+        print(f"  장대 양봉(「매매 규칙 11」 +{LONG_BULL_PCT:.0f}% 이상, 오늘 — 오늘은 매수하지 않는다): {days}")
     else:
         print("  장대 양봉(오늘): 없음")
     highs = " → ".join(f"{h['price']:,.0f}" for h in p["pivot_highs"]) or "-"
