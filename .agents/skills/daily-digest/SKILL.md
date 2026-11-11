@@ -508,7 +508,7 @@ grep -an "\[요약 대기\]" -B 1 output/daily-digest/raw/<today>_raw.md
 **2) 서브에이전트에 나눠 요약**
 
 대상 파일을 **8개씩** 묶어, 묶음마다 서브에이전트 하나를 **병렬로** 띄운다(Claude Code는 한 응답에서
-`Agent` 도구의 general-purpose 에이전트를 여러 개, Codex는 서브에이전트 기능). 서브에이전트가 쓰는
+`Agent` 도구의 general-purpose 에이전트를 `model: "sonnet"`으로 여러 개, Codex는 서브에이전트 기능). 서브에이전트가 쓰는
 파일은 **원문 옆 요약 파일**(`X.md`·`X.pdf` → `X.summary.md`)뿐이다 — 저마다 자기 파일만 쓰므로 병렬이어도
 서로 덮지 않는다. 넘길 지시는 아래 그대로 쓰고 파일 목록만 채운다:
 
