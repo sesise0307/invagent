@@ -7,6 +7,7 @@
 
 import asyncio
 import hashlib
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -56,6 +57,21 @@ PENDING_IMAGE_MARKER = "[분석 대기]"
 # 에이전트의 컨텍스트를 채우므로 파일로 빼고, daily-digest 스킬 1-5단계가 이 문자열을 찾아
 # 요약으로 치환한다. PENDING_IMAGE_MARKER와 같은 SKILL.md 계약이다.
 PENDING_LINK_SUMMARY_MARKER = "[요약 대기]"
+
+# 실적 공시 봇 메시지(`📁 분기보고서 (2026.09)` · `보고서명: 연결재무제표기준영업(잠정)실적…` 등)는
+# 링크를 받지 않는다. DART 링크는 표지, 네이버 종목 링크는 빈 껍데기라 요약할 본문이 없고, 수치는
+# 봇 본문에 있어 `extract_earnings.py`가 그걸 읽는다 (2026-11-13 사용자 지시 — 하루 80건이 버려졌다).
+EARNINGS_DISCLOSURE_RE = re.compile(
+    r"^(?:📁 |보고서명\s*:\s*)"
+    r"(?:\[[^\]]*\])?"
+    r"(?:(?:분기|반기|사업)보고서|(?:연결재무제표기준)?영업\(잠정\)실적|매출액또는손익구조)",
+    re.M,
+)
+
+
+def _is_earnings_disclosure(text: str) -> bool:
+    """실적 공시 봇이 보낸 메시지인가 — 공시명 줄로만 판정한다."""
+    return bool(EARNINGS_DISCLOSURE_RE.search(text or ""))
 
 
 def _is_image_message(message) -> bool:
@@ -208,6 +224,9 @@ class MessageFetcher:
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_LINK_MESSAGES)
 
         async def fill(msg_dict: dict) -> None:
+            if _is_earnings_disclosure(msg_dict["text"]):
+                msg_dict["links_content"] = ""
+                return
             async with semaphore:
                 result = await self.link_extractor.extract_and_fetch(msg_dict["text"])
             links_contents = [

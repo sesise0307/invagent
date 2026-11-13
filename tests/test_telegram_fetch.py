@@ -840,3 +840,78 @@ async def test_fetch_after_id_returns_only_newer_messages_regardless_of_age():
         messages = await fetcher.fetch_saved_messages(after_id=10)
 
     assert [m["id"] for m in messages] == [12, 11]
+
+
+# --- 실적 공시 봇 메시지 -----------------------------------------------
+
+
+EARNINGS_BOT_MESSAGES = [
+    "🔵 저스템(시가총액 : 3,130억)\n📁 분기보고서 (2026.09)\n2026.11.13 08:30\n\n"
+    "매출액 : 262억 (예상치 : 330억/ -20.6%)\n"
+    "공시링크 : https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20261113000008\n"
+    "회사정보 : https://finance.naver.com/item/main.naver?code=417840",
+    "🟢 원익QnC(시가총액 : 7,600억)\n📁 연결재무제표기준영업(잠정)실적(공정공시)\n"
+    "공시링크 : https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20261113900562",
+    "2026.11.13 11:01:50\n기업명: 리브스메드(시가총액: 8,650억) A491000\n"
+    "보고서명: 분기보고서 (2026.09)\n\n잠정실적 : N\n"
+    "공시링크: https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20261113000262",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", EARNINGS_BOT_MESSAGES)
+async def test_fetch_saved_messages_skips_links_of_earnings_disclosure(text, monkeypatch):
+    """실적 공시 봇 메시지의 링크는 받지 않는다 — DART 표지·네이버 종목 껍데기뿐이고
+    수치는 봇 본문에 있어 `extract_earnings.py`가 그걸 읽는다 (2026-11-13 사용자 지시)."""
+    fetcher = MessageFetcher(_image_config(), TelegramClientManager())
+    called = []
+
+    async def fake_extract(t):
+        called.append(t)
+        return {"contents": {"https://x.test/": "body"}}
+
+    monkeypatch.setattr(fetcher.link_extractor, "extract_and_fetch", fake_extract)
+    monkeypatch.setattr(fetcher.link_extractor, "remove_telegram_urls", lambda t: t)
+
+    with patch.object(fetcher.client_manager, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_get_client.return_value = mock_client
+
+        async def async_gen(*args, **kwargs):
+            yield _link_message(text)
+
+        mock_client.iter_messages = async_gen
+        messages = await fetcher.fetch_saved_messages(days=1, fetch_links=True)
+
+    assert called == []
+    assert messages[0]["links_content"] == ""
+
+
+@pytest.mark.asyncio
+async def test_fetch_saved_messages_still_fetches_non_earnings_disclosure_links(monkeypatch):
+    """실적이 아닌 공시(CB·공급계약 등)는 계속 링크를 받는다."""
+    fetcher = MessageFetcher(_image_config(), TelegramClientManager())
+    called = []
+
+    async def fake_extract(t):
+        called.append(t)
+        return {"contents": {"https://x.test/": "body"}}
+
+    monkeypatch.setattr(fetcher.link_extractor, "extract_and_fetch", fake_extract)
+    monkeypatch.setattr(fetcher.link_extractor, "remove_telegram_urls", lambda t: t)
+    text = (
+        "📌 보로노이(시가총액: 2조 664억) #A310210\n📁 주요사항보고서(전환사채권발행결정)\n"
+        "공시링크: https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20261113001035"
+    )
+
+    with patch.object(fetcher.client_manager, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_get_client.return_value = mock_client
+
+        async def async_gen(*args, **kwargs):
+            yield _link_message(text)
+
+        mock_client.iter_messages = async_gen
+        await fetcher.fetch_saved_messages(days=1, fetch_links=True)
+
+    assert called == [text]

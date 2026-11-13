@@ -92,7 +92,11 @@ page's script would let the collector be steered anywhere. A DART `dsaf001/main.
 frame; the first `viewDoc(...)` call's arguments give the `report/viewer.do` body, which is MS949,
 so HTML is now decoded by the response's declared charset rather than always as UTF-8. Pages that
 need a login (`SKIPPED_PAGES`, the awakeplus `/board/` paths) are not requested at all and return
-`[건너뜀: …]`. Trailing sentence punctuation is stripped from extracted URLs (`vo.la/X.` was a 404).
+`[건너뜀: …]`. Earnings-disclosure bot messages (`EARNINGS_DISCLOSURE_RE` in `fetch.py`: a `📁 ` or
+`보고서명:` line naming a quarterly/half/annual report, a (consolidated) preliminary-earnings filing or a
+30% revenue/profit change) get no link fetch at all and no link block: the DART link is a cover page and
+the Naver link an empty shell, the figures sit in the bot text that `extract_earnings.py` reads, and on
+2026-11-13 roughly 80 such fetches a day were thrown away (user decision). Trailing sentence punctuation is stripped from extracted URLs (`vo.la/X.` was a 404).
 
 A PDF body is never decoded: `fetch_content` returns a `PdfDocument` holding the raw bytes, and
 `MessageFetcher` writes it as `<stem>.pdf` next to the text bodies with the same pending marker;
