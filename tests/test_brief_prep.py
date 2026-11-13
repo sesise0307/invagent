@@ -1,6 +1,7 @@
 """`quick-brief/scripts/brief_prep.py` — 보유·관심 종목 시세·뉴스 수집 (StockEasy 미사용)."""
 
 import json
+from datetime import date, timedelta
 
 import pytest
 
@@ -70,7 +71,10 @@ def files(tmp_path):
     snapshot.write_text(SNAPSHOT, encoding="utf-8")
     watchlist = tmp_path / "watch.md"
     watchlist.write_text(WATCHLIST, encoding="utf-8")
-    return ["--snapshot", str(snapshot), "--watchlist", str(watchlist), "--asof", "2026-10-20"]
+    triggers = tmp_path / "triggers.md"
+    triggers.write_text("# 트리거 없음\n", encoding="utf-8")
+    return ["--snapshot", str(snapshot), "--watchlist", str(watchlist), "--triggers", str(triggers),
+            "--asof", "2026-10-20"]
 
 
 def _route(responses: dict):
@@ -209,3 +213,183 @@ def test_the_snapshot_rule_checks_are_passed_through(monkeypatch, files, capsys)
         "매매 규칙 6(-20% 전량 매도): 해당 없음",
         "매매 규칙 10(24~30%↑ 익절 쿠션): 대덕전자 +37.50% (비중 4.2%)",
     ]
+
+
+def _index_bars(closes: list[float], last: date) -> list[dict]:
+    """평일만 거꾸로 세어 `last`에서 끝나는 지수 일봉."""
+    days, day = [], last
+    while len(days) < len(closes):
+        if day.weekday() < 5:
+            days.append(day)
+        day -= timedelta(days=1)
+    return [
+        {"date": d.strftime("%Y%m%d"), "open": c, "high": c, "low": c, "close": c, "volume": 1.0}
+        for d, c in zip(reversed(days), closes)
+    ]
+
+
+def _index_quote(price: float, day: str = "2026-11-13") -> dict:
+    return {"name": "코스피", "price": price, "change": 0.0, "change_pct": 0.0,
+            "market_status": "OPEN", "traded_at": f"{day}T10:00:00+09:00"}
+
+
+def test_index_view_appends_today_from_the_quote_and_reads_averages_and_regime() -> None:
+    # 52주 고점 125에서 104까지 -16.8% → 조정. 오늘 값은 일봉이 아니라 현재가에서 온다.
+    closes = [100.0] * 240 + [125, 120, 115, 112, 110, 108, 107, 106, 105]
+    bars = _index_bars(closes, date(2026, 11, 12))
+
+    view = brief_prep.index_view(bars, _index_quote(104.0), date(2026, 11, 13))
+
+    assert view["close"] == 104.0
+    assert view["above"] == {3: False, 20: False, 200: True}
+    assert view["drawdown"] == pytest.approx(-16.8)
+    assert view["regime"] == "correction"
+    assert view["ma20_cross"] is None
+    assert view["leverage_rule3"] == "ok"
+
+
+def test_index_view_calls_a_crash_on_a_deep_three_day_slide() -> None:
+    # 고점 100 → 86(-14%), 오늘 -4.4%, 3일 누적 -14% → 급락.
+    bars = _index_bars([100.0] * 240 + [95, 90], date(2026, 11, 12))
+
+    view = brief_prep.index_view(bars, _index_quote(86.0), date(2026, 11, 13))
+
+    assert view["regime"] == "crash"
+
+
+def test_index_view_flags_the_day_the_close_falls_through_the_20_day_line() -> None:
+    bars = _index_bars([100.0] * 248 + [101], date(2026, 11, 12))
+
+    view = brief_prep.index_view(bars, _index_quote(98.0), date(2026, 11, 13))
+
+    assert view["ma20_cross"] == "down"
+    assert view["regime"] == "normal"
+
+
+def test_index_view_fires_leverage_rule_three_on_three_wide_days_without_holding_the_low() -> None:
+    bars = _index_bars([100.0] * 240 + [94, 100, 93, 90, 89, 88, 87, 86, 85], date(2026, 11, 12))
+
+    view = brief_prep.index_view(bars, _index_quote(84.0), date(2026, 11, 13))
+
+    assert view["leverage_rule3"] == "fired"
+
+
+def test_index_view_ignores_a_quote_from_another_day() -> None:
+    bars = _index_bars([100.0] * 249 + [104], date(2026, 11, 13))
+
+    view = brief_prep.index_view(bars, _index_quote(90.0, day="2026-11-12"), date(2026, 11, 13))
+
+    assert view["close"] == 104.0
+
+
+def _sise(closes: list[float], last: date) -> bytes:
+    rows = ["['날짜','시가','고가','저가','종가','거래량','외국인소진율']"] + [
+        f"['{b['date']}',{b['close']},{b['close']},{b['close']},{b['close']},1,0.0]"
+        for b in _index_bars(closes, last)
+    ]
+    return ("[" + ",".join(rows) + "]").encode()
+
+
+def _index_basic(price: str, pct: str, day: str) -> bytes:
+    return json.dumps(
+        {"stockName": "지수", "closePrice": price, "compareToPreviousClosePrice": "0",
+         "fluctuationsRatio": pct, "marketStatus": "CLOSE", "localTradedAt": f"{day}T16:00:00+09:00"}
+    ).encode()
+
+
+def test_main_reports_both_indices(monkeypatch, files, capsys) -> None:
+    monkeypatch.setattr(fsc, "load_key", lambda: None)
+    monkeypatch.setattr(http, "read_url", _route({
+        **_quiet_routes(),
+        f"{naver.SISE_URL}?symbol=KOSPI&": _sise([100.0] * 249, date(2026, 10, 19)),
+        f"{naver.SISE_URL}?symbol=KOSDAQ&": _sise([100.0] * 249, date(2026, 10, 19)),
+        naver.INDEX_BASIC_URL.format(code="KOSPI"): _index_basic("99.00", "-1.00", "2026-10-20"),
+        naver.INDEX_BASIC_URL.format(code="KOSDAQ"): _index_basic("101.00", "+1.00", "2026-10-20"),
+    }))
+
+    assert brief_prep.main([*files, "--json"]) == 0
+
+    market = json.loads(capsys.readouterr().out)["market"]
+    assert market["indices"]["KOSPI"]["above"]["3"] is False
+    assert market["indices"]["KOSDAQ"]["above"]["3"] is True
+    assert market["indices"]["KOSDAQ"]["change_pct"] == 1.0
+    assert "account_rule1_released" not in market
+
+
+def test_text_output_puts_the_market_table_first(monkeypatch, files, capsys) -> None:
+    monkeypatch.setattr(fsc, "load_key", lambda: None)
+    monkeypatch.setattr(http, "read_url", _route({
+        **_quiet_routes(),
+        f"{naver.SISE_URL}?symbol=KOSPI&": _sise([100.0] * 249, date(2026, 10, 19)),
+        f"{naver.SISE_URL}?symbol=KOSDAQ&": TimeoutError("timed out"),
+        naver.INDEX_BASIC_URL.format(code="KOSPI"): _index_basic("99.00", "-1.00", "2026-10-20"),
+    }))
+
+    assert brief_prep.main(files) == 0
+
+    out = capsys.readouterr().out
+    assert "| KOSPI | 99.00 | -1.00% | ❌ | ❌ | ❌ | -1.0% | 정상 |" in out
+    assert out.index("| KOSPI |") < out.index("| 보유 | 대덕전자 |")
+    assert "계좌 규칙 1" not in out  # 3일선 열이 이미 보여 준다
+    assert "KOSDAQ 일봉:" in out
+
+
+BUY_TRIGGERS = """# 매수 트리거
+
+## 원익QnC (074600) — 새 고개 들기 대기
+
+- 종가 28,000원 이하
+
+## 감시 대상
+
+| 종목 | 오늘 종가 | 상태 |
+|---|---:|---|
+| LG씨엔에스(064400) | 80,100 | 고개 들기 |
+| 대덕전자 | 93,400 | 하락 중 |
+
+## 조선·엔진 섹터 확인 (🚢)
+
+## 삼양식품 (003230) — 이미 관심 목록에 있다
+"""
+
+
+def test_trigger_file_stocks_are_quoted_by_their_written_ticker(monkeypatch, files, tmp_path, capsys) -> None:
+    """트리거 점검 범위 = 보유·매수 트리거 파일의 종목. 적힌 티커로 받고 이름 검색을 타지 않는다."""
+    triggers = tmp_path / "buy.md"
+    triggers.write_text(BUY_TRIGGERS, encoding="utf-8")
+    args = [*files[:-4], "--triggers", str(triggers), "--asof", "2026-10-20", "--json"]
+    monkeypatch.setattr(fsc, "load_key", lambda: None)
+    monkeypatch.setattr(http, "read_url", _route({
+        **_quiet_routes(),
+        naver.BASIC_URL.format(code="074600"): _basic("074600", "29,000", "+1.00"),
+        naver.BASIC_URL.format(code="064400"): _basic("064400", "80,000", "-1.00"),
+        naver.NEWS_URL.format(code="074600"): _news(),
+        naver.NEWS_URL.format(code="064400"): _news(),
+    }))
+
+    assert brief_prep.main(args) == 0
+
+    stocks = {s["name"]: s for s in json.loads(capsys.readouterr().out)["stocks"]}
+    assert list(stocks) == ["대덕전자", "삼양식품", "원익QnC", "LG씨엔에스"]
+    assert (stocks["원익QnC"]["code"], stocks["원익QnC"]["price"]) == ("074600", 29000.0)
+    assert stocks["LG씨엔에스"]["trigger"] is True and stocks["LG씨엔에스"]["held"] is False
+    assert stocks["삼양식품"]["trigger"] is True
+    assert stocks["대덕전자"]["trigger"] is True and stocks["대덕전자"]["held"] is True
+
+
+def test_text_output_labels_trigger_only_stocks(monkeypatch, files, tmp_path, capsys) -> None:
+    triggers = tmp_path / "buy.md"
+    triggers.write_text("## 원익QnC (074600) — 대기\n", encoding="utf-8")
+    args = [*files[:-4], "--triggers", str(triggers), "--asof", "2026-10-20"]
+    monkeypatch.setattr(fsc, "load_key", lambda: None)
+    monkeypatch.setattr(http, "read_url", _route({
+        **_quiet_routes(),
+        naver.BASIC_URL.format(code="074600"): _basic("074600", "29,000", "+1.00"),
+        naver.NEWS_URL.format(code="074600"): _news(),
+    }))
+
+    assert brief_prep.main(args) == 0
+
+    out = capsys.readouterr().out
+    assert "| 트리거 | 원익QnC | 29,000 |" in out
+    assert "| 관심 | 삼양식품 |" in out

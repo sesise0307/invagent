@@ -24,6 +24,8 @@ SISE_URL = "https://api.finance.naver.com/siseJson.naver"
 TREND_URL = "https://m.stock.naver.com/api/stock/{code}/trend"
 TREND_MAX_DAYS = 60
 BASIC_URL = "https://m.stock.naver.com/api/stock/{code}/basic"
+# 지수(KOSPI·KOSDAQ) 현재가. 응답 모양은 종목 `basic`과 같다. 지수 일봉은 `SISE_URL`에 symbol=KOSPI로 받는다.
+INDEX_BASIC_URL = "https://m.stock.naver.com/api/index/{code}/basic"
 # 종목 뉴스. 응답은 기사 묶음 리스트이고 묶음마다 `items`가 있다.
 NEWS_URL = "https://m.stock.naver.com/api/news/stock/{code}"
 # 종목명 자동완성. StockEasy `stock-search`와 달리 로그인·요청 제한이 없다.
@@ -167,8 +169,17 @@ def fetch_quote(code: str) -> tuple[dict | None, str | None]:
     장중이면 현재가, 마감 뒤면 그날 종가다. 판정용 종가가 아니라 참고 시세다 — 판정은
     `daily.fetch_daily_bars`의 몫이다.
     """
+    return _quote(BASIC_URL.format(code=code))
+
+
+def fetch_index_quote(code: str) -> tuple[dict | None, str | None]:
+    """지수(`KOSPI`·`KOSDAQ`) 현재가 — `fetch_quote`와 같은 모양. 장중이면 장중 지수다."""
+    return _quote(INDEX_BASIC_URL.format(code=code))
+
+
+def _quote(url: str) -> tuple[dict | None, str | None]:
     data, err = http.get_json(
-        BASIC_URL.format(code=code),
+        url,
         authed=False,
         headers=http.build_headers(referer="https://m.stock.naver.com/"),
         timeout=TIMEOUT,

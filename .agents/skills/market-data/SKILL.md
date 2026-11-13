@@ -41,6 +41,7 @@ StockEasy와 Naver가 함께 `<urlopen error [Errno 8] nodename nor servname pro
 | 종목 RS(상대강도)·RS선 | 같음 (`info-tab`의 `rs_data`·`rs_line_chart`) → `analyze-stock/scripts/canslim_scan.py`. 업종 RS(`/rs/dashboard-data`)는 앱 토큰 없이는 HTTP 403이라 받지 않는다 | 필요 |
 | 종목 투자자별 매매동향(기관·외국인·개인 순매수량) | `invagent.datafeed.naver.fetch_investor_trend` — `m.stock.naver.com/api/stock/<code>/trend`, 최근 60거래일까지 | 불필요 |
 | 현재가·전일대비·등락률(참고 시세) | `invagent.datafeed.naver.fetch_quote` — `m.stock.naver.com/api/stock/<code>/basic`. 장중이면 장중가, 마감 뒤면 그날 가격이다 — 판정 종가가 아니다. `quick-brief`가 소비한다 | 불필요 |
+| 지수(KOSPI·KOSDAQ) 현재가·일봉 (StockEasy 없이) | `invagent.datafeed.naver.fetch_index_quote` — `m.stock.naver.com/api/index/<KOSPI 또는 KOSDAQ>/basic`, 일봉은 `naver.fetch_bars("KOSPI", ...)`(`siseJson` symbol=지수). `quick-brief` 시장 블록이 소비한다. `daily-digest`는 StockEasy `market-monitor`가 정본이다 | 불필요 |
 | 종목 뉴스 (네이버) | `invagent.datafeed.naver.fetch_news` — `m.stock.naver.com/api/news/stock/<code>`, 기사 묶음 리스트를 최신순으로 편다. StockEasy 없이 뉴스를 볼 때 쓴다(`quick-brief`) | 불필요 |
 | 종목명·상장 시장(KOSPI·KOSDAQ) 대체 | `invagent.datafeed.naver.fetch_basic` — `m.stock.naver.com/api/stock/<code>/basic`. 정본은 `info-tab`의 `stock_info.market`이고, 그것이 막혔을 때만 쓴다 | 불필요 |
 | 종목명·티커 해석 | `invagent.datafeed.tickers` — 오버라이드 → 네이버 검색(`ac.stock.naver.com/ac`) → 네이버가 실패했을 때만 StockEasy `stock-search`. StockEasy 요청 한도를 StockEasy에만 있는 값에 남겨 두기 위해서다 | 불필요 |

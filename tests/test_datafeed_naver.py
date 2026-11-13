@@ -152,6 +152,29 @@ def test_fetch_quote_reads_the_current_price_and_change(monkeypatch) -> None:
     }
 
 
+def test_fetch_index_quote_reads_the_index_level_from_the_index_endpoint(monkeypatch) -> None:
+    body = (
+        '{"stockEndType":"index","itemCode":"KOSPI","stockName":"코스피","closePrice":"5,290.53",'
+        '"compareToPreviousClosePrice":"-52.20","fluctuationsRatio":"-0.98",'
+        '"marketStatus":"CLOSE","localTradedAt":"2026-11-13T20:15:00+09:00"}'
+    ).encode()
+    seen = {}
+    monkeypatch.setattr(http, "read_url", lambda url, headers, timeout: seen.update(url=url) or body)
+
+    quote, err = naver.fetch_index_quote("KOSPI")
+
+    assert err is None
+    assert seen["url"] == "https://m.stock.naver.com/api/index/KOSPI/basic"
+    assert quote == {
+        "name": "코스피",
+        "price": 5290.53,
+        "change": -52.2,
+        "change_pct": -0.98,
+        "market_status": "CLOSE",
+        "traded_at": "2026-11-13T20:15:00+09:00",
+    }
+
+
 def test_fetch_quote_reports_a_missing_price_instead_of_zero(monkeypatch) -> None:
     monkeypatch.setattr(http, "read_url", lambda url, headers, timeout: b'{"stockName":"X"}')
 

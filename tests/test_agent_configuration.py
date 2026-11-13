@@ -1077,3 +1077,31 @@ def test_moving_average_alerts_match_my_rules_and_skill() -> None:
     assert "🔔 20일선 종가" in skill
     assert "🔔 20주선 종가" in skill
     assert "⚠️ 20주선 종가 이탈" not in skill
+
+
+QUICK_BRIEF_SECTIONS = ("### 🚦 시장", "### 📊 보유", "### 👀 관심", "### 🎯 트리거", "### 📏 룰 자동 판정", "### 📰 특이사항", "**한 줄:**")
+
+
+def test_quick_brief_output_follows_its_template() -> None:
+    """출력 양식의 정본은 `template/quick_brief.md` — SKILL.md는 그 파일을 가리키고 양식을 다시 적지 않는다."""
+    skill = (SKILLS_ROOT / "quick-brief" / "SKILL.md").read_text(encoding="utf-8")
+    template = (REPO_ROOT / "template" / "quick_brief.md").read_text(encoding="utf-8")
+
+    assert "template/quick_brief.md" in skill
+    positions = [template.index(section) for section in QUICK_BRIEF_SECTIONS]
+    assert positions == sorted(positions)
+    assert "### 📊 보유" not in skill
+
+
+def test_quick_brief_market_thresholds_match_the_daily_digest() -> None:
+    """두 스킬이 같은 날 다른 국면을 내지 않도록 임계값을 묶는다."""
+    quick = load_script("quick-brief", "brief_prep")
+    digest = load_script("daily-digest", "fetch_market_signals")
+
+    assert quick.PEAK_WINDOW == digest.MARGIN_CALL_PEAK_WINDOW
+    assert quick.CORRECTION_DRAWDOWN_PCT == digest.MARGIN_CALL_MIN_DRAWDOWN_PCT
+    assert quick.BREAKOUT_MA_DAYS == digest.BREAKOUT_REGIME_MA_DAYS
+    assert quick.ACCOUNT_RULE1_MA_DAYS == digest.MDD_RELEASE_MA_DAYS
+    for name in ("BEAR_DRAWDOWN_PCT", "CRASH_WINDOW_DAYS", "CRASH_DROP_PCT", "CRASH_CUMULATIVE_PCT",
+                 "VOLATILE_DAY_PCT", "VOLATILE_WINDOW_DAYS", "VOLATILE_DAY_TRIGGER"):
+        assert getattr(quick, name) == getattr(digest, name), name

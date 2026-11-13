@@ -23,11 +23,35 @@ from invagent.datafeed.env import output_dir, repo_root
 from invagent.datafeed.snapshot import holding_name, parse_holdings, parse_rule_checks, to_float
 
 WATCHLIST_REL = Path("context") / "interested_stocks.md"
+# 트리거 점검 범위. 관심 목록이 아니라 이 두 파일에 적힌 종목이다.
+TRIGGER_FILES = ("보유_트리거.md", "매수_트리거.md")
+TRIGGER_HEADING_RE = re.compile(r"^## (.+?) \((\d{5}[0-9A-Z])\)")
+TRIGGER_TABLE_HEADING = "## 감시 대상"
+TABLE_NAME_RE = re.compile(r"^(.+?)\s*(?:\((\d{5}[0-9A-Z])\))?$")
 NEWS_PER_STOCK = 5
 FSC_WINDOW_DAYS = 10
 REGULAR_SESSION_OPEN = time(9, 0)
 SESSION_LABELS = {"intraday": "장중(가격선 판정 미확정)", "closed": "정규장 마감(종가 판정 가능)"}
 SNAPSHOT_DATE_RE = re.compile(r"^# .*?(\d{4}-\d{2}-\d{2})", re.M)
+
+# 시장 블록. 지수 일봉·현재가는 네이버만 쓴다 — `fetch_market_signals.py`는 StockEasy를 타서 못 쓴다.
+# 국면·레버리지 임계값은 그 스크립트와 같은 숫자다(`test_agent_configuration.py`가 묶는다).
+# 클라이맥스는 반대매매(StockEasy) 없이는 판정할 수 없어 내지 않는다.
+INDEX_CODES = ("KOSPI", "KOSDAQ")
+INDEX_WINDOW_DAYS = 400       # 52주 고점(250거래일)과 200일선을 채우는 달력일
+ACCOUNT_RULE1_MA_DAYS = 3     # = MDD_RELEASE_MA_DAYS — 「계좌 규칙 1」 해제
+TREND_MA_DAYS = 20            # 단기 추세, 전환일 알림
+BREAKOUT_MA_DAYS = 200        # = BREAKOUT_REGIME_MA_DAYS — 「매매 규칙 3」 시장 필터
+MA_DAYS = (ACCOUNT_RULE1_MA_DAYS, TREND_MA_DAYS, BREAKOUT_MA_DAYS)
+PEAK_WINDOW = 250             # = MARGIN_CALL_PEAK_WINDOW
+CORRECTION_DRAWDOWN_PCT = -10.0  # = MARGIN_CALL_MIN_DRAWDOWN_PCT
+BEAR_DRAWDOWN_PCT = -20.0
+CRASH_WINDOW_DAYS = 3
+CRASH_DROP_PCT = -3.0
+CRASH_CUMULATIVE_PCT = -8.0
+VOLATILE_DAY_PCT = 5.0
+VOLATILE_WINDOW_DAYS = 10
+VOLATILE_DAY_TRIGGER = 3
 
 
 def kst_now() -> datetime:
@@ -74,6 +98,27 @@ def load_watchlist(path: Path) -> list[str]:
     ]
 
 
+def trigger_stocks(path: Path) -> list[tuple[str, str | None]]:
+    """트리거 파일의 종목 — `## 종목명 (티커)` 절과 「감시 대상」 표의 첫 칸. 티커가 없으면 None."""
+    if not path.is_file():
+        return []
+    found: list[tuple[str, str | None]] = []
+    in_table = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("## "):
+            in_table = line.strip() == TRIGGER_TABLE_HEADING
+            match = TRIGGER_HEADING_RE.match(line)
+            if match:
+                found.append((match.group(1).strip(), match.group(2)))
+            continue
+        if in_table and line.startswith("|"):
+            cell = line.strip("|").split("|")[0].strip()
+            if cell and cell != "종목" and not set(cell) <= set("-: "):
+                match = TABLE_NAME_RE.match(cell)
+                found.append((match.group(1).strip(), match.group(2)))
+    return found
+
+
 def rule_checks(path: Path | None) -> list[str]:
     return parse_rule_checks(path.read_text(encoding="utf-8")) if path else []
 
@@ -95,12 +140,19 @@ def holdings(path: Path | None) -> list[dict]:
     return out
 
 
-def collect(name: str, held: dict | None, since: str) -> dict:
-    """종목 하나의 시세·공식 종가·뉴스. 빠진 값은 `errors`에 사유로 남긴다."""
+def collect(
+    name: str, held: dict | None, since: str, code: str | None = None, trigger: bool = False, watched: bool = False
+) -> dict:
+    """종목 하나의 시세·공식 종가·뉴스. 빠진 값은 `errors`에 사유로 남긴다.
+
+    `code`가 있으면(트리거 파일에 적힌 티커) 이름 검색을 건너뛴다.
+    """
     stock = {
         "name": name,
         "code": None,
         "held": held is not None,
+        "watched": watched,
+        "trigger": trigger,
         "quantity": held["quantity"] if held else None,
         "average_cost": held["average_cost"] if held else None,
         "weight": held["weight"] if held else None,
@@ -112,11 +164,13 @@ def collect(name: str, held: dict | None, since: str) -> dict:
         "news": [],
         "errors": [],
     }
-    hit, err, _ = tickers.resolve_stock(name, stockeasy_fallback=False)
-    if not hit:
-        stock["errors"].append(f"티커: {err}")
-        return stock
-    code = stock["code"] = hit["stock_code"]
+    if code is None:
+        hit, err, _ = tickers.resolve_stock(name, stockeasy_fallback=False)
+        if not hit:
+            stock["errors"].append(f"티커: {err}")
+            return stock
+        code = hit["stock_code"]
+    stock["code"] = code
 
     quote, err = naver.fetch_quote(code)
     if quote:
@@ -140,6 +194,95 @@ def collect(name: str, held: dict | None, since: str) -> dict:
     return stock
 
 
+def with_today(bars: list[dict], quote: dict | None, asof: date) -> list[float]:
+    """일봉 종가에 오늘 현재가를 덮어쓰거나 붙인다. 현재가가 오늘 것이 아니면 일봉 그대로."""
+    closes = [(b["date"], b["close"]) for b in bars if b["date"] <= asof.strftime("%Y%m%d")]
+    if quote and str(quote.get("traded_at") or "")[:10] == asof.isoformat():
+        today = asof.strftime("%Y%m%d")
+        closes = [c for c in closes if c[0] != today] + [(today, quote["price"])]
+    return [close for _, close in closes]
+
+
+def _average(closes: list[float], days: int) -> float | None:
+    return sum(closes[-days:]) / days if len(closes) >= days else None
+
+
+def _changes(closes: list[float]) -> list[float]:
+    return [(cur / prev - 1) * 100 for prev, cur in zip(closes, closes[1:]) if prev]
+
+
+def regime(closes: list[float]) -> tuple[str, float | None]:
+    """「시장 국면」(클라이맥스 제외): crash > bear > correction > normal, 그리고 52주 고점 대비 낙폭 %."""
+    window = closes[-PEAK_WINDOW:]
+    if not window:
+        return "unknown", None
+    drawdown = (window[-1] / max(window) - 1) * 100
+    deep = drawdown <= CORRECTION_DRAWDOWN_PCT
+    recent = _changes(closes)[-CRASH_WINDOW_DAYS:]
+    if deep and len(recent) == CRASH_WINDOW_DAYS:
+        growth = 1.0
+        for v in recent:
+            growth *= 1 + v / 100
+        if recent[-1] < CRASH_DROP_PCT and (growth - 1) * 100 <= CRASH_CUMULATIVE_PCT:
+            return "crash", drawdown
+    if drawdown <= BEAR_DRAWDOWN_PCT:
+        return "bear", drawdown
+    return ("correction" if deep else "normal"), drawdown
+
+
+def leverage_rule3(closes: list[float]) -> str:
+    """「레버리지 규칙 3」 — `ok`·`fired`·`exempt`·`insufficient`."""
+    window = _changes(closes)[-VOLATILE_WINDOW_DAYS:]
+    if len(window) < VOLATILE_WINDOW_DAYS:
+        return "insufficient"
+    if sum(abs(v) >= VOLATILE_DAY_PCT for v in window) < VOLATILE_DAY_TRIGGER:
+        return "ok"
+    span = closes[-(VOLATILE_WINDOW_DAYS + 1):]
+    if min(span[1:]) >= span[0] and span[-1] > span[0]:
+        return "exempt"
+    return "fired"
+
+
+def index_view(bars: list[dict], quote: dict | None, asof: date) -> dict:
+    """지수 하나의 이평선 위치·20일선 전환·52주 고점 대비 낙폭·국면·레버리지 규칙 3."""
+    closes = with_today(bars, quote, asof)
+    above = {}
+    for days in MA_DAYS:
+        average = _average(closes, days)
+        above[days] = None if average is None else closes[-1] > average
+    cross = None
+    before = _average(closes[:-1], TREND_MA_DAYS)
+    if above[TREND_MA_DAYS] is not None and before is not None:
+        was_above = closes[-2] > before
+        if was_above != above[TREND_MA_DAYS]:
+            cross = "up" if above[TREND_MA_DAYS] else "down"
+    state, drawdown = regime(closes)
+    return {
+        "close": closes[-1] if closes else None,
+        "change_pct": quote.get("change_pct") if quote else None,
+        "above": above,
+        "ma20_cross": cross,
+        "drawdown": drawdown,
+        "regime": state,
+        "leverage_rule3": leverage_rule3(closes),
+    }
+
+
+def market(asof: date) -> dict:
+    """KOSPI·KOSDAQ 판정. 실패는 `errors`에."""
+    indices, errors = {}, []
+    for code in INDEX_CODES:
+        bars, err = naver.fetch_bars(code, INDEX_WINDOW_DAYS, asof)
+        if not bars:
+            errors.append(f"{code} 일봉: {err or '빈 응답'}")
+            continue
+        quote, err = naver.fetch_index_quote(code)
+        if err:
+            errors.append(f"{code} 현재가: {err}")
+        indices[code] = index_view(bars, quote, asof)
+    return {"indices": indices, "errors": errors}
+
+
 def _won(value: float | None) -> str:
     return "미수집" if value is None else f"{value:,.0f}"
 
@@ -148,10 +291,54 @@ def _pct(value: float | None) -> str:
     return "—" if value is None else f"{value:+.2f}%"
 
 
+REGIME_KO = {"crash": "🟠 급락", "bear": "🔴 약세", "correction": "🟡 조정", "normal": "정상", "unknown": "미상"}
+LEVERAGE_KO = {"ok": "미발동", "fired": "⛔ 발동", "exempt": "예외(저점 유지·상승)", "insufficient": "판정 불가"}
+
+
+def _mark(value: bool | None) -> str:
+    return "—" if value is None else ("✅" if value else "❌")
+
+
+def render_market(block: dict) -> list[str]:
+    """지수 표와 룰 연결 줄. 클라이맥스는 반대매매가 없어 내지 않는다."""
+    lines = [
+        "| 지수 | 현재 | 등락 | 3일선 | 20일선 | 200일선 | 고점 대비 | 국면 |",
+        "| --- | ---: | ---: | :-: | :-: | :-: | ---: | :-: |",
+    ]
+    for code, v in block["indices"].items():
+        dd = "—" if v["drawdown"] is None else f"{v['drawdown']:+.1f}%"
+        lines.append(
+            f"| {code} | {v['close']:,.2f} | {_pct(v['change_pct'])} | "
+            + " | ".join(_mark(v["above"][d]) for d in MA_DAYS)
+            + f" | {dd} | {REGIME_KO[v['regime']]} |"
+        )
+    indices = block["indices"]
+    lines += [
+        "",
+        "- 매매 규칙 3 (200일선 위): " + " · ".join(f"{c} {_mark(v['above'][BREAKOUT_MA_DAYS])}" for c, v in indices.items()),
+        "- 레버리지 규칙 3: " + " · ".join(f"{c} {LEVERAGE_KO[v['leverage_rule3']]}" for c, v in indices.items()),
+    ]
+    crosses = [f"{c} 20일선 {'상향 돌파' if v['ma20_cross'] == 'up' else '하회'} 전환"
+               for c, v in indices.items() if v["ma20_cross"]]
+    if crosses:
+        lines.append("- 20일선 전환: " + " · ".join(crosses))
+    lines.append("- 클라이맥스: 미확인 (반대매매 = daily-digest)")
+    lines += [f"- 미수집 {e}" for e in block["errors"]]
+    return lines
+
+
+def _kind(stock: dict) -> str:
+    if stock["held"]:
+        return "보유"
+    return "관심" if stock.get("watched") else "트리거"
+
+
 def render(result: dict) -> str:
-    """세션에 바로 붙일 마크다운 — 시세 표, 뉴스, 미수집 사유."""
+    """세션에 바로 붙일 마크다운 — 시장 표, 시세 표, 뉴스, 미수집 사유."""
     lines = [
         f"기준일 {result['asof']} · {SESSION_LABELS[result['session']]} · 스냅샷 {result['snapshot_date'] or '없음'} · 뉴스 {result['since']}~",
+        "",
+        *render_market(result["market"]),
         "",
         "| 구분 | 종목 | 현재가 | 등락 | 평단 대비 | 비중 | 공식 종가 |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
@@ -160,7 +347,7 @@ def render(result: dict) -> str:
         official = s["official_close"]
         official_text = f"{official['close']:,.0f} ({official['date'][4:]})" if official else "—"
         lines.append(
-            f"| {'보유' if s['held'] else '관심'} | {s['name']} | {_won(s['price'])} | {_pct(s['change_pct'])} "
+            f"| {_kind(s)} | {s['name']} | {_won(s['price'])} | {_pct(s['change_pct'])} "
             f"| {_pct(s['return_pct'])} | {s['weight'] or '—'} | {official_text} |"
         )
     if result["rule_checks"]:
@@ -181,6 +368,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--asof", help="기준일 YYYY-MM-DD (기본 KST 오늘)")
     parser.add_argument("--snapshot", type=Path, help="포트폴리오 스냅샷 (기본 최신)")
     parser.add_argument("--watchlist", type=Path, help="관심 종목 파일 (기본 context/interested_stocks.md)")
+    parser.add_argument(
+        "--triggers", type=Path, action="append",
+        help="트리거 파일 (반복 가능, 기본 output/watchlist/보유_트리거.md·매수_트리거.md)",
+    )
     parser.add_argument("--json", action="store_true", help="JSON으로 출력")
     args = parser.parse_args(argv)
 
@@ -188,9 +379,16 @@ def main(argv: list[str] | None = None) -> int:
     since = (asof - timedelta(days=args.days)).strftime("%Y%m%d")
     snapshot = args.snapshot or latest_snapshot()
     held = {h["name"]: h for h in holdings(snapshot)}
+    trigger_paths = args.triggers or [output_dir() / "watchlist" / f for f in TRIGGER_FILES]
+    triggered: dict[str, str | None] = {}
+    for path in trigger_paths:
+        for name, code in trigger_stocks(path):
+            triggered[name] = triggered.get(name) or code
+    watched = set(load_watchlist(args.watchlist or repo_root() / WATCHLIST_REL))
     names = list(held) + [
         n for n in dict.fromkeys(load_watchlist(args.watchlist or repo_root() / WATCHLIST_REL)) if n not in held
     ]
+    names += [n for n in triggered if n not in names]
     if not names:
         print("보유·관심 종목이 없다", file=sys.stderr)
         return 1
@@ -201,7 +399,12 @@ def main(argv: list[str] | None = None) -> int:
         "since": since,
         "snapshot_date": snapshot_date(snapshot),
         "rule_checks": rule_checks(snapshot),
-        "stocks": [collect(name, held.get(name), since) for name in names],
+        "market": market(asof),
+        "stocks": [
+            collect(name, held.get(name), since, code=triggered.get(name), trigger=name in triggered,
+                    watched=name in watched)
+            for name in names
+        ],
     }
     print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else render(result))
     if all(s["price"] is None for s in result["stocks"]):
