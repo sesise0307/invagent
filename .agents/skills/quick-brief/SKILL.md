@@ -1,11 +1,11 @@
 ---
 name: quick-brief
-description: 보유·관심 종목의 현재가·등록된 매매 트리거 대조·특이사항(뉴스·OpenDART 공시)을 모아 세션 안에서만 보는 초간결 브리핑을 만드는 스킬. 시세는 네이버·금융위만 쓰고 StockEasy에는 접근하지 않으며, 파일로 저장하지 않는다. 다음과 같은 상황에서 트리거하라 - "간단 브리핑", "빠른 브리핑", "퀵 브리핑", "quick brief" - "보유 종목 지금 어때", "관심 종목 시세 훑어줘", "내 종목들 특이사항 있어?", "트리거 걸린 거 있어?" - "오늘 내 종목 뉴스·공시만 짧게" 텔레그램·시트·룰 점검까지 묶은 일일 브리핑 파일은 `daily-digest`, 한 종목을 끝까지 파는 요청은 `analyze-stock`이다.
+description: 보유·관심 종목의 현재가·등록된 매매 트리거 대조·특이사항(뉴스·OpenDART 공시)을 모아 세션 안에서만 보는 초간결 브리핑을 만드는 스킬. 시세는 네이버·금융위로 받고 StockEasy는 보유 종목 매수 tranche의 「고개 들기」 판정(`turn_scan`)에만 쓰며, 파일로 저장하지 않는다. 다음과 같은 상황에서 트리거하라 - "간단 브리핑", "빠른 브리핑", "퀵 브리핑", "quick brief" - "보유 종목 지금 어때", "관심 종목 시세 훑어줘", "내 종목들 특이사항 있어?", "트리거 걸린 거 있어?" - "오늘 내 종목 뉴스·공시만 짧게" 텔레그램·시트·룰 점검까지 묶은 일일 브리핑 파일은 `daily-digest`, 한 종목을 끝까지 파는 요청은 `analyze-stock`이다.
 ---
 
 # Quick Brief — 보유·관심 종목 간이 브리핑
 
-세션 안에서 읽고 끝나는 브리핑이다. **파일을 만들지 않고, StockEasy에 접근하지 않는다.** 이미 등록된
+세션 안에서 읽고 끝나는 브리핑이다. **파일을 만들지 않고, StockEasy는 3단계의 `turn_scan` 몇 건에만 쓴다.** 이미 등록된
 매매 트리거를 현재가와 대조해 보여 주기만 하고, 감시 파일은 고치지 않는다 — 가격선 등록·갱신과 기록은
 `daily-digest` 1-3-2·1-3-3단계의 몫이다. 수집 경로의 세부는 `market-data`가 정본이다 — 여기서 다시 적지 않는다.
 
@@ -30,8 +30,8 @@ uv run python .agents/skills/quick-brief/scripts/brief_prep.py [--days 2] [--jso
   다른 출처 숫자로 메우지 않는다.
 - 호스트별 요청 간격 때문에 20여 종목에 2~3분 걸린다. 백그라운드로 돌리고 2단계를 함께 진행한다.
 
-**금지:** `fetch_stock_info.py`·`stage_scan.py`·`turn_scan.py`·`canslim_scan.py`·`fetch_market_signals.py`·
-`fetch.py quote`처럼 StockEasy를 타는 스크립트는 부르지 않는다.
+**금지:** `fetch_stock_info.py`·`stage_scan.py`·`canslim_scan.py`·`fetch_market_signals.py`·
+`fetch.py quote`처럼 StockEasy를 타는 스크립트는 부르지 않는다. 예외는 3단계의 `turn_scan`뿐이다.
 
 ## 2. OpenDART 공시
 
@@ -63,6 +63,16 @@ uv run python .agents/skills/quick-brief/scripts/brief_prep.py [--days 2] [--jso
 - 매도선 이탈 종목은 「매매 규칙 7」(보류는 다음 거래일 종가까지 1회)을 한 줄로 덧붙인다. 집행 수량은 감시 파일에 적힌
   그대로 옮긴다 — 다시 계산하지 않는다.
 - 해당 없음·근접 아님 종목은 적지 않는다.
+- **보유 종목 매수 tranche는 「고개 들기」까지 채점한다.** `보유_트리거.md`의 보유 종목 매수 조건에 「고개 들기」(`turn_scan`)가
+  있고 가격 조건이 🟢 또는 ⚠️ 근접이면 그 종목만 순차로 돌린다(사용자 허용 2026-11-16 — StockEasy 몇 건은 괜찮다):
+  ```bash
+  uv run python .agents/skills/stage-analysis/scripts/turn_scan.py <티커>
+  ```
+  판정이 「고개 들기」이고 가격 조건도 충족이면 `🟢 매수 조건 충족 — <tranche> <수량>주`로 트리거 절 **맨 위**에 올리고
+  남은 미확인 조건(예: 「매매 규칙 11」 장중 고가)만 덧붙인다. 「고개 들기」가 아니면 그 판정명을 적는다. 장중이면
+  `turn_scan`의 오늘 봉도 미확정이라 「장중·미확정」을 붙인다. 실패하면 「고개 들기 미확인 (turn_scan 실패 — 사유)」로 적는다.
+  미보유 후보(`매수_트리거.md`)는 이 대상이 아니다 — 지금처럼 「가격만 충족」으로 적는다.
+  2026-11-16 삼양식품 B2가 가격은 충족했는데 고개 들기 미확인으로만 나가 충족 확정이 저녁 `daily-digest`까지 늦었다.
 
 ## 4. 뉴스 선별
 
