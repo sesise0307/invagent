@@ -49,6 +49,7 @@ BEAR_DRAWDOWN_PCT = -20.0
 CRASH_WINDOW_DAYS = 3
 CRASH_DROP_PCT = -3.0
 CRASH_CUMULATIVE_PCT = -8.0
+CRASH_SINGLE_DAY_PCT = -5.0
 VOLATILE_DAY_PCT = 5.0
 VOLATILE_WINDOW_DAYS = 10
 VOLATILE_DAY_TRIGGER = 3
@@ -229,6 +230,8 @@ def regime(closes: list[float]) -> tuple[str, float | None]:
     drawdown = (window[-1] / max(window) - 1) * 100
     deep = drawdown <= CORRECTION_DRAWDOWN_PCT
     recent = _changes(closes)[-CRASH_WINDOW_DAYS:]
+    if deep and recent and recent[-1] <= CRASH_SINGLE_DAY_PCT:
+        return "crash", drawdown
     if deep and len(recent) == CRASH_WINDOW_DAYS:
         growth = 1.0
         for v in recent:

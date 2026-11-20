@@ -72,6 +72,7 @@ MARGIN_CALL_RATIO_SIGMA = 2.0
 CRASH_WINDOW_DAYS = 3
 CRASH_DROP_PCT = -3.0
 CRASH_CUMULATIVE_PCT = -8.0
+CRASH_SINGLE_DAY_PCT = -5.0
 # 약세 = 52주 고점 대비 -20% 이하. 조정(-10% 이하) 한 칸이 -10%부터 -50%까지 다 덮어 -44.5%인 날도
 # 「조정」으로 찍혔다(2026-11-06) — -20%에서 나눈다(2026-11-06 사용자 개정).
 BEAR_DRAWDOWN_PCT = -20.0
@@ -301,7 +302,7 @@ def print_margin_call(rows: list[dict], monitor_rows: list[dict] | None = None) 
 def market_regime(rows: list[dict], monitor_rows: list[dict] | None = None) -> dict:
     """「시장 국면」을 지수별로 판정한다: climax > crash > bear > correction > normal.
 
-    급락은 그날까지의 종가 등락률만 본다(그날 -3% 초과 · 3거래일 누적 -8% 이하). 반대매매는
+    급락은 그날까지의 종가 등락률만 본다(그날 -5% 이하, 또는 그날 -3% 초과 · 3거래일 누적 -8% 이하). 반대매매는
     클라이맥스에만 쓴다 — 하루 늦게 발표되고 급락 2~3거래일 뒤에 몰리기 때문이다.
     """
     monitor_rows = monitor_rows or []
@@ -319,7 +320,8 @@ def market_regime(rows: list[dict], monitor_rows: list[dict] | None = None) -> d
             for v in recent:
                 growth *= 1 + v / 100
             cumulative = (growth - 1) * 100
-        slide = (
+        plunge = drop is not None and drop <= CRASH_SINGLE_DAY_PCT
+        slide = plunge or (
             drop is not None and cumulative is not None
             and drop < CRASH_DROP_PCT and cumulative <= CRASH_CUMULATIVE_PCT
         )
@@ -348,7 +350,8 @@ REGIME_KO = {
 def print_market_regime(rows: list[dict], monitor_rows: list[dict] | None = None) -> None:
     result = market_regime(rows, monitor_rows)
     print(
-        f"[시장 국면] 급락 = 낙폭 {MARGIN_CALL_MIN_DRAWDOWN_PCT:g}% 이하 · 그날 {CRASH_DROP_PCT:g}% 초과 하락 · "
+        f"[시장 국면] 급락 = 낙폭 {MARGIN_CALL_MIN_DRAWDOWN_PCT:g}% 이하 · 그날 {CRASH_SINGLE_DAY_PCT:g}% 이하, "
+        f"또는 그날 {CRASH_DROP_PCT:g}% 초과 하락 · "
         f"{CRASH_WINDOW_DAYS}거래일 누적 {CRASH_CUMULATIVE_PCT:g}% 이하"
     )
     for market, v in result.items():

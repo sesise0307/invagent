@@ -71,6 +71,14 @@ states sector overlap as a fact, not as a reason to shrink a position.
   not backtested. `fetch_market_signals.mdd_release` judges it; `peak_drawdown.update_mdd_state` holds the
   re-trigger state, so only a downward close across a line after release starts a new trigger.
 
+## Crash regime: single-day drop (2026-11-20)
+
+「시장 국면」 급락 = 조정·약세이면서 **그날 종가 -5% 이하**(`CRASH_SINGLE_DAY_PCT`), 또는 그날 -3% 초과 하락 +
+3거래일 누적 -8% 이하. 11/06 A안(3일 누적)은 이틀 반등 뒤 하루 급락을 놓쳤다 — 2026-11-20 KOSPI -5.21%·KOSDAQ -5.71%가
+3일 누적 -2.0%·-0.7%로 🔴 약세였고, 직전 1년 KOSPI 07/13 -8.95%도 급락이 아니었다(사용자 지적). 단일일 줄을 OR로 더해
+발동이 KOSPI 12→19일 · KOSDAQ 9→15일. -5%는 「레버리지 규칙 3」 ±5% 변동일과 같은 선이다. `quick-brief`의
+`brief_prep.regime`도 같은 상수로 판정하고 `test_agent_configuration`이 두 스크립트 상수를 묶는다.
+
 ## Portfolio snapshot and dated layout
 
 The Telegram daily briefing also reads the user's live holdings from the Google

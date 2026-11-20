@@ -1040,6 +1040,7 @@ def test_market_regime_constants_match_my_rules_and_skill() -> None:
     skill = (SKILLS_ROOT / "daily-digest" / "SKILL.md").read_text(encoding="utf-8")
 
     assert (
+        f"그날 종가가 {module.CRASH_SINGLE_DAY_PCT:g}% 이하로 하락했거나, "
         f"그날 종가가 {module.CRASH_DROP_PCT:g}% 넘게 하락하고, 그날을 포함한 {module.CRASH_WINDOW_DAYS}거래일 "
         f"누적 등락률이 {module.CRASH_CUMULATIVE_PCT:g}% 이하인 날"
     ) in rules
@@ -1048,6 +1049,7 @@ def test_market_regime_constants_match_my_rules_and_skill() -> None:
         ("CRASH_WINDOW_DAYS", module.CRASH_WINDOW_DAYS),
         ("CRASH_DROP_PCT", f"{module.CRASH_DROP_PCT:g}%"),
         ("CRASH_CUMULATIVE_PCT", f"{module.CRASH_CUMULATIVE_PCT:g}%"),
+        ("CRASH_SINGLE_DAY_PCT", f"{module.CRASH_SINGLE_DAY_PCT:g}%"),
         ("BEAR_DRAWDOWN_PCT", f"{module.BEAR_DRAWDOWN_PCT:g}%"),
     ):
         assert f"| `{name}` | {value} |" in skill, name
@@ -1118,5 +1120,6 @@ def test_quick_brief_market_thresholds_match_the_daily_digest() -> None:
     assert quick.BREAKOUT_MA_DAYS == digest.BREAKOUT_REGIME_MA_DAYS
     assert quick.ACCOUNT_RULE1_MA_DAYS == digest.MDD_RELEASE_MA_DAYS
     for name in ("BEAR_DRAWDOWN_PCT", "CRASH_WINDOW_DAYS", "CRASH_DROP_PCT", "CRASH_CUMULATIVE_PCT",
+                 "CRASH_SINGLE_DAY_PCT",
                  "VOLATILE_DAY_PCT", "VOLATILE_WINDOW_DAYS", "VOLATILE_DAY_TRIGGER"):
         assert getattr(quick, name) == getattr(digest, name), name

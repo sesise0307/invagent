@@ -415,3 +415,11 @@ def test_text_output_labels_trigger_only_stocks(monkeypatch, files, tmp_path, ca
     out = capsys.readouterr().out
     assert "| 트리거 | 원익QnC | 29,000 |" in out
     assert "| 관심 | 삼양식품 |" in out
+
+
+def test_regime_flags_a_crash_on_a_single_five_percent_day_after_a_rebound() -> None:
+    """하루 -5% 이하는 3일 누적과 무관하게 급락이다 (2026-11-20 개정 — daily-digest와 같은 정의)."""
+    # 고점 100 → 조정권 90 → 92 → 94 → 89(-5.3%) · 3일 누적 -1.1%
+    closes = [100.0] * 10 + [90.0, 92.0, 94.0, 89.0]
+
+    assert brief_prep.regime(closes)[0] == "crash"

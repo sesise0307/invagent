@@ -630,13 +630,28 @@ def test_market_regime_flags_a_crash_on_an_eight_percent_three_day_slide_without
     assert verdict["regime"] == "crash"
 
 
+def test_market_regime_flags_a_crash_on_a_single_five_percent_day_after_a_rebound() -> None:
+    """하루 -5% 이하는 3일 누적과 무관하게 급락이다 (2026-11-20 사용자 개정, A안).
+
+    2026-11-20 KOSPI -5.21%·KOSDAQ -5.71%는 직전 이틀 반등(+1.99%·+1.39%) 탓에 3일 누적
+    -2.0%로 🔴 약세가 나왔다. 직전 1년 KOSPI 07/13 -8.95%도 같은 이유로 급락이 아니었다.
+    """
+    module = load_script("daily-digest", "fetch_market_signals")
+    calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
+    credit = _credit_rows(calm + [110.0])
+    # 90 → 92(+2.2%) → 94(+2.2%) → 89(-5.3%) = 3일 누적 -1.1%
+    verdict = module.market_regime(credit, _crash_monitor(credit, [90.0, 92.0, 94.0, 89.0]))["KOSPI"]
+
+    assert verdict["regime"] == "crash"
+
+
 def test_market_regime_needs_the_three_day_slide_to_reach_eight_percent() -> None:
     """하루짜리 -4%는 급락이 아니다 — 그날 포함 3거래일 누적이 -8%에 닿아야 한다."""
     module = load_script("daily-digest", "fetch_market_signals")
     calm = [100.0, 120.0, 90.0, 110.0, 95.0] * 30
     credit = _credit_rows(calm + [120.0])
-    # 95 → 96 → 93 → 88 : 그날 -5.4% · 3일 누적 -7.4%
-    verdict = module.market_regime(credit, _crash_monitor(credit, [95.0, 96.0, 93.0, 88.0]))["KOSPI"]
+    # 95 → 96 → 92 → 88 : 그날 -4.3% · 3일 누적 -7.4%
+    verdict = module.market_regime(credit, _crash_monitor(credit, [95.0, 96.0, 92.0, 88.0]))["KOSPI"]
 
     assert verdict["regime"] == "correction"
 
@@ -659,7 +674,7 @@ def test_market_regime_line_states_the_slide_rule_without_margin_calls(capsys: p
     module.print_market_regime(credit, _crash_monitor(credit, [90.0, 91.0, 86.0, 81.0]))
 
     out = capsys.readouterr().out
-    assert "급락 = 낙폭 -10% 이하 · 그날 -3% 초과 하락 · 3거래일 누적 -8% 이하" in out
+    assert "급락 = 낙폭 -10% 이하 · 그날 -5% 이하, 또는 그날 -3% 초과 하락 · 3거래일 누적 -8% 이하" in out
     assert "KOSPI: 🟠 급락" in out
     assert "3일 누적 -10.0%" in out
     assert "반대매매" not in out
