@@ -310,6 +310,25 @@ def test_analyze_stock_inheritance_keeps_one_line_change_log() -> None:
     assert "정정·판단변경은 근거" in template
 
 
+def test_analyze_stock_inheritance_prunes_revision_log_and_evidence() -> None:
+    """승계 때마다 §11·§10의 낡은 줄을 스스로 정리하되, 정리 전 전문을 백업한다."""
+    skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")
+    template = (REPO_ROOT / "template" / "stock_analysis.md").read_text(encoding="utf-8")
+
+    # 2026-11-20 사용자 확정 — 무제한 누적을 폐지하고 승계 때마다 정리한다.
+    assert "무제한 누적" not in skill
+    assert "무제한 누적" not in template
+    assert "이력·근거 정리" in skill
+    assert "report-before-prune.md" in skill
+    # 정리해도 지금 판단을 좌우하는 정정·판단변경·경고는 남는다.
+    assert "남기는 것" in skill
+    assert "접는 것" in skill
+    assert "빼는 것" in skill
+    # §10은 이번 실행 근거 + 본문이 아직 인용하는 이전 근거만.
+    assert "본문이 기대는 이전 근거" in skill
+    assert "본문이 기대는 이전 근거" in template
+
+
 def test_analyze_stock_inheritance_reads_and_migrates_revision_log() -> None:
     """승계 시 §11를 반드시 읽고, 옛 보존 본문은 §11로 옮긴 뒤 본문에서 뺀다."""
     skill = (SKILLS_ROOT / "analyze-stock" / "SKILL.md").read_text(encoding="utf-8")

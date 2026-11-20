@@ -38,10 +38,19 @@ keeping superseded prose inline made every inheritance run pay to re-read older
 versions of facts it was about to overwrite. Change tracking lives in §11 개정 이력
 as one line per revision, `- {yyyy-mm-dd}: {정정 | 갱신 | 판단변경} — {요약}`, with the
 evidence (rcept_no, report filename, URL plus as-of date) carried inside the line for
-corrections and reversed calls. Those lines accumulate and are never rolled off,
-because the body no longer holds the past: §11 is the only place the earlier
-judgment survives, which is why step 2 requires reading it in full before writing a
-new call. A prior report still carrying `### YYYY-MM-DD 업데이트` or
+corrections and reversed calls. Because the body no longer holds the past, §11 is the
+only place the earlier judgment survives, which is why step 2 requires reading it in
+full before writing a new call. The lines used to accumulate without limit; on
+2026-11-20 the user had the 이수페타시스 report pruned by hand (§11 102 → 24 lines,
+§10 177 → 32 lines) and then made pruning part of every inheritance run. Pruning is
+by phase (a change in holding state, or a plan confirmed or dropped), not by age: the
+current phase keeps every line; earlier phases keep their reversed calls and any
+correction or warning that still guards the current call, and fold the rest into a
+`- {start}~{end}: 요약 — …` line. Lines that compute a state that no longer exists —
+stop and tranche prices for a position already sold, a deleted rule's arithmetic — go.
+§10 keeps this run's evidence plus one table of earlier sources the body still cites.
+The full pre-prune file is copied to `output/.analysis/<종목명>-<yyyymmdd>/report-before-prune.md`
+first, since `output/` is not in git and that copy is the only record of what was cut. A prior report still carrying `### YYYY-MM-DD 업데이트` or
 `### {날짜} 기존 분석 (보존)` blocks is migrated on its next inheritance run — each
 block folds into its §11 line first, and only then leaves the body, so an interrupted
 migration loses nothing. Because `output/` is gitignored, that migration happens per
