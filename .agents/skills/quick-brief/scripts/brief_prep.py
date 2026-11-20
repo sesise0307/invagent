@@ -194,6 +194,16 @@ def collect(
     return stock
 
 
+def order_stocks(stocks: list[dict]) -> list[dict]:
+    """보유는 받은 순서 그대로 앞에, 관심·트리거 전용은 등락률 내림차순(현재가 미수집은 끝)."""
+    held = [s for s in stocks if s["held"]]
+    rest = sorted(
+        (s for s in stocks if not s["held"]),
+        key=lambda s: (s["change_pct"] is None, -(s["change_pct"] or 0.0)),
+    )
+    return held + rest
+
+
 def with_today(bars: list[dict], quote: dict | None, asof: date) -> list[float]:
     """일봉 종가에 오늘 현재가를 덮어쓰거나 붙인다. 현재가가 오늘 것이 아니면 일봉 그대로."""
     closes = [(b["date"], b["close"]) for b in bars if b["date"] <= asof.strftime("%Y%m%d")]
@@ -400,11 +410,11 @@ def main(argv: list[str] | None = None) -> int:
         "snapshot_date": snapshot_date(snapshot),
         "rule_checks": rule_checks(snapshot),
         "market": market(asof),
-        "stocks": [
+        "stocks": order_stocks([
             collect(name, held.get(name), since, code=triggered.get(name), trigger=name in triggered,
                     watched=name in watched)
             for name in names
-        ],
+        ]),
     }
     print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else render(result))
     if all(s["price"] is None for s in result["stocks"]):

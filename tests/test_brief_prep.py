@@ -215,6 +215,28 @@ def test_the_snapshot_rule_checks_are_passed_through(monkeypatch, files, capsys)
     ]
 
 
+def test_watched_and_trigger_stocks_are_listed_by_change_high_to_low(monkeypatch, files, tmp_path, capsys) -> None:
+    """관심·트리거 종목은 등락률 내림차순, 미수집은 끝. 보유는 등락과 무관하게 앞에서 제 순서를 지킨다."""
+    triggers = tmp_path / "triggers.md"
+    triggers.write_text("## 이수페타시스 (007660)\n\n## 기가비스 (420770)\n", encoding="utf-8")
+    monkeypatch.setattr(fsc, "load_key", lambda: None)
+    monkeypatch.setattr(http, "read_url", _route({
+        naver.BASIC_URL.format(code="353200"): _basic("353200", "140,000", "-2.00"),
+        naver.BASIC_URL.format(code="003230"): _basic("003230", "1,200,000", "-0.50"),
+        naver.BASIC_URL.format(code="420770"): b'{"stockName":"X"}',
+        naver.BASIC_URL.format(code="007660"): _basic("007660", "130,000", "+3.10"),
+        naver.NEWS_URL.format(code="353200"): _news(),
+        naver.NEWS_URL.format(code="003230"): _news(),
+        naver.NEWS_URL.format(code="420770"): _news(),
+        naver.NEWS_URL.format(code="007660"): _news(),
+    }))
+
+    assert brief_prep.main([*files, "--json"]) == 0
+
+    names = [s["name"] for s in json.loads(capsys.readouterr().out)["stocks"]]
+    assert names == ["대덕전자", "이수페타시스", "삼양식품", "기가비스"]
+
+
 def _index_bars(closes: list[float], last: date) -> list[dict]:
     """평일만 거꾸로 세어 `last`에서 끝나는 지수 일봉."""
     days, day = [], last
@@ -370,7 +392,7 @@ def test_trigger_file_stocks_are_quoted_by_their_written_ticker(monkeypatch, fil
     assert brief_prep.main(args) == 0
 
     stocks = {s["name"]: s for s in json.loads(capsys.readouterr().out)["stocks"]}
-    assert list(stocks) == ["대덕전자", "삼양식품", "원익QnC", "LG씨엔에스"]
+    assert set(stocks) == {"대덕전자", "삼양식품", "원익QnC", "LG씨엔에스"}
     assert (stocks["원익QnC"]["code"], stocks["원익QnC"]["price"]) == ("074600", 29000.0)
     assert stocks["LG씨엔에스"]["trigger"] is True and stocks["LG씨엔에스"]["held"] is False
     assert stocks["삼양식품"]["trigger"] is True
