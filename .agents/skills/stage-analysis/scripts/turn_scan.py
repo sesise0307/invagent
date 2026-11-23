@@ -25,7 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 from invagent.datafeed import cache as http_cache, daily, series, tickers
 
@@ -365,13 +365,52 @@ def print_result(name: str, code: str, r: dict, source: str = "StockEasy 일봉"
 # --- main ------------------------------------------------------------------
 
 
+def with_prev_close(bars: list[dict], source: str, price: float, on: str) -> tuple[list[dict], str]:
+    """`on` 직전 평일 봉이 아직 없으면(공식 봉 미공개) 그 날짜로 `price` 봉을 붙인다. 이미 있으면 그대로.
+
+    네이버 「전일 종가」는 시간외가가 섞이지 않은 정규장 종가다(2026-11-23 금융위 대조 4/4 일치).
+    """
+    day = date.fromisoformat(on) - timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    key = day.strftime("%Y%m%d")
+    if bars and bars[-1]["date"] >= key:
+        return bars, source
+    bar = {"date": key, "open": price, "high": price, "low": price, "close": price, "volume": 0}
+    return [*bars, bar], f"{source} · {key} 종가 = 네이버 전일 종가 {price:,.0f}원"
+
+
+def with_price(bars: list[dict], source: str, price: float, on: str) -> tuple[list[dict], str]:
+    """`on`(YYYY-MM-DD) 봉의 종가를 `price`로 바꾸고, 그 봉이 아직 없으면 붙인다.
+
+    붙인 봉은 거래량을 모르므로 0이다 — 앵커드 VWAP 가중에서 빠지고 판정 수준은 종가만 쓴다.
+    출처 표기에 그 사실을 붙인다.
+    """
+    key = on.replace("-", "")
+    out = [{**b, "close": price} if b["date"] == key else b for b in bars]
+    if not out or out[-1]["date"] < key:
+        out.append({"date": key, "open": price, "high": price, "low": price, "close": price, "volume": 0})
+    return out, f"{source} · {key} 종가 = 네이버 {price:,.0f}원"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="단기 바닥 전환 판정 (「매매 규칙 2」 초입)")
     parser.add_argument("query", help="종목명 또는 6자리 티커")
     parser.add_argument("--days", type=int, default=400, help="일봉 조회 일수 (기본 400 ≈ 13개월)")
     parser.add_argument("--json", action="store_true", help="판정 결과 JSON 덤프")
     parser.add_argument("--no-cache", action="store_true", help="캐시를 쓰지 않고 매번 새로 받는다 (캐시 오염 의심 시)")
+    parser.add_argument("--official", action="store_true",
+                        help="과거 일봉을 금융위 공식 봉만으로 — StockEasy·네이버로 메우지 않는다 (퀵브리프용)")
+    parser.add_argument("--price", type=float,
+                        help="그날 종가로 쓸 값(원) — 퀵브리프가 넘기는 네이버 현재가. --price-date와 함께 쓴다")
+    parser.add_argument("--price-date", help="--price의 날짜 YYYY-MM-DD (네이버 시세의 거래일)")
+    parser.add_argument("--prev-close", type=float,
+                        help="--price-date 직전 평일의 정규장 종가(네이버 「전일 종가」) — 공식 봉이 아직 없을 때만 붙인다")
     args = parser.parse_args(argv)
+    if (args.price is None) != (args.price_date is None):
+        parser.error("--price와 --price-date는 함께 쓴다")
+    if args.prev_close is not None and args.price_date is None:
+        parser.error("--prev-close는 --price-date와 함께 쓴다")
     if args.no_cache:
         http_cache.disable()
 
@@ -383,7 +422,8 @@ def main(argv: list[str] | None = None) -> int:
     ticker = stock["stock_code"]
     name = stock.get("stock_name") or ticker
 
-    fetched = daily.fetch_daily_bars(ticker, args.days)
+    fetch = daily.fetch_official_bars if args.official else daily.fetch_daily_bars
+    fetched = fetch(ticker, args.days)
     bars, source = fetched.rows, fetched.label
     if fetched.error or not bars:
         print(f"ERROR: 시세 수집 실패 — {fetched.error or '빈 응답'} ({source}, {ticker})", file=sys.stderr)
@@ -394,6 +434,11 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+
+    if args.prev_close is not None:
+        bars, source = with_prev_close(bars, source, args.prev_close, args.price_date)
+    if args.price is not None:
+        bars, source = with_price(bars, source, args.price, args.price_date)
 
     result = analyze_turn(bars)
     if args.json:

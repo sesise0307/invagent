@@ -160,6 +160,21 @@ def fetch_daily_bars(code: str, days: int, asof: date | str | None = None) -> Ba
     return Bars(tagged(bars, NAVER), err, fallback_note(reason), official_error)
 
 
+def fetch_official_bars(code: str, days: int, asof: date | str | None = None) -> Bars:
+    """금융위 KRX 공식 일봉만 받는다 — StockEasy·네이버로 빈 최근 봉을 메우지 않는다.
+
+    `quick-brief`의 바닥 전환 판정용(2026-11-23 사용자 결정): 퀵브리프는 StockEasy를 쓰지 않고, 오늘 종가는
+    네이버 현재가로 따로 넘긴다. 키가 없거나 공식 일봉이 실패하면 빈 `rows`와 `error`를 돌려준다.
+    """
+    if not fsc.load_key():
+        return Bars(error=f"{fsc.KEY_ENV} 미설정 — 금융위 공식 일봉 없음")
+    end = naver.parse_date(asof, "asof") if asof is not None else date.today()
+    bars, err = fsc.fetch_bars(code, days, asof=end)
+    if not bars:
+        return Bars(error=err or "금융위 공식 일봉 빈 응답", official_error=err)
+    return Bars(tagged(bars, OFFICIAL))
+
+
 def stockeasy_bars(code: str, end_key: str) -> tuple[list[dict], str | None]:
     """StockEasy `info-tab` chart의 `end_key`까지 정규장 일봉. 없으면 ([], 사유)."""
     cookie = stockeasy.load_cookie()

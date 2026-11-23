@@ -28,6 +28,11 @@ TRIGGER_FILES = ("보유_트리거.md", "매수_트리거.md")
 TRIGGER_HEADING_RE = re.compile(r"^## (.+?) \((\d{5}[0-9A-Z])\)")
 TRIGGER_TABLE_HEADING = "## 감시 대상"
 TABLE_NAME_RE = re.compile(r"^(.+?)\s*(?:\((\d{5}[0-9A-Z])\))?$")
+# 보유·트리거 종목 전부 고개 들기를 `turn_scan`으로 본다(2026-11-23 사용자 결정).
+# 장중: 과거 일봉은 금융위 공식 봉만(`--official`), 오늘은 네이버 현재가(`--price`), 공식 봉 미공개 전일은 네이버 「전일 종가」
+# (`--prev-close` = 현재가 − 전일 대비, 금융위 대조 4/4 일치) — StockEasy를 쓰지 않는다.
+# 마감 뒤: 네이버 현재가는 시간외가다(11/23 레인보우 412,000 vs 정규장 402,000) → 기본 판정 일봉(StockEasy 정규장 종가)으로 돌린다.
+TURN_SCAN_CMD = "uv run python .agents/skills/stage-analysis/scripts/turn_scan.py"
 NEWS_PER_STOCK = 5
 FSC_WINDOW_DAYS = 10
 REGULAR_SESSION_OPEN = time(9, 0)
@@ -142,7 +147,8 @@ def holdings(path: Path | None) -> list[dict]:
 
 
 def collect(
-    name: str, held: dict | None, since: str, code: str | None = None, trigger: bool = False, watched: bool = False
+    name: str, held: dict | None, since: str, code: str | None = None, trigger: bool = False, watched: bool = False,
+    intraday: bool = False,
 ) -> dict:
     """종목 하나의 시세·공식 종가·뉴스. 빠진 값은 `errors`에 사유로 남긴다.
 
@@ -162,6 +168,7 @@ def collect(
         "market_status": None,
         "return_pct": None,
         "official_close": None,
+        "turn_scan": None,
         "news": [],
         "errors": [],
     }
@@ -178,8 +185,16 @@ def collect(
         stock.update(price=quote["price"], change_pct=quote["change_pct"], market_status=quote["market_status"])
         if stock["average_cost"]:
             stock["return_pct"] = (quote["price"] / stock["average_cost"] - 1) * 100
+        traded_on = str(quote.get("traded_at") or "")[:10]
+        if (held is not None or trigger) and intraday and traded_on:
+            command = f"{TURN_SCAN_CMD} {code} --official --price {quote['price']:.0f} --price-date {traded_on}"
+            if quote.get("change") is not None:
+                command += f" --prev-close {quote['price'] - quote['change']:.0f}"
+            stock["turn_scan"] = command
     else:
         stock["errors"].append(f"현재가: {err}")
+    if (held is not None or trigger) and not intraday:
+        stock["turn_scan"] = f"{TURN_SCAN_CMD} {code}"
 
     if fsc.load_key():
         bars, err = fsc.fetch_bars(code, FSC_WINDOW_DAYS)
@@ -365,6 +380,9 @@ def render(result: dict) -> str:
         )
     if result["rule_checks"]:
         lines += ["", "## 룰 자동 판정 (스냅샷)", *(f"- {line}" for line in result["rule_checks"])]
+    scans = [f"- {s['name']}: `{s['turn_scan']}`" for s in result["stocks"] if s.get("turn_scan")]
+    if scans:
+        lines += ["", "## 턴스캔 (보유·트리거)", *scans]
     lines += ["", "## 뉴스"]
     for s in result["stocks"]:
         for n in s["news"]:
@@ -406,16 +424,17 @@ def main(argv: list[str] | None = None) -> int:
         print("보유·관심 종목이 없다", file=sys.stderr)
         return 1
 
+    now_session = session(kst_now())
     result = {
         "asof": asof.isoformat(),
-        "session": session(kst_now()),
+        "session": now_session,
         "since": since,
         "snapshot_date": snapshot_date(snapshot),
         "rule_checks": rule_checks(snapshot),
         "market": market(asof),
         "stocks": order_stocks([
             collect(name, held.get(name), since, code=triggered.get(name), trigger=name in triggered,
-                    watched=name in watched)
+                    watched=name in watched, intraday=now_session == "intraday")
             for name in names
         ]),
     }

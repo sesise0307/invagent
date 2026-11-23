@@ -423,3 +423,91 @@ def test_regime_flags_a_crash_on_a_single_five_percent_day_after_a_rebound() -> 
     closes = [100.0] * 10 + [90.0, 92.0, 94.0, 89.0]
 
     assert brief_prep.regime(closes)[0] == "crash"
+
+
+def _at_kst(monkeypatch, hour: int, minute: int = 0) -> None:
+    """KST 2026-10-20(화) 그 시각으로 시계를 고정한다 — 장중·마감 판정이 시각에 달려 있다."""
+    from datetime import datetime, timezone
+
+    from invagent.datafeed import cache
+
+    utc = datetime(2026, 10, 20, hour, minute, tzinfo=timezone.utc) - timedelta(hours=9)
+    monkeypatch.setattr(cache, "_now", lambda: utc.timestamp())
+
+
+def test_held_and_trigger_stocks_get_an_official_turn_scan_priced_by_naver(monkeypatch, files, tmp_path, capsys) -> None:
+    """장중: 보유·트리거 종목 전부 고개 들기를 본다 — 과거 일봉은 금융위만(--official), 오늘은 네이버 현재가,
+    공식 봉이 아직 없는 전일은 네이버 「전일 종가」(현재가 − 전일 대비). 관심 목록에만 있는 종목은 대상이 아니다.
+    """
+    _at_kst(monkeypatch, 10)
+    triggers = tmp_path / "buy.md"
+    triggers.write_text(
+        "## 레인보우로보틱스 (277810) — 🤖 CES 2027 이벤트 · 재량 진입\n"
+        "## 원익QnC (074600) — 밸류 매수 후보\n",
+        encoding="utf-8",
+    )
+    args = [*files[:-4], "--triggers", str(triggers), "--asof", "2026-10-20", "--json"]
+    monkeypatch.setattr(fsc, "load_key", lambda: None)
+    monkeypatch.setattr(http, "read_url", _route({
+        **_quiet_routes(),
+        naver.BASIC_URL.format(code="277810"): _basic("277810", "402,000", "-1.47"),
+        naver.BASIC_URL.format(code="074600"): _basic("074600", "29,000", "+1.00"),
+        naver.NEWS_URL.format(code="277810"): _news(),
+        naver.NEWS_URL.format(code="074600"): _news(),
+    }))
+
+    assert brief_prep.main(args) == 0
+
+    stocks = {s["name"]: s for s in json.loads(capsys.readouterr().out)["stocks"]}
+    cmd = "uv run python .agents/skills/stage-analysis/scripts/turn_scan.py"
+    assert stocks["레인보우로보틱스"]["turn_scan"] == (
+        f"{cmd} 277810 --official --price 402000 --price-date 2026-10-20 --prev-close 402000"
+    )
+    assert stocks["원익QnC"]["turn_scan"] == (
+        f"{cmd} 074600 --official --price 29000 --price-date 2026-10-20 --prev-close 29000"
+    )
+    assert stocks["대덕전자"]["turn_scan"].startswith(f"{cmd} 353200 --official --price ")
+    assert stocks["삼양식품"]["turn_scan"] is None
+
+
+def test_text_output_lists_the_turn_scan_commands_to_run(monkeypatch, files, tmp_path, capsys) -> None:
+    triggers = tmp_path / "buy.md"
+    triggers.write_text("## 로보티즈 (108490) — 🤖 CES 2027 이벤트\n", encoding="utf-8")
+    args = [*files[:-4], "--triggers", str(triggers), "--asof", "2026-10-20"]
+    # 관심 전용(삼양식품)은 턴스캔 대상이 아니다
+    _at_kst(monkeypatch, 10)
+    monkeypatch.setattr(fsc, "load_key", lambda: None)
+    monkeypatch.setattr(http, "read_url", _route({
+        **_quiet_routes(),
+        naver.BASIC_URL.format(code="108490"): _basic("108490", "246,000", "+5.35"),
+        naver.NEWS_URL.format(code="108490"): _news(),
+    }))
+
+    assert brief_prep.main(args) == 0
+
+    out = capsys.readouterr().out
+    assert "## 턴스캔 (보유·트리거)" in out
+    assert "- 로보티즈: `uv run python .agents/skills/stage-analysis/scripts/turn_scan.py 108490 --official --price 246000 --price-date 2026-10-20 --prev-close 246000`" in out
+    assert "- 삼양식품:" not in out.split("## 턴스캔 (보유·트리거)")[1].split("## 뉴스")[0]
+
+
+def test_after_the_close_the_turn_scan_takes_the_regular_close_not_naver(monkeypatch, files, tmp_path, capsys) -> None:
+    """마감 뒤 네이버 현재가는 시간외가다(11/23 레인보우 412,000 vs 정규장 402,000) — 그때는 StockEasy 정규장 종가를 쓰는
+    기본 판정 일봉으로 돌린다(2026-11-23 사용자 결정)."""
+    _at_kst(monkeypatch, 20)
+    triggers = tmp_path / "buy.md"
+    triggers.write_text("## 레인보우로보틱스 (277810) — 이벤트\n", encoding="utf-8")
+    args = [*files[:-4], "--triggers", str(triggers), "--asof", "2026-10-20", "--json"]
+    monkeypatch.setattr(fsc, "load_key", lambda: None)
+    monkeypatch.setattr(http, "read_url", _route({
+        **_quiet_routes(),
+        naver.BASIC_URL.format(code="277810"): _basic("277810", "412,000", "+0.98"),
+        naver.NEWS_URL.format(code="277810"): _news(),
+    }))
+
+    assert brief_prep.main(args) == 0
+
+    stocks = {s["name"]: s for s in json.loads(capsys.readouterr().out)["stocks"]}
+    assert stocks["레인보우로보틱스"]["turn_scan"] == (
+        "uv run python .agents/skills/stage-analysis/scripts/turn_scan.py 277810"
+    )

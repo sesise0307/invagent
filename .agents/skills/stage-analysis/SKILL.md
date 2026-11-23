@@ -209,10 +209,16 @@ YoY 증가율**을 비교해 낮아지면 「하락」, 높아지면 「상승�
 
 ```bash
 uv run python .agents/skills/stage-analysis/scripts/turn_scan.py "<종목명 또는 6자리 티커>" \
-  [--days 400] [--json] [--no-cache]
+  [--days 400] [--json] [--no-cache] [--official] [--price <원> --price-date YYYY-MM-DD [--prev-close <원>]]
 ```
 
 - 종료 코드: `0` 정상 / `1` 시세 수집 실패·일봉 부족(130봉 미만) / `2` 종목명 후보 다수.
+- `--price`·`--price-date`(함께 쓴다)는 그날 봉의 종가를 주어진 값으로 바꾸고, 그 봉이 아직 없으면 거래량 0인 봉으로 붙인다.
+  `quick-brief`가 오늘 종가를 네이버 현재가로 판정할 때 쓴다(2026-11-23 사용자 결정). 출처 줄에 `<날짜> 종가 = 네이버 <값>원`이 붙는다.
+- `--official`은 과거 일봉을 금융위 공식 봉만으로 받는다(`daily.fetch_official_bars`) — 아직 공개 전인 최근 봉을 StockEasy·네이버로 메우지 않는다.
+  `quick-brief` 장중 전용이다. 금융위 키가 없거나 실패하면 exit 1.
+- `--prev-close`는 `--price-date` 직전 평일 봉이 아직 없을 때(공식 봉은 다음 영업일 13시 뒤 공개)만 그 날짜로 붙인다 — 네이버 「전일 종가」는
+  정규장 종가다. 네이버의 지난 일별 종가·마감 뒤 현재가는 시간외가가 섞여 쓰지 않는다.
 - 일봉만 쓴다 — StockEasy `info-tab` 정규장 일봉(쿠키 필요, 없거나 실패하면 네이버 `siseJson`으로 대체하고 출력에 꼬리표). 쿠키가 없어도 판정은 돈다. 수집 경로는 `market-data`.
 - **상태는 스크립트가 확정한다.** 모델이 차트를 눈대중해 바꾸지 않는다.
 

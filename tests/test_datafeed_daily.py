@@ -402,3 +402,25 @@ def test_the_closing_high_is_the_highest_close_in_the_window() -> None:
     assert bars.closes == [150.0, 125.0, 110.0, 120.0]
     assert bars.closing_high(3) == ("20260922", 125.0)
     assert bars.closing_high(250) == ("20260921", 150.0)
+
+
+def test_official_only_bars_never_fill_the_unpublished_tail_from_stockeasy(monkeypatch) -> None:
+    """퀵브리프 판정 일봉 — 금융위 공식 봉만. 아직 안 올라온 봉을 StockEasy·네이버로 메우지 않는다."""
+    monkeypatch.setattr(fsc, "load_key", lambda: "k" * 64)
+    monkeypatch.setattr(stockeasy, "load_cookie", lambda: "session=abc")
+    seen = recording(monkeypatch, fsc_body=official(("20260923", "119000"), ("20260925", "120000")))
+
+    result = daily.fetch_official_bars("353200", days=30, asof="2026-09-28")
+
+    assert [(b["date"], b["close"]) for b in result.rows] == [("20260923", 119000.0), ("20260925", 120000.0)]
+    assert result.label == "금융위 KRX 공식 일봉 ~20260925"
+    assert not any(url.startswith((stockeasy.API_BASE, naver.SISE_URL)) for url in seen)
+
+
+def test_official_only_bars_without_a_key_report_an_error_instead_of_falling_back(monkeypatch) -> None:
+    seen = recording(monkeypatch, fsc_body=official(("20260925", "120000")))
+
+    result = daily.fetch_official_bars("353200", days=30, asof="2026-09-28")
+
+    assert result.rows == [] and "DATA_GO_KR_SERVICE_KEY" in result.error
+    assert seen == []

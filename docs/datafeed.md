@@ -38,7 +38,9 @@ filter, every page of a date window — two business days were 1,076 filings ove
 keyed by `OPENDART_API_KEY`; status `013` is an empty list, any other non-`000` status arrives as HTTP 200 and is
 turned into a failure reason so a key or quota error never reads as "no filings"; filing bodies stay on the
 `opendart` MCP) and `snapshot` (portfolio
-snapshot tables). `daily.fetch_daily_bars` takes the regular-session bars from `fsc` first — KRX's
+snapshot tables). (`daily.fetch_official_bars` is the `fsc`-only variant for `quick-brief`, which uses no
+StockEasy — it never fills the unpublished tail and returns an `error` without the key; user decision 2026-11-23.)
+`daily.fetch_daily_bars` takes the regular-session bars from `fsc` first — KRX's
 official OHLCV, three years in one request, 10,000 requests a day — and, because that data is
 published after 13:00 on the next business day, fills only the weekdays after its last bar from the
 StockEasy `info-tab` `chart` — except today's bar asked for before 15:40 KST

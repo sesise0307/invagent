@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 
 from invagent.datafeed.daily import Bars
@@ -391,3 +392,80 @@ def test_analyze_turn_reports_a_20_week_line_cross_as_an_alert_only() -> None:
     r = turn_scan.analyze_turn(_bars(closes))
 
     assert r["ma20w_cross"]["event"] == "up"
+
+
+def _dated(bars: list[dict], first: date) -> list[dict]:
+    """합성 일봉에 달력 날짜(YYYYMMDD)를 붙인다 — 오늘 봉 대체가 날짜로 맞물리게."""
+    return [{**b, "date": (first + timedelta(days=i)).strftime("%Y%m%d")} for i, b in enumerate(bars)]
+
+
+def test_cli_price_replaces_the_close_of_the_bar_on_its_date(monkeypatch, capsys):
+    """퀵브리프는 오늘 종가를 네이버 값으로 판정한다 — 같은 날짜 봉의 종가를 그 값으로 바꾼다."""
+    import json
+
+    bars = _dated(_bars(_path(BASE + [(140, 112.0)])), date(2026, 4, 1))
+    _fake_feed(monkeypatch, bars)
+
+    assert turn_scan.main(["가나", "--json", "--price", "95", "--price-date",
+                           f"{bars[-1]['date'][:4]}-{bars[-1]['date'][4:6]}-{bars[-1]['date'][6:]}"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"] == "falling"
+    assert "네이버" in payload["source"]
+
+
+def test_cli_price_on_a_date_after_the_last_bar_is_appended_as_that_days_close(monkeypatch, capsys):
+    """오늘 봉이 아직 없으면(공식·StockEasy 미공개) 네이버 값으로 오늘 봉을 붙여 판정한다."""
+    import json
+
+    bars = _dated(_bars(_path(BASE + [(140, 112.0)])), date(2026, 4, 1))
+    _fake_feed(monkeypatch, bars[:-1])
+    last = date(2026, 4, 1) + timedelta(days=len(bars) - 1)
+
+    assert turn_scan.main(["가나", "--json", "--price", "95", "--price-date", last.isoformat()]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"] == "falling"
+    assert payload["last_date"] == last.strftime("%Y%m%d")
+
+
+def test_cli_official_reads_only_the_official_bars(monkeypatch, capsys):
+    """퀵브리프는 StockEasy를 쓰지 않는다 — 과거 일봉은 금융위 공식 봉만, 오늘 종가는 --price."""
+    import json
+
+    from invagent.datafeed import daily
+
+    bars = _dated(_bars(_path(BASE + [(140, 112.0)])), date(2026, 4, 1))
+    _fake_feed(monkeypatch, bars)
+
+    def no_mixed_feed(*args, **kwargs):
+        raise AssertionError("StockEasy를 타는 판정 일봉을 불렀다")
+
+    monkeypatch.setattr(daily, "fetch_daily_bars", no_mixed_feed)
+    monkeypatch.setattr(daily, "fetch_official_bars", lambda code, days, asof=None: Bars(bars[:-1]))
+    last = date(2026, 4, 1) + timedelta(days=len(bars) - 1)
+
+    assert turn_scan.main(["가나", "--json", "--official", "--price", "112",
+                           "--price-date", last.isoformat()]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"] == "turning"
+    assert payload["last_date"] == last.strftime("%Y%m%d")
+
+
+def test_cli_prev_close_fills_the_one_unpublished_day_before_the_price_date(monkeypatch, capsys):
+    """금융위 공식 봉은 다음 영업일 13시 뒤에 올라온다 — 그 하루는 네이버 「전일 종가」(정규장 종가)로 채운다."""
+    import json
+
+    from invagent.datafeed import daily
+
+    bars = _dated(_bars(_path(BASE + [(140, 112.0)])), date(2026, 4, 1))
+    _fake_feed(monkeypatch, bars)
+    monkeypatch.setattr(daily, "fetch_official_bars", lambda code, days, asof=None: Bars(bars[:-2]))
+    last = date(2026, 4, 1) + timedelta(days=len(bars) - 1)
+    args = ["가나", "--json", "--official", "--price", "112", "--price-date", last.isoformat()]
+
+    assert turn_scan.main([*args, "--prev-close", "95"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"] == "falling"
+    assert "네이버 전일 종가" in payload["source"]

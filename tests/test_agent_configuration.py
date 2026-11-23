@@ -1115,15 +1115,17 @@ def test_quick_brief_output_follows_its_template() -> None:
 
 
 def test_quick_brief_scores_held_stock_tranches_with_turn_scan() -> None:
-    """보유 종목 매수 tranche의 「고개 들기」는 quick-brief도 turn_scan으로 채점한다.
+    """보유·트리거 종목의 「고개 들기」는 quick-brief도 turn_scan으로 일괄 채점한다 — StockEasy 없이.
 
     2026-11-16 삼양식품 B2: 가격 조건은 충족했는데 quick-brief가 turn_scan을 금지해
     「고개 들기 미확인」으로만 나갔고, 충족 확정은 저녁 daily-digest에서야 났다.
+    2026-11-23: 과거 일봉은 금융위만(`--official`), 오늘 종가는 네이버(`--price`) — 사용자 결정.
     """
     skill = (SKILLS_ROOT / "quick-brief" / "SKILL.md").read_text(encoding="utf-8")
     step3 = skill.split("## 3. 트리거 대조")[1].split("## 4.")[0]
 
     assert "stage-analysis/scripts/turn_scan.py" in step3
+    assert "--official" in step3 and "--price" in step3
     assert "고개 들기" in step3 and "보유_트리거.md" in step3
     forbidden = skill.split("**금지:**")[1].split("\n\n")[0]
     assert "turn_scan.py" not in forbidden
