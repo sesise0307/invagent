@@ -263,11 +263,21 @@ def test_index_view_appends_today_from_the_quote_and_reads_averages_and_regime()
     view = brief_prep.index_view(bars, _index_quote(104.0), date(2026, 11, 13))
 
     assert view["close"] == 104.0
-    assert view["above"] == {3: False, 20: False, 200: True}
+    assert view["above"] == {3: False, 5: False, 20: False, 60: True, 200: True}
     assert view["drawdown"] == pytest.approx(-16.8)
     assert view["regime"] == "correction"
     assert view["ma20_cross"] is None
     assert view["leverage_rule3"] == "ok"
+
+
+def test_index_view_reads_the_5_and_60_day_lines() -> None:
+    # 5일선 86 위, 60일선 106.5 아래 — 단기 반등했지만 중기선은 아직 회복 못 함.
+    bars = _index_bars([100.0] * 200 + [120.0] * 40 + [80.0] * 16 + [85.0] * 4, date(2026, 11, 12))
+
+    view = brief_prep.index_view(bars, _index_quote(90.0), date(2026, 11, 13))
+
+    assert view["above"][5] is True
+    assert view["above"][60] is False
 
 
 def test_index_view_calls_a_crash_on_a_deep_three_day_slide() -> None:
@@ -350,7 +360,8 @@ def test_text_output_puts_the_market_table_first(monkeypatch, files, capsys) -> 
     assert brief_prep.main(files) == 0
 
     out = capsys.readouterr().out
-    assert "| KOSPI | 99.00 | -1.00% | ❌ | ❌ | ❌ | -1.0% | 정상 |" in out
+    assert "| 지수 | 현재 | 등락 | 3일선 | 5일선 | 20일선 | 60일선 | 200일선 | 고점 대비 | 국면 |" in out
+    assert "| KOSPI | 99.00 | -1.00% | ❌ | ❌ | ❌ | ❌ | ❌ | -1.0% | 정상 |" in out
     assert out.index("| KOSPI |") < out.index("| 보유 | 대덕전자 |")
     assert "계좌 규칙 1" not in out  # 3일선 열이 이미 보여 준다
     assert "KOSDAQ 일봉:" in out

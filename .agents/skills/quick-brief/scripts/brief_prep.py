@@ -45,9 +45,11 @@ SNAPSHOT_DATE_RE = re.compile(r"^# .*?(\d{4}-\d{2}-\d{2})", re.M)
 INDEX_CODES = ("KOSPI", "KOSDAQ")
 INDEX_WINDOW_DAYS = 400       # 52주 고점(250거래일)과 200일선을 채우는 달력일
 ACCOUNT_RULE1_MA_DAYS = 3     # = MDD_RELEASE_MA_DAYS — 「계좌 규칙 1」 해제
+SHORT_MA_DAYS = 5             # 단기 반등 확인 (참고)
 TREND_MA_DAYS = 20            # 단기 추세, 전환일 알림
+MID_MA_DAYS = 60              # 중기 추세 회복 확인 (참고)
 BREAKOUT_MA_DAYS = 200        # = BREAKOUT_REGIME_MA_DAYS — 「매매 규칙 3」 시장 필터
-MA_DAYS = (ACCOUNT_RULE1_MA_DAYS, TREND_MA_DAYS, BREAKOUT_MA_DAYS)
+MA_DAYS = (ACCOUNT_RULE1_MA_DAYS, SHORT_MA_DAYS, TREND_MA_DAYS, MID_MA_DAYS, BREAKOUT_MA_DAYS)
 PEAK_WINDOW = 250             # = MARGIN_CALL_PEAK_WINDOW
 CORRECTION_DRAWDOWN_PCT = -10.0  # = MARGIN_CALL_MIN_DRAWDOWN_PCT
 BEAR_DRAWDOWN_PCT = -20.0
@@ -330,8 +332,8 @@ def _mark(value: bool | None) -> str:
 def render_market(block: dict) -> list[str]:
     """지수 표와 룰 연결 줄. 클라이맥스는 반대매매가 없어 내지 않는다."""
     lines = [
-        "| 지수 | 현재 | 등락 | 3일선 | 20일선 | 200일선 | 고점 대비 | 국면 |",
-        "| --- | ---: | ---: | :-: | :-: | :-: | ---: | :-: |",
+        "| 지수 | 현재 | 등락 | " + " | ".join(f"{d}일선" for d in MA_DAYS) + " | 고점 대비 | 국면 |",
+        "| --- | ---: | ---: | " + " | ".join(":-:" for _ in MA_DAYS) + " | ---: | :-: |",
     ]
     for code, v in block["indices"].items():
         dd = "—" if v["drawdown"] is None else f"{v['drawdown']:+.1f}%"
