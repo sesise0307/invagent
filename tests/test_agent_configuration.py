@@ -1131,6 +1131,18 @@ def test_quick_brief_scores_held_stock_tranches_with_turn_scan() -> None:
     assert "turn_scan.py" not in forbidden
 
 
+def test_quick_brief_template_market_table_matches_the_script_columns() -> None:
+    """모델은 템플릿 표 열을 그대로 채운다 — 스크립트가 낸 이평선 열이 템플릿에 없으면 브리핑에서 빠진다."""
+    quick = load_script("quick-brief", "brief_prep")
+    template = (REPO_ROOT / "template" / "quick_brief.md").read_text(encoding="utf-8")
+    script_header = quick.render_market({"indices": {}, "errors": []})[0]
+
+    template_header = next(line for line in template.splitlines() if line.startswith("| 지수 |"))
+
+    assert template_header == script_header
+    assert "| 5일선 |" in template_header and "| 60일선 |" in template_header
+
+
 def test_quick_brief_market_thresholds_match_the_daily_digest() -> None:
     """두 스킬이 같은 날 다른 국면을 내지 않도록 임계값을 묶는다."""
     quick = load_script("quick-brief", "brief_prep")
